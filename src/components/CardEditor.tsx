@@ -1,0 +1,701 @@
+import { useState, useEffect, useMemo } from 'react'
+import { useCardStore } from '../stores/useCardStore'
+import { CardData } from '../types'
+import { generateCardCode } from '../utils/codeGenerator'
+import { validateCard } from '../utils/cardParser'
+import { getTypeColor } from '../utils/cardUtils'
+import { CardIOButtons } from './CardIOButtons'
+import { CardSearch } from './CardSearch'
+import { Toast } from './Toast'
+import { useTransientMessage } from '../hooks/useTransientMessage'
+import * as FileService from '../services/FileService'
+
+interface CardEditorProps {
+  projectPath: string | null
+}
+
+export function CardEditor({ projectPath }: CardEditorProps) {
+  const {
+    cards,
+    currentCard,
+    selectedCardIndex,
+    addCard,
+    updateCard,
+    deleteCard,
+    selectCard,
+    loadCards
+  } = useCardStore()
+
+  const [generatedCode, setGeneratedCode] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+  const { message: saveMessage, showMessage } = useTransientMessage()
+  const [errors, setErrors] = useState<string[]>([])
+  const [loadingCards, setLoadingCards] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [typeFilter, setTypeFilter] = useState<'all' | CardData['type']>('all')
+
+  // 当项目路径变化时，加载现有卡牌
+  useEffect(() => {
+    if (projectPath) {
+      loadExistingCards()
+    }
+  }, [projectPath])
+
+  // 加载项目中现有的卡牌
+  const loadExistingCards = async () => {
+    if (!projectPath) return
+
+    setLoadingCards(true)
+    try {
+      const existingCards = await FileService.loadCardsFromProject(projectPath)
+      if (existingCards.length > 0) {
+        loadCards(existingCards)
+      }
+    } catch (err) {
+      console.error('Failed to load existing cards:', err)
+    }
+    setLoadingCards(false)
+  }
+
+  // 过滤卡牌 - 单一useMemo，同时保留原始索引，避免每次渲染O(n²)的findIndex
+  const filteredCards = useMemo(() => {
+    let result = cards.map((card, originalIndex) => ({ card, originalIndex }))
+
+    if (typeFilter !== 'all') {
+      result = result.filter(({ card }) => card.type === typeFilter)
+    }
+
+    if (searchTerm.trim()) {
+      const term = searchTerm.toLowerCase()
+      result = result.filter(({ card }) =>
+        card.name.toLowerCase().includes(term) ||
+        card.description.toLowerCase().includes(term) ||
+        card.keywords.some(k => k.toLowerCase().includes(term))
+      )
+    }
+
+    return result
+  }, [cards, searchTerm, typeFilter])
+
+  // 处理卡牌属性变化
+  const handleCardChange = (field: keyof CardData, value: string | number | string[]) => {
+    if (selectedCardIndex === null) return
+    updateCard(selectedCardIndex, { [field]: value })
+    setErrors([]) // 清除错误
+  }
+
+  // 处理关键词变化
+  const handleKeywordsChange = (value: string) => {
+    if (selectedCardIndex === null) return
+    const keywords = value.split(',').map(k => k.trim()).filter(k => k)
+    updateCard(selectedCardIndex, { keywords })
+  }
+
+  // 预览生成的代码
+  const handlePreview = () => {
+    if (!currentCard) return
+
+    const validationErrors = validateCard(currentCard)
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors)
+      return
+    }
+
+    const code = generateCardCode(currentCard, 'MyMod.Cards')
+    setGeneratedCode(code)
+    setErrors([])
+  }
+
+  // 保存卡牌到项目
+  const handleSave = async () => {
+    if (!projectPath || !currentCard) return
+
+    const validationErrors = validateCard(currentCard)
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors)
+      return
+    }
+
+    setSaving(true)
+    setErrors([])
+
+    try {
+      const result = await FileService.saveCardToProject(projectPath, currentCard, 'MyMod.Cards')
+
+      if (result.success) {
+        showMessage('success', `已保存到 ${result.fileName}`)
+        setGeneratedCode(generateCardCode(currentCard, 'MyMod.Cards'))
+      } else {
+        setErrors([result.error || '保存失败，请检查目录权限'])
+      }
+    } catch (err) {
+      setErrors([`保存失败: ${err}`])
+    }
+
+    setSaving(false)
+  }
+
+  // 生成描述预览
+  const getDescriptionPreview = () => {
+    if (!currentCard) return ''
+    return currentCard.description || '卡牌描述'
+  }
+
+  // 获取费用显示
+  const getCostDisplay = () => {
+    if (!currentCard) return '?'
+    return currentCard.cost.toString()
+  }
+
+  return (
+    <div className="card-editor">
+      <div className="editor-header">
+        <h2>🃏 卡牌编辑器</h2>
+        <div className="header-actions">
+          {loadingCards && <span className="loading-text">加载中...</span>}
+          <CardIOButtons />
+          <button onClick={addCard}>+ 新建卡牌</button>
+        </div>
+      </div>
+
+      <div className="editor-content">
+        {/* 左侧：卡牌列表 */}
+        <div className="card-list">
+          {cards.length === 0 ? (
+            <div className="empty-list">
+              <p>暂无卡牌</p>
+              <button onClick={addCard}>创建第一张卡牌</button>
+            </div>
+          ) : (
+            <>
+              <CardSearch
+                searchTerm={searchTerm}
+                typeFilter={typeFilter}
+                filteredCount={filteredCards.length}
+                totalCount={cards.length}
+                onSearchTermChange={setSearchTerm}
+                onTypeFilterChange={setTypeFilter}
+              />
+              {filteredCards.map(({ card, originalIndex }) => (
+              <div
+                key={originalIndex}
+                className={`card-item ${selectedCardIndex === originalIndex ? 'selected' : ''}`}
+                onClick={() => selectCard(originalIndex)}
+              >
+                <div className="card-mini-preview">
+                  <span className="mini-cost">{card.cost}</span>
+                  <span
+                    className="mini-type"
+                    style={{ color: getTypeColor(card.type) }}
+                  >
+                    {card.type.charAt(0)}
+                  </span>
+                </div>
+                <span className="card-name">{card.name || '未命名'}</span>
+                <button
+                  className="delete-btn"
+                  onClick={(e) => { e.stopPropagation(); deleteCard(originalIndex); }}
+                >
+                  ×
+                </button>
+              </div>
+                )
+              )}
+            </>
+          )}
+        </div>
+
+        {/* 右侧：卡牌属性编辑 */}
+        <div className="card-properties">
+          {currentCard ? (
+            <>
+              {/* 卡片预览 */}
+              <div className="card-preview" style={{ '--type-color': getTypeColor(currentCard.type) } as React.CSSProperties}>
+                <div className="preview-header">
+                  <span className="preview-name">{currentCard.name || '卡牌名称'}</span>
+                  <span className="preview-cost">{getCostDisplay()}</span>
+                </div>
+                <div className="preview-type" style={{ color: getTypeColor(currentCard.type) }}>
+                  {currentCard.type}
+                </div>
+                <div className="preview-rarity">
+                  {currentCard.rarity}
+                </div>
+                <div className="preview-description">
+                  {getDescriptionPreview()}
+                </div>
+                {currentCard.keywords.length > 0 && (
+                  <div className="preview-keywords">
+                    {currentCard.keywords.map((k, i) => (
+                      <span key={i} className="keyword-tag">{k}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="form-section">
+                <h3>基本信息</h3>
+
+                <div className="form-row">
+                  <label>卡牌名称</label>
+                  <input
+                    type="text"
+                    value={currentCard.name}
+                    onChange={(e) => handleCardChange('name', e.target.value)}
+                    placeholder="例如：火球术"
+                  />
+                </div>
+
+                <div className="form-row-inline">
+                  <div className="form-row half">
+                    <label>费用</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="99"
+                      value={currentCard.cost}
+                      onChange={(e) => handleCardChange('cost', parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+
+                  <div className="form-row half">
+                    <label>稀有度</label>
+                    <select
+                      value={currentCard.rarity}
+                      onChange={(e) => handleCardChange('rarity', e.target.value)}
+                    >
+                      <option value="Common">普通</option>
+                      <option value="Uncommon">优秀</option>
+                      <option value="Rare">稀有</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <label>类型</label>
+                  <select
+                    value={currentCard.type}
+                    onChange={(e) => handleCardChange('type', e.target.value)}
+                  >
+                    <option value="Attack">⚔️ 攻击 (Attack)</option>
+                    <option value="Skill">🛡️ 技能 (Skill)</option>
+                    <option value="Power">✨ 力量 (Power)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-section">
+                <h3>效果</h3>
+
+                <div className="form-row">
+                  <label>描述</label>
+                  <textarea
+                    value={currentCard.description}
+                    onChange={(e) => handleCardChange('description', e.target.value)}
+                    placeholder="例如：造成6点伤害。"
+                    rows={3}
+                  />
+                </div>
+
+                <div className="form-row">
+                  <label>关键词 (逗号分隔)</label>
+                  <input
+                    type="text"
+                    value={currentCard.keywords.join(', ')}
+                    onChange={(e) => handleKeywordsChange(e.target.value)}
+                    placeholder="例如：Fire, Damage"
+                  />
+                </div>
+              </div>
+
+              {/* 错误提示 */}
+              {errors.length > 0 && (
+                <div className="error-box">
+                  {errors.map((err, i) => (
+                    <div key={i} className="error-item">⚠️ {err}</div>
+                  ))}
+                </div>
+              )}
+
+              {/* 操作按钮 */}
+              <div className="form-actions">
+                <button onClick={handlePreview} className="preview-btn">
+                  👁️ 预览代码
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="save-btn"
+                  disabled={saving || !projectPath}
+                >
+                  {saving ? '保存中...' : '💾 保存到项目'}
+                </button>
+              </div>
+
+              {saveMessage && <Toast message={saveMessage} />}
+            </>
+          ) : (
+            <div className="no-selection">
+              <div className="empty-card-icon">🃏</div>
+              <p>选择一张卡牌进行编辑</p>
+              <p>或点击「新建卡牌」创建</p>
+            </div>
+          )}
+        </div>
+
+        {/* 下方：代码预览 */}
+        {generatedCode && (
+          <div className="code-preview">
+            <div className="code-header">
+              <span>📄 生成的C#代码</span>
+              <button onClick={() => setGeneratedCode('')}>关闭</button>
+            </div>
+            <pre>
+              <code>{generatedCode}</code>
+            </pre>
+          </div>
+        )}
+      </div>
+
+      <style>{`
+        .card-editor {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          background: var(--bg-secondary);
+          border-radius: 8px;
+          overflow: hidden;
+        }
+
+        .editor-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px;
+          background: var(--bg-tertiary);
+          border-bottom: 1px solid var(--border);
+        }
+
+        .editor-header h2 {
+          font-size: 16px;
+          font-weight: 600;
+        }
+
+        .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .loading-text {
+          font-size: 12px;
+          color: var(--text-secondary);
+        }
+
+        .editor-content {
+          display: flex;
+          flex: 1;
+          overflow: hidden;
+        }
+
+        /* 卡牌列表 */
+        .card-list {
+          width: 200px;
+          border-right: 1px solid var(--border);
+          overflow-y: auto;
+          padding: 8px;
+        }
+
+        .empty-list {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          color: var(--text-secondary);
+          font-size: 14px;
+        }
+
+        .empty-list button {
+          margin-top: 12px;
+        }
+
+        .card-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: 4px;
+          cursor: pointer;
+          transition: background 0.15s;
+          position: relative;
+        }
+
+        .card-item:hover {
+          background: var(--bg-tertiary);
+        }
+
+        .card-item.selected {
+          background: var(--accent);
+          color: white;
+        }
+
+        .card-mini-preview {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          width: 24px;
+          font-size: 10px;
+        }
+
+        .mini-cost {
+          font-weight: bold;
+          font-size: 12px;
+        }
+
+        .mini-type {
+          font-size: 10px;
+        }
+
+        .card-item .card-name {
+          flex: 1;
+          font-size: 13px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .card-item .delete-btn {
+          background: transparent;
+          color: inherit;
+          opacity: 0.5;
+          padding: 2px 6px;
+          font-size: 16px;
+          min-width: auto;
+        }
+
+        .card-item .delete-btn:hover {
+          opacity: 1;
+          color: var(--accent);
+        }
+
+        /* 属性编辑 */
+        .card-properties {
+          flex: 1;
+          padding: 16px;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        /* 卡牌预览 */
+        .card-preview {
+          background: linear-gradient(135deg, #2a2a4a 0%, #1a1a2e 100%);
+          border: 2px solid var(--type-color, #888);
+          border-radius: 8px;
+          padding: 16px;
+          position: relative;
+        }
+
+        .preview-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 8px;
+        }
+
+        .preview-name {
+          font-size: 16px;
+          font-weight: bold;
+          color: white;
+        }
+
+        .preview-cost {
+          background: var(--type-color, #888);
+          color: white;
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+        }
+
+        .preview-type {
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          margin-bottom: 4px;
+        }
+
+        .preview-rarity {
+          font-size: 11px;
+          color: #888;
+          margin-bottom: 12px;
+        }
+
+        .preview-description {
+          font-size: 13px;
+          color: #ddd;
+          line-height: 1.5;
+          min-height: 40px;
+        }
+
+        .preview-keywords {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          margin-top: 12px;
+        }
+
+        .keyword-tag {
+          background: rgba(255,255,255,0.1);
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          color: #aaa;
+        }
+
+        /* 表单 */
+        .form-section {
+          background: var(--bg-primary);
+          border-radius: 8px;
+          padding: 16px;
+        }
+
+        .form-section h3 {
+          font-size: 13px;
+          font-weight: 600;
+          margin-bottom: 12px;
+          color: var(--text-secondary);
+        }
+
+        .form-row {
+          margin-bottom: 12px;
+        }
+
+        .form-row:last-child {
+          margin-bottom: 0;
+        }
+
+        .form-row-inline {
+          display: flex;
+          gap: 12px;
+        }
+
+        .form-row.half {
+          flex: 1;
+        }
+
+        .form-row label {
+          display: block;
+          font-size: 12px;
+          font-weight: 500;
+          margin-bottom: 6px;
+          color: var(--text-secondary);
+        }
+
+        .form-row input,
+        .form-row select,
+        .form-row textarea {
+          width: 100%;
+        }
+
+        .form-row textarea {
+          resize: vertical;
+          min-height: 60px;
+        }
+
+        .no-selection {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          color: var(--text-secondary);
+          font-size: 14px;
+        }
+
+        .empty-card-icon {
+          font-size: 48px;
+          margin-bottom: 12px;
+          opacity: 0.5;
+        }
+
+        /* 错误提示 */
+        .error-box {
+          background: rgba(233, 69, 96, 0.1);
+          border: 1px solid var(--accent);
+          border-radius: 4px;
+          padding: 12px;
+        }
+
+        .error-item {
+          color: var(--accent);
+          font-size: 13px;
+          margin-bottom: 4px;
+        }
+
+        .error-item:last-child {
+          margin-bottom: 0;
+        }
+
+        /* 操作按钮 */
+        .form-actions {
+          display: flex;
+          gap: 12px;
+        }
+
+        .preview-btn {
+          flex: 1;
+          background: var(--bg-tertiary);
+          color: var(--text-primary);
+        }
+
+        .save-btn {
+          flex: 2;
+        }
+
+        /* 代码预览 */
+        .code-preview {
+          border-top: 1px solid var(--border);
+          max-height: 300px;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .code-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 10px 16px;
+          background: var(--bg-tertiary);
+          font-size: 13px;
+          font-weight: 500;
+        }
+
+        .code-header button {
+          padding: 4px 8px;
+          font-size: 12px;
+          background: transparent;
+        }
+
+        .code-preview pre {
+          flex: 1;
+          margin: 0;
+          padding: 12px 16px;
+          overflow: auto;
+          background: var(--bg-primary);
+          font-family: 'Fira Code', 'Consolas', monospace;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+
+        .code-preview code {
+          color: var(--text-primary);
+        }
+      `}</style>
+    </div>
+  )
+}

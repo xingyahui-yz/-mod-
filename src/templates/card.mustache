@@ -1,0 +1,25 @@
+using Godot;
+using RitsuMod.Content;
+
+namespace {{namespace}}
+{
+    public class {{className}} : CardComponent
+    {
+        public override void SetDefaults()
+        {
+            Name = "{{name}}";
+            Cost = {{cost}};
+            Type = CardType.{{type}};
+            Rarity = CardRarity.{{rarity}};
+            Description = "{{description}}";
+{{#keywords}}
+            Keywords.Add("{{.}}");
+{{/keywords}}
+        }
+
+        public override void OnPlay()
+        {
+            // TODO: 实现卡牌效果
+        }
+    }
+}
