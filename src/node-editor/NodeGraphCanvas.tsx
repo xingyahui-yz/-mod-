@@ -1,0 +1,159 @@
+/**
+ * 节点图画布 - 节点编辑器 v0.2
+ *
+ * 简化实现：
+ * - SVG 画布 + 节点用 <g> + <rect> + <text>
+ * - 拖动用 mouseDown/move/up + SVG 坐标
+ * - 不画边（v0.3）
+ */
+import { useState, useRef, useCallback } from 'react'
+import { GraphNode, NodeGraph, NODE_PORT_DEFS } from './types'
+import { UseNodeGraphReturn } from './useNodeGraph'
+
+interface NodeGraphCanvasProps {
+  graph: NodeGraph
+  onMoveNode: (nodeId: string, position: { x: number; y: number }) => void
+  onRemoveNode: (nodeId: string) => void
+  width?: number
+  height?: number
+}
+
+const NODE_WIDTH = 120
+const NODE_HEIGHT = 60
+const TYPE_COLORS: Record<string, string> = {
+  trigger: '#3b82f6',
+  condition: '#a855f7',
+  effect: '#4ade80',
+  branch: '#eab308'
+}
+
+export function NodeGraphCanvas({
+  graph,
+  onMoveNode,
+  onRemoveNode,
+  width = 800,
+  height = 600
+}: NodeGraphCanvasProps) {
+  const svgRef = useRef<SVGSVGElement>(null)
+  const [dragging, setDragging] = useState<{ nodeId: string; offsetX: number; offsetY: number } | null>(null)
+
+  const screenToSvg = useCallback((clientX: number, clientY: number) => {
+    const svg = svgRef.current
+    if (!svg) return { x: 0, y: 0 }
+    const pt = svg.createSVGPoint()
+    pt.x = clientX
+    pt.y = clientY
+    const ctm = svg.getScreenCTM()
+    if (!ctm) return { x: 0, y: 0 }
+    const inv = ctm.inverse()
+    const transformed = pt.matrixTransform(inv)
+    return { x: transformed.x, y: transformed.y }
+  }, [])
+
+  const handleMouseDown = (e: React.MouseEvent, node: GraphNode) => {
+    const svgPt = screenToSvg(e.clientX, e.clientY)
+    setDragging({
+      nodeId: node.id,
+      offsetX: svgPt.x - node.position.x,
+      offsetY: svgPt.y - node.position.y
+    })
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!dragging) return
+    const svgPt = screenToSvg(e.clientX, e.clientY)
+    onMoveNode(dragging.nodeId, {
+      x: svgPt.x - dragging.offsetX,
+      y: svgPt.y - dragging.offsetY
+    })
+  }
+
+  const handleMouseUp = () => {
+    setDragging(null)
+  }
+
+  return (
+    <svg
+      ref={svgRef}
+      className="node-graph-canvas"
+      width={width}
+      height={height}
+      data-testid="node-graph-canvas"
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+    >
+      {/* 背景网格 */}
+      <defs>
+        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
+        </pattern>
+      </defs>
+      <rect width={width} height={height} fill="url(#grid)" />
+
+      {/* 节点 */}
+      {graph.nodes.map(node => (
+        <NodeBox
+          key={node.id}
+          node={node}
+          onMouseDown={(e) => handleMouseDown(e, node)}
+          onRemove={() => onRemoveNode(node.id)}
+        />
+      ))}
+    </svg>
+  )
+}
+
+interface NodeBoxProps {
+  node: GraphNode
+  onMouseDown: (e: React.MouseEvent) => void
+  onRemove: () => void
+}
+
+function NodeBox({ node, onMouseDown, onRemove }: NodeBoxProps) {
+  const color = TYPE_COLORS[node.type] || '#888'
+  const ports = NODE_PORT_DEFS[node.type]
+  return (
+    <g
+      data-testid={`node-box-${node.id}`}
+      transform={`translate(${node.position.x}, ${node.position.y})`}
+      onMouseDown={onMouseDown}
+      style={{ cursor: 'move' }}
+    >
+      <rect
+        width={NODE_WIDTH}
+        height={NODE_HEIGHT}
+        rx={6}
+        fill="var(--bg-secondary, #2a2a4a)"
+        stroke={color}
+        strokeWidth={2}
+      />
+      <text x={10} y={20} fontSize={12} fill={color} fontWeight="bold">
+        {node.type}
+      </text>
+      <text x={10} y={40} fontSize={10} fill="var(--text-secondary, #aaa)">
+        {Object.keys(node.data).join(', ') || '(无数据)'}
+      </text>
+      {/* 端口 */}
+      {ports.map(p => (
+        <circle
+          key={p.id}
+          cx={p.kind === 'input' ? 0 : NODE_WIDTH}
+          cy={15 + ports.indexOf(p) * 12}
+          r={4}
+          fill={color}
+        />
+      ))}
+      {/* 删除按钮 */}
+      <g
+        transform={`translate(${NODE_WIDTH - 18}, 4)`}
+        onClick={(e) => { e.stopPropagation(); onRemove() }}
+        style={{ cursor: 'pointer' }}
+        data-testid={`remove-${node.id}`}
+      >
+        <circle r={8} fill="rgba(255,0,0,0.3)" />
+        <text x={-3} y={3} fontSize={10} fill="white">×</text>
+      </g>
+    </g>
+  )
+}
