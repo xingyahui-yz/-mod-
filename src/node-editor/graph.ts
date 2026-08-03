@@ -1,0 +1,201 @@
+/**
+ * 节点图操作 - 纯函数 + 不依赖 React/DOM
+ * 单元测试直接覆盖这些
+ */
+import {
+  GraphNode, GraphEdge, NodeGraph, NodeType, EntityType,
+  NODE_PORT_DEFS
+} from './types'
+
+/** 创建空图 */
+export function createEmptyGraph(
+  entityId: string,
+  entityType: EntityType
+): NodeGraph {
+  const now = new Date().toISOString()
+  return {
+    id: crypto.randomUUID(),
+    entityId,
+    entityType,
+    version: '0.1.0',
+    nodes: [],
+    edges: [],
+    metadata: { createdAt: now, updatedAt: now }
+  }
+}
+
+/** 添加节点 - 返回新图与新节点 */
+export function appendNode(
+  graph: NodeGraph,
+  type: NodeType,
+  position: { x: number; y: number },
+  data: Record<string, unknown> = {}
+): { graph: NodeGraph; node: GraphNode } {
+  const node: GraphNode = {
+    id: crypto.randomUUID(),
+    type,
+    position,
+    data
+  }
+  return {
+    graph: { ...graph, nodes: [...graph.nodes, node], metadata: touch(graph) },
+    node
+  }
+}
+
+/** 删除节点（同时删除连接到该节点的边） */
+export function removeNode(graph: NodeGraph, nodeId: string): NodeGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.filter(n => n.id !== nodeId),
+    edges: graph.edges.filter(e => e.from.nodeId !== nodeId && e.to.nodeId !== nodeId),
+    metadata: touch(graph)
+  }
+}
+
+/** 移动节点 */
+export function moveNode(
+  graph: NodeGraph,
+  nodeId: string,
+  position: { x: number; y: number }
+): NodeGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map(n =>
+      n.id === nodeId ? { ...n, position } : n
+    ),
+    metadata: touch(graph)
+  }
+}
+
+/** 校验连线合法性 */
+export function canConnect(
+  graph: NodeGraph,
+  from: { nodeId: string; port: string },
+  to: { nodeId: string; port: string }
+): { ok: true } | { ok: false; reason: string } {
+  // 1. 不允许自环
+  if (from.nodeId === to.nodeId) {
+    return { ok: false, reason: '不能连接节点自身' }
+  }
+
+  // 2. 节点必须存在
+  const fromNode = graph.nodes.find(n => n.id === from.nodeId)
+  const toNode = graph.nodes.find(n => n.id === to.nodeId)
+  if (!fromNode) return { ok: false, reason: '源节点不存在' }
+  if (!toNode) return { ok: false, reason: '目标节点不存在' }
+
+  // 3. 端口必须存在且方向正确
+  const fromPorts = NODE_PORT_DEFS[fromNode.type]
+  const toPorts = NODE_PORT_DEFS[toNode.type]
+  const fromPort = fromPorts.find(p => p.id === from.port)
+  const toPort = toPorts.find(p => p.id === to.port)
+  if (!fromPort) return { ok: false, reason: `源节点无端口 ${from.port}` }
+  if (!toPort) return { ok: false, reason: `目标节点无端口 ${to.port}` }
+  if (fromPort.kind !== 'output') return { ok: false, reason: '源端口必须是 output' }
+  if (toPort.kind !== 'input') return { ok: false, reason: '目标端口必须是 input' }
+
+  // 4. 数据类型必须兼容
+  if (fromPort.dataType !== toPort.dataType && fromPort.dataType !== 'any' && toPort.dataType !== 'any') {
+    return {
+      ok: false,
+      reason: `类型不兼容：${fromPort.dataType} → ${toPort.dataType}`
+    }
+  }
+
+  // 5. 不允许重复连线（同 from+to 视为重复）
+  const dup = graph.edges.find(
+    e => e.from.nodeId === from.nodeId && e.from.port === from.port
+      && e.to.nodeId === to.nodeId && e.to.port === to.port
+  )
+  if (dup) return { ok: false, reason: '已存在相同连线' }
+
+  return { ok: true }
+}
+
+/** 添加边（自动校验） */
+export function connect(
+  graph: NodeGraph,
+  from: { nodeId: string; port: string },
+  to: { nodeId: string; port: string }
+): { ok: true; graph: NodeGraph } | { ok: false; reason: string } {
+  const check = canConnect(graph, from, to)
+  if (!check.ok) return check
+  const edge: GraphEdge = {
+    id: crypto.randomUUID(),
+    from,
+    to
+  }
+  return {
+    ok: true,
+    graph: { ...graph, edges: [...graph.edges, edge], metadata: touch(graph) }
+  }
+}
+
+/** 删除边 */
+export function disconnect(graph: NodeGraph, edgeId: string): NodeGraph {
+  return {
+    ...graph,
+    edges: graph.edges.filter(e => e.id !== edgeId),
+    metadata: touch(graph)
+  }
+}
+
+/** 检测环（BFS）- 节点图必须是有向无环图 */
+export function hasCycle(graph: NodeGraph): boolean {
+  const adj = new Map<string, string[]>()
+  for (const node of graph.nodes) adj.set(node.id, [])
+  for (const edge of graph.edges) {
+    adj.get(edge.from.nodeId)?.push(edge.to.nodeId)
+  }
+  // 三色 DFS
+  const WHITE = 0, GRAY = 1, BLACK = 2
+  const color = new Map<string, number>()
+  for (const n of graph.nodes) color.set(n.id, WHITE)
+
+  function dfs(nodeId: string): boolean {
+    color.set(nodeId, GRAY)
+    for (const next of adj.get(nodeId) || []) {
+      if (color.get(next) === GRAY) return true
+      if (color.get(next) === WHITE && dfs(next)) return true
+    }
+    color.set(nodeId, BLACK)
+    return false
+  }
+  for (const n of graph.nodes) {
+    if (color.get(n.id) === WHITE && dfs(n.id)) return true
+  }
+  return false
+}
+
+/** 序列化 / 反序列化 */
+export function serialize(graph: NodeGraph): string {
+  return JSON.stringify(graph, null, 2)
+}
+
+export function deserialize(json: string): NodeGraph {
+  const parsed = JSON.parse(json)
+  if (!isValidGraph(parsed)) {
+    throw new Error('无效的 NodeGraph JSON')
+  }
+  return parsed
+}
+
+/** Schema 校验 - 完整但不严格（接受任意 data） */
+export function isValidGraph(obj: unknown): obj is NodeGraph {
+  if (!obj || typeof obj !== 'object') return false
+  const g = obj as Record<string, unknown>
+  return (
+    typeof g.id === 'string' &&
+    typeof g.entityId === 'string' &&
+    typeof g.entityType === 'string' &&
+    typeof g.version === 'string' &&
+    Array.isArray(g.nodes) &&
+    Array.isArray(g.edges) &&
+    typeof g.metadata === 'object'
+  )
+}
+
+function touch(graph: NodeGraph): NodeGraph['metadata'] {
+  return { ...graph.metadata, updatedAt: new Date().toISOString() }
+}
