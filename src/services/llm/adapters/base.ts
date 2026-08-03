@@ -24,11 +24,18 @@ export interface LLMConfig {
 
 export abstract class BaseLLMAdapter {
   protected config: LLMConfig
-  protected modelName: string
+  protected _modelName: string | null = null
 
   constructor(config: LLMConfig) {
     this.config = config
-    this.modelName = this.getModelName()
+  }
+
+  /** Lazy 访问 modelName，避免基类构造时派生类字段尚未初始化的 TS/JS 限制 */
+  get modelName(): string {
+    if (this._modelName === null) {
+      this._modelName = this.getModelName()
+    }
+    return this._modelName
   }
 
   abstract getModelName(): string
