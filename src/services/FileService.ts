@@ -121,21 +121,29 @@ export async function loadCardsFromProject(projectPath: string): Promise<CardDat
   const cardsDir = `${projectPath}/${CARDS_DIR}`
   const cards: CardData[] = []
 
+  let entries: FileEntry[]
   try {
-    const entries = await api.readDirectory(cardsDir)
-    for (const entry of entries) {
-      if (!entry.isDirectory && entry.name.endsWith('.cs')) {
-        const content = await api.readFile(entry.path)
-        if (content) {
-          const card = parseCardFromCode(content)
-          if (card) {
-            cards.push(card)
-          }
+    entries = await api.readDirectory(cardsDir)
+  } catch (err) {
+    // 目录不存在是正常情况（新项目），返回空数组
+    // 但其他错误（权限、IO 错误）应当向上抛，由调用方决定如何处理
+    const message = err instanceof Error ? err.message : String(err)
+    if (message.includes('ENOENT') || message.includes('not found') || message.includes('不存在')) {
+      return []
+    }
+    throw err
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory && entry.name.endsWith('.cs')) {
+      const content = await api.readFile(entry.path)
+      if (content) {
+        const card = parseCardFromCode(content)
+        if (card) {
+          cards.push(card)
         }
       }
     }
-  } catch {
-    // 目录不存在，返回空
   }
 
   return cards

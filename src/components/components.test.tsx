@@ -5,12 +5,13 @@
  * 3. Toast 统一样式 (不再被 .save-message 覆盖)
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, act } from '@testing-library/react'
 import { Modal } from './Modal'
 import { CardSearch } from './CardSearch'
 import { Toast } from './Toast'
 import { CardEditor } from './CardEditor'
 import { useCardStore } from '../stores/useCardStore'
+import * as FileService from '../services/FileService'
 import { CardData } from '../types'
 
 // 重置持久化 store（persist 中间件会写 localStorage）
@@ -73,6 +74,43 @@ describe('Modal 无障碍', () => {
       </Modal>
     )
     expect(container.innerHTML).toBe('')
+  })
+
+  it('onClose 引用变化时 Escape 仍能调用最新的回调', () => {
+    const first = vi.fn()
+    const second = vi.fn()
+
+    const { rerender } = render(
+      <Modal isOpen onClose={first} title="测试">x</Modal>
+    )
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(first).toHaveBeenCalledTimes(1)
+
+    // 模拟父组件传入新的回调（每次渲染都是新箭头函数的常见场景）
+    rerender(<Modal isOpen onClose={second} title="测试">x</Modal>)
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(second).toHaveBeenCalledTimes(1)
+    // 第一个不应再被调用（已解除绑定）
+    expect(first).toHaveBeenCalledTimes(1)
+  })
+
+  it('自定义宽度生效', () => {
+    render(<Modal isOpen onClose={() => {}} title="测试" width={600}>x</Modal>)
+    const dialog = screen.getByRole('dialog') as HTMLElement
+    expect(dialog.style.width).toBe('600px')
+  })
+
+  it('字符串宽度也支持', () => {
+    render(<Modal isOpen onClose={() => {}} title="测试" width="80%">x</Modal>)
+    const dialog = screen.getByRole('dialog') as HTMLElement
+    expect(dialog.style.width).toBe('80%')
+  })
+
+  it('关闭按钮可点击触发 onClose', () => {
+    const onClose = vi.fn()
+    render(<Modal isOpen onClose={onClose} title="测试">x</Modal>)
+    fireEvent.click(screen.getByRole('button', { name: '×' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -187,5 +225,44 @@ describe('CardEditor 过滤 + 原始索引', () => {
 
     // 「火球」是攻击卡 → 组合过滤后为空
     expect(screen.getByText('0 / 3 张卡牌')).toBeTruthy()
+  })
+
+  it('loadExistingCards 失败时显示 Toast 错误', async () => {
+    // 通过 FileService.setApi 注入拒绝响应的 API
+    const mockApi: FileService.ElectronAPI = {
+      openDirectory: vi.fn(), saveDirectory: vi.fn(),
+      readDirectory: vi.fn().mockRejectedValue(new Error('EACCES: permission denied')),
+      readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(),
+      copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
+      launchGame: vi.fn(), showInFolder: vi.fn()
+    }
+    FileService.setApi(mockApi)
+
+    await act(async () => {
+      render(<CardEditor projectPath="/bad/path" />)
+    })
+
+    const toast = await screen.findByText(/加载卡牌失败/, {}, { timeout: 1000 })
+    expect(toast).toBeTruthy()
+    expect(toast.className).toContain('error')
+  })
+
+  it('loadExistingCards 成功但无卡牌时不显示 Toast', async () => {
+    const mockApi: FileService.ElectronAPI = {
+      openDirectory: vi.fn(), saveDirectory: vi.fn(),
+      readDirectory: vi.fn().mockResolvedValue([]),
+      readFile: vi.fn(), writeFile: vi.fn(), mkdir: vi.fn(),
+      copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
+      launchGame: vi.fn(), showInFolder: vi.fn()
+    }
+    FileService.setApi(mockApi)
+
+    await act(async () => {
+      render(<CardEditor projectPath="/empty" />)
+    })
+
+    // 给 useEffect 充分时间；不应出现错误 toast
+    await new Promise(r => setTimeout(r, 50))
+    expect(screen.queryByText(/加载卡牌失败/)).toBeNull()
   })
 })

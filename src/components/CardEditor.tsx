@@ -28,7 +28,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
   const [saving, setSaving] = useState(false)
-  const { message: saveMessage, showMessage } = useTransientMessage()
+  const { message: saveMessage, showMessage: showSaveMessage } = useTransientMessage()
+  const { message: loadMessage, showMessage: showLoadMessage } = useTransientMessage()
   const [errors, setErrors] = useState<string[]>([])
   const [loadingCards, setLoadingCards] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -53,6 +54,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       }
     } catch (err) {
       console.error('Failed to load existing cards:', err)
+      showLoadMessage('error', `加载卡牌失败: ${err instanceof Error ? err.message : String(err)}`)
     }
     setLoadingCards(false)
   }
@@ -123,7 +125,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       const result = await FileService.saveCardToProject(projectPath, currentCard, 'MyMod.Cards')
 
       if (result.success) {
-        showMessage('success', `已保存到 ${result.fileName}`)
+        showSaveMessage('success', `已保存到 ${result.fileName}`)
         setGeneratedCode(generateCardCode(currentCard, 'MyMod.Cards'))
       } else {
         setErrors([result.error || '保存失败，请检查目录权限'])
@@ -341,6 +343,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
             </div>
           )}
         </div>
+
+        {/* 加载错误 Toast：放在 card-properties 之外，不受 currentCard 影响 */}
+        {loadMessage && <Toast message={loadMessage} />}
 
         {/* 下方：代码预览 */}
         {generatedCode && (

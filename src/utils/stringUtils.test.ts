@@ -24,6 +24,13 @@ describe('toPascalCase', () => {
   it('应该处理数字', () => {
     expect(toPascalCase('card 123')).toBe('Card123')
   })
+
+  it('锁定契约：分隔符后续小写字母会被大写化（FireBall）', () => {
+    // 实际实现：分隔符后的字符一律 toUpperCase
+    // 'fire-ball' → 'FireBall'；'hello world' → 'HelloWorld'
+    expect(toPascalCase('fire-ball')).toBe('FireBall')
+    expect(toPascalCase('hello_world')).toBe('HelloWorld')
+  })
 })
 
 describe('toCamelCase', () => {
