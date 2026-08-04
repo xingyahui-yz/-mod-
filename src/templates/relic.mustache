@@ -1,0 +1,27 @@
+using Godot;
+using RitsuMod.Content;
+
+namespace {{{namespace}}}
+{
+    public class {{{className}}} : RelicComponent
+    {
+        public override void SetDefaults()
+        {
+            Name = "{{{name}}}";
+            Description = "{{{description}}}";
+            Tier = RelicTier.{{{tier}}};
+            Rarity = RelicRarity.{{{rarity}}};
+            ID = "{{{id}}}";
+        }
+
+{{#triggerMethods}}
+        public override void {{{methodName}}}()
+        {
+{{#statements}}
+            {{{.}}}
+{{/statements}}
+        }
+
+{{/triggerMethods}}
+    }
+}

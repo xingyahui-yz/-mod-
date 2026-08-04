@@ -10,8 +10,9 @@ import { GameLauncher } from './components/GameLauncher'
 import { AIGenerator } from './components/AIGenerator'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AboutModal } from './components/AboutModal'
+import { RelicEditor } from './components/RelicEditor'
 
-type Tab = 'cards' | 'files' | 'test' | 'ai'
+type Tab = 'cards' | 'relics' | 'files' | 'test' | 'ai'
 
 function App() {
   const { projectPath, modManifest, openProject } = useProjectStore()
@@ -70,6 +71,12 @@ function App() {
           🃏 卡牌编辑器
         </button>
         <button
+          className={activeTab === 'relics' ? 'active' : ''}
+          onClick={() => setActiveTab('relics')}
+        >
+          📜 遗物编辑器
+        </button>
+        <button
           className={activeTab === 'ai' ? 'active' : ''}
           onClick={() => setActiveTab('ai')}
         >
@@ -110,6 +117,13 @@ function App() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* 遗物编辑器（节点编辑器 v0.4 端到端） */}
+        {activeTab === 'relics' && (
+          <div className="editor-area">
+            <RelicEditor />
           </div>
         )}
 
