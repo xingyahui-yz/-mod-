@@ -41,6 +41,13 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
 
   const ng = useNodeGraph(relic.id, 'relic')
 
+  const handleConnect = useCallback((from: { nodeId: string; port: string }, to: { nodeId: string; port: string }) => {
+    const result = ng.connect(from, to)
+    if (!result.ok && result.reason) {
+      setError(`连线失败：${result.reason}`)
+    }
+  }, [ng])
+
   const handleGenerate = useCallback(() => {
     try {
       const code = generateRelicCode(ng.graph, relic)
@@ -163,6 +170,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
           onMoveNode={ng.moveNode}
           onRemoveNode={ng.removeNode}
           onDisconnect={ng.disconnect}
+          onConnect={handleConnect}
         />
       </div>
 

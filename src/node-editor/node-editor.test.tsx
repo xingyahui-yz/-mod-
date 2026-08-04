@@ -307,3 +307,103 @@ describe('端到端 (v0.3): useNodeGraph → canvas → 三节点两连线', () 
     expect(result.current.graph.edges).toHaveLength(1)
   })
 })
+
+// ============================================================================
+// v0.5: 端口 click-to-connect
+// ============================================================================
+
+describe('NodeGraphCanvas 端口点击连线 (v0.5)', () => {
+  function setupTwoNodes() {
+    let g: NodeGraph = createEmptyGraph('r-1', 'relic')
+    const t = { id: 't', type: 'trigger' as const, position: { x: 0, y: 0 }, data: {} }
+    const e = { id: 'e', type: 'effect' as const, position: { x: 100, y: 0 }, data: {} }
+    g = { ...g, nodes: [t, e] }
+    return g
+  }
+
+  it('点 output 端口 → 端口变成 pending（白色 + 放大）', () => {
+    const graph = setupTwoNodes()
+    const { container } = render(
+      <NodeGraphCanvas graph={graph} onMoveNode={() => {}} onRemoveNode={() => {}} />
+    )
+    const outPort = container.querySelector('[data-testid="port-t-out"]') as Element
+    expect(outPort).toBeTruthy()
+    fireEvent.click(outPort)
+    // r=6（放大）+ fill 白色
+    expect(outPort.getAttribute('r')).toBe('6')
+    expect(outPort.getAttribute('fill')).toBe('#ffffff')
+  })
+
+  it('点 input 端口（无 pending）→ 不触发 onConnect', () => {
+    const graph = setupTwoNodes()
+    const onConnect = vi.fn()
+    const { container } = render(
+      <NodeGraphCanvas graph={graph} onMoveNode={() => {}} onRemoveNode={() => {}} onConnect={onConnect} />
+    )
+    const inPort = container.querySelector('[data-testid="port-e-in"]') as Element
+    fireEvent.click(inPort)
+    expect(onConnect).not.toHaveBeenCalled()
+  })
+
+  it('点 output → 点 input → 触发 onConnect(from, to)', () => {
+    const graph = setupTwoNodes()
+    const onConnect = vi.fn()
+    const { container } = render(
+      <NodeGraphCanvas graph={graph} onMoveNode={() => {}} onRemoveNode={() => {}} onConnect={onConnect} />
+    )
+    fireEvent.click(container.querySelector('[data-testid="port-t-out"]') as Element)
+    fireEvent.click(container.querySelector('[data-testid="port-e-in"]') as Element)
+    expect(onConnect).toHaveBeenCalledTimes(1)
+    expect(onConnect).toHaveBeenCalledWith(
+      { nodeId: 't', port: 'out' },
+      { nodeId: 'e', port: 'in' }
+    )
+  })
+
+  it('onConnect 触发后 pendingFrom 清空（input 端口变回普通色）', () => {
+    const graph = setupTwoNodes()
+    const onConnect = vi.fn()
+    const { container } = render(
+      <NodeGraphCanvas graph={graph} onMoveNode={() => {}} onRemoveNode={() => {}} onConnect={onConnect} />
+    )
+    fireEvent.click(container.querySelector('[data-testid="port-t-out"]') as Element)
+    fireEvent.click(container.querySelector('[data-testid="port-e-in"]') as Element)
+    const outPort = container.querySelector('[data-testid="port-t-out"]') as Element
+    expect(outPort.getAttribute('fill')).not.toBe('#ffffff')
+    expect(outPort.getAttribute('r')).toBe('4')
+  })
+
+  it('点空白画布 → 取消 pendingFrom', () => {
+    const graph = setupTwoNodes()
+    const onConnect = vi.fn()
+    const { container } = render(
+      <NodeGraphCanvas graph={graph} onMoveNode={() => {}} onRemoveNode={() => {}} onConnect={onConnect} />
+    )
+    fireEvent.click(container.querySelector('[data-testid="port-t-out"]') as Element)
+    // 验证 pending
+    const outPort = container.querySelector('[data-testid="port-t-out"]') as Element
+    expect(outPort.getAttribute('fill')).toBe('#ffffff')
+    // 点空白
+    fireEvent.click(container.querySelector('[data-testid="node-graph-canvas"]') as Element)
+    // pending 清空
+    expect(outPort.getAttribute('fill')).not.toBe('#ffffff')
+  })
+
+  it('点 input 时若有 pending source → 触发 onConnect 后清空；点 input 时无 pending source → no-op', () => {
+    const graph = setupTwoNodes()
+    const onConnect = vi.fn()
+    const { container } = render(
+      <NodeGraphCanvas graph={graph} onMoveNode={() => {}} onRemoveNode={() => {}} onConnect={onConnect} />
+    )
+    // 无 pending → 点 input 不触发
+    fireEvent.click(container.querySelector('[data-testid="port-e-in"]') as Element)
+    expect(onConnect).toHaveBeenCalledTimes(0)
+    // 设 pending → 点 input 触发一次
+    fireEvent.click(container.querySelector('[data-testid="port-t-out"]') as Element)
+    fireEvent.click(container.querySelector('[data-testid="port-e-in"]') as Element)
+    expect(onConnect).toHaveBeenCalledTimes(1)
+    // pending 清空后再点 input → 不再触发
+    fireEvent.click(container.querySelector('[data-testid="port-e-in"]') as Element)
+    expect(onConnect).toHaveBeenCalledTimes(1)
+  })
+})

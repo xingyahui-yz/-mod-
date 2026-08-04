@@ -1,19 +1,29 @@
 /**
- * 节点图画布 - 节点编辑器 v0.3
+ * 节点图画布 - 节点编辑器 v0.5
  *
  * - SVG 画布 + 节点用 <g> + <rect> + <text>
  * - 拖动用 mouseDown/move/up + SVG 坐标
  * - 边：贝塞尔曲线 <path>，点击删除
+ * - 端口 click-to-connect：
+ *   点 output 端口 → 选中 source；点 input 端口 → 触发 onConnect
+ *   视觉：选中的端口变白 + 放大
  */
 import { useState, useRef, useCallback } from 'react'
-import { GraphNode, NodeGraph, NODE_PORT_DEFS } from './types'
+import { GraphNode, NodeGraph, PortDef, NODE_PORT_DEFS } from './types'
 import { edgePath, NODE_WIDTH, NODE_HEIGHT } from './graph'
+
+export interface PortRef {
+  nodeId: string
+  port: string
+}
 
 interface NodeGraphCanvasProps {
   graph: NodeGraph
   onMoveNode: (nodeId: string, position: { x: number; y: number }) => void
   onRemoveNode: (nodeId: string) => void
   onDisconnect?: (edgeId: string) => void
+  /** 从 output 端口连到 input 端口 */
+  onConnect?: (from: PortRef, to: PortRef) => void
   width?: number
   height?: number
 }
@@ -30,11 +40,13 @@ export function NodeGraphCanvas({
   onMoveNode,
   onRemoveNode,
   onDisconnect,
+  onConnect,
   width = 800,
   height = 600
 }: NodeGraphCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [dragging, setDragging] = useState<{ nodeId: string; offsetX: number; offsetY: number } | null>(null)
+  const [pendingFrom, setPendingFrom] = useState<PortRef | null>(null)
 
   const screenToSvg = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current
@@ -71,6 +83,24 @@ export function NodeGraphCanvas({
     setDragging(null)
   }
 
+  const handleSvgClick = () => {
+    // 点击空白 → 取消 pendingFrom
+    if (pendingFrom) setPendingFrom(null)
+  }
+
+  const handlePortClick = (e: React.MouseEvent, port: PortDef, node: GraphNode) => {
+    e.stopPropagation()
+    if (port.kind === 'output') {
+      // 点 output → 设为 source
+      setPendingFrom({ nodeId: node.id, port: port.id })
+    } else if (port.kind === 'input' && pendingFrom) {
+      // 点 input + 有 pending source → 连线
+      onConnect?.(pendingFrom, { nodeId: node.id, port: port.id })
+      setPendingFrom(null)
+    }
+    // 点 input + 无 pending source → no-op
+  }
+
   // 索引节点便于查找
   const nodeIndex = new Map(graph.nodes.map(n => [n.id, n]))
 
@@ -84,6 +114,7 @@ export function NodeGraphCanvas({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onClick={handleSvgClick}
     >
       {/* 背景网格 */}
       <defs>
@@ -123,8 +154,10 @@ export function NodeGraphCanvas({
         <NodeBox
           key={node.id}
           node={node}
+          pendingFrom={pendingFrom}
           onMouseDown={(e) => handleMouseDown(e, node)}
           onRemove={() => onRemoveNode(node.id)}
+          onPortClick={handlePortClick}
         />
       ))}
     </svg>
@@ -133,11 +166,13 @@ export function NodeGraphCanvas({
 
 interface NodeBoxProps {
   node: GraphNode
+  pendingFrom: PortRef | null
   onMouseDown: (e: React.MouseEvent) => void
   onRemove: () => void
+  onPortClick: (e: React.MouseEvent, port: PortDef, node: GraphNode) => void
 }
 
-function NodeBox({ node, onMouseDown, onRemove }: NodeBoxProps) {
+function NodeBox({ node, pendingFrom, onMouseDown, onRemove, onPortClick }: NodeBoxProps) {
   const color = TYPE_COLORS[node.type] || '#888'
   const ports = NODE_PORT_DEFS[node.type]
   return (
@@ -162,15 +197,24 @@ function NodeBox({ node, onMouseDown, onRemove }: NodeBoxProps) {
         {Object.keys(node.data).join(', ') || '(无数据)'}
       </text>
       {/* 端口 */}
-      {ports.map(p => (
-        <circle
-          key={p.id}
-          cx={p.kind === 'input' ? 0 : NODE_WIDTH}
-          cy={15 + ports.indexOf(p) * 12}
-          r={4}
-          fill={color}
-        />
-      ))}
+      {ports.map(p => {
+        const isPending = pendingFrom?.nodeId === node.id && pendingFrom?.port === p.id
+        const isTargetCandidate = !!pendingFrom && p.kind === 'input'
+        return (
+          <circle
+            key={p.id}
+            data-testid={`port-${node.id}-${p.id}`}
+            cx={p.kind === 'input' ? 0 : NODE_WIDTH}
+            cy={15 + ports.indexOf(p) * 12}
+            r={isPending ? 6 : 4}
+            fill={isPending ? '#ffffff' : color}
+            stroke={isTargetCandidate ? '#ffffff' : 'none'}
+            strokeWidth={isTargetCandidate ? 2 : 0}
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => onPortClick(e, p, node)}
+          />
+        )
+      })}
       {/* 删除按钮 */}
       <g
         transform={`translate(${NODE_WIDTH - 18}, 4)`}

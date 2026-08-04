@@ -68,4 +68,33 @@ describe('RelicEditor 端到端', () => {
     expect(code).toContain('Tier = RelicTier.Boss')
     expect(code).toContain('Rarity = RelicRarity.Rare')
   })
+
+  it('完整流水线 (v0.5)：加 trigger + effect → 点 output → 点 input → 生成代码包含 ApplyBuff', () => {
+    render(<RelicEditor initialRelic={{ id: 'burning_blood', name: 'Burning Blood' }} />)
+
+    // 1. 加触发器 + 效果
+    fireEvent.click(screen.getByTestId('add-trigger-onCombatStart'))
+    fireEvent.click(screen.getByTestId('add-effect-gainBuff'))
+
+    // 2. 找到 trigger.out 端口和 effect.in 端口
+    const canvas = screen.getByTestId('node-graph-canvas')
+    const triggerOut = canvas.querySelector('[data-testid^="port-"][data-testid$="-out"]') as Element
+    const effectIn = canvas.querySelector('[data-testid^="port-"][data-testid$="-in"]') as Element
+    expect(triggerOut).toBeTruthy()
+    expect(effectIn).toBeTruthy()
+
+    // 3. 点 output → 点 input → 连线
+    fireEvent.click(triggerOut)
+    fireEvent.click(effectIn)
+
+    // 4. 画布上应有一条边
+    expect(canvas.querySelectorAll('[data-testid^="edge-"]')).toHaveLength(1)
+
+    // 5. 生成代码 → 应包含 ApplyBuff
+    fireEvent.click(screen.getByTestId('generate-code'))
+    const code = (screen.getByTestId('relic-code') as HTMLTextAreaElement).value
+    expect(code).toContain('public class BurningBlood : RelicComponent')
+    expect(code).toContain('public override void OnCombatStart()')
+    expect(code).toMatch(/ApplyBuff\("Strength", 1\);/)
+  })
 })
