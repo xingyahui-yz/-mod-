@@ -3,9 +3,44 @@
  * 单元测试直接覆盖这些
  */
 import {
-  GraphNode, GraphEdge, NodeGraph, NodeType, EntityType,
+  GraphNode, GraphEdge, NodeGraph, NodeType, EntityType, PortKind,
   NODE_PORT_DEFS
 } from './types'
+
+/** 节点尺寸（与 NodeGraphCanvas 共享） */
+export const NODE_WIDTH = 120
+export const NODE_HEIGHT = 60
+
+/** 端口相对节点原点的坐标（x：input 在左，output 在右；y：按索引排列） */
+export function getPortXY(node: GraphNode, portId: string): { x: number; y: number } {
+  const ports = NODE_PORT_DEFS[node.type]
+  const idx = ports.findIndex(p => p.id === portId)
+  const port = ports[idx]
+  const kind: PortKind = port?.kind ?? 'output'
+  const x = kind === 'input' ? 0 : NODE_WIDTH
+  const y = 15 + idx * 12
+  return { x, y }
+}
+
+/** 计算一条边的 SVG path (贝塞尔曲线)
+ *  - 从 from 节点 output 端口 出发
+ *  - 到 to 节点 input 端口 结束
+ *  - 控制点 = 水平方向的中点
+ */
+export function edgePath(edge: GraphEdge, fromNode: GraphNode, toNode: GraphNode): string {
+  const fromLocal = getPortXY(fromNode, edge.from.port)
+  const toLocal = getPortXY(toNode, edge.to.port)
+  const sx = fromNode.position.x + fromLocal.x
+  const sy = fromNode.position.y + fromLocal.y
+  const tx = toNode.position.x + toLocal.x
+  const ty = toNode.position.y + toLocal.y
+  const dx = tx - sx
+  const cx1 = sx + dx * 0.5
+  const cy1 = sy
+  const cx2 = tx - dx * 0.5
+  const cy2 = ty
+  return `M ${sx} ${sy} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${tx} ${ty}`
+}
 
 /** 创建空图 */
 export function createEmptyGraph(

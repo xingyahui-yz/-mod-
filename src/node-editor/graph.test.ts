@@ -5,7 +5,8 @@ import { describe, it, expect } from 'vitest'
 import {
   createEmptyGraph, appendNode, removeNode, moveNode,
   connect, disconnect, hasCycle,
-  serialize, deserialize, isValidGraph
+  serialize, deserialize, isValidGraph,
+  edgePath, getPortXY, NODE_WIDTH
 } from './graph'
 import { NodeGraph } from './types'
 
@@ -216,5 +217,87 @@ describe('isValidGraph', () => {
     expect(isValidGraph(null)).toBe(false)
     expect(isValidGraph(42)).toBe(false)
     expect(isValidGraph('string')).toBe(false)
+  })
+})
+
+// ============================================================================
+// v0.3: edgePath + getPortXY —— SVG 渲染用的几何助手
+// ============================================================================
+
+describe('getPortXY', () => {
+  it('trigger 只有 output 端口，位于节点右边', () => {
+    const xy = getPortXY({ id: 't', type: 'trigger', position: { x: 0, y: 0 }, data: {} }, 'out')
+    expect(xy).toEqual({ x: NODE_WIDTH, y: 15 })
+  })
+
+  it('effect 的 input 端口位于节点左边', () => {
+    const xy = getPortXY({ id: 'e', type: 'effect', position: { x: 0, y: 0 }, data: {} }, 'in')
+    expect(xy).toEqual({ x: 0, y: 15 })
+  })
+
+  it('effect 的 output 端口位于节点右边且 y 更大', () => {
+    const xy = getPortXY({ id: 'e', type: 'effect', position: { x: 0, y: 0 }, data: {} }, 'out')
+    expect(xy).toEqual({ x: NODE_WIDTH, y: 27 })
+  })
+
+  it('condition 的 true/false 端口分别 y=27, 39', () => {
+    const node = { id: 'c', type: 'condition' as const, position: { x: 0, y: 0 }, data: {} }
+    // NODE_PORT_DEFS.condition: in(idx=0,y=15), true(idx=1,y=27), false(idx=2,y=39)
+    expect(getPortXY(node, 'in')).toEqual({ x: 0, y: 15 })
+    expect(getPortXY(node, 'true')).toEqual({ x: NODE_WIDTH, y: 27 })
+    expect(getPortXY(node, 'false')).toEqual({ x: NODE_WIDTH, y: 39 })
+  })
+
+  it('未知端口 fallback 到 output 侧', () => {
+    const xy = getPortXY({ id: 't', type: 'trigger', position: { x: 0, y: 0 }, data: {} }, 'unknown')
+    expect(xy.x).toBe(NODE_WIDTH)
+  })
+})
+
+describe('edgePath', () => {
+  function buildPair() {
+    let g = createEmptyGraph('r', 'relic')
+    const { graph: g1, node: t } = appendNode(g, 'trigger', { x: 0, y: 0 })
+    g = g1
+    const { graph: g2, node: e } = appendNode(g, 'effect', { x: 100, y: 0 })
+    g = g2
+    const c = connect(g, { nodeId: t.id, port: 'out' }, { nodeId: e.id, port: 'in' })
+    if (!c.ok) throw new Error('connect failed')
+    return { graph: c.graph, trigger: t, effect: e, edge: c.graph.edges[0] }
+  }
+
+  it('从 output 端口 (右) 到 input 端口 (左)', () => {
+    const { edge, trigger, effect } = buildPair()
+    const d = edgePath(edge, trigger, effect)
+    // 起点 = trigger 右边 = (120, 15)
+    expect(d).toMatch(/^M 120 15 C /)
+    // 终点 = effect 左边 = (100, 15)
+    expect(d).toMatch(/, 100 15$/)
+  })
+
+  it('返回的 path 是有效的贝塞尔三次曲线字符串', () => {
+    const { edge, trigger, effect } = buildPair()
+    const d = edgePath(edge, trigger, effect)
+    // M sx sy C cx1 cy1, cx2 cy2, tx ty
+    expect(d.split(' ')).toHaveLength(10)
+    expect(d.startsWith('M')).toBe(true)
+    expect(d).toContain(' C ')
+  })
+
+  it('节点位置变化时 path 同步更新', () => {
+    const { edge, trigger, effect } = buildPair()
+    const moved = { ...trigger, position: { x: 50, y: 80 } }
+    const d = edgePath(edge, moved, effect)
+    expect(d).toContain('170')  // sx = 50 + 120
+    expect(d).toContain('95')   // sy = 80 + 15
+  })
+
+  it('trigger→effect 水平距离 +40，控制点水平居中', () => {
+    const { edge, trigger, effect } = buildPair()
+    // effect 在 x=100, trigger 在 x=0, NODE_WIDTH=120
+    // sx = 120, tx = 100, dx = -20
+    // cx1 = 120 + (-20)*0.5 = 110, cx2 = 100 - (-20)*0.5 = 110
+    const d = edgePath(edge, trigger, effect)
+    expect(d).toContain('110 15') // cx1=cy1=110,15; cx2=cy2=110,15
   })
 })

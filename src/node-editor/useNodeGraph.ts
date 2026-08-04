@@ -3,11 +3,10 @@
  */
 import { useState, useCallback } from 'react'
 import {
-  NodeGraph, GraphNode,
   createEmptyGraph, removeNode, moveNode,
   connect, disconnect, serialize, deserialize
 } from './graph'
-import { EntityType } from './types'
+import { EntityType, NodeGraph, GraphNode, NodeType } from './types'
 
 export interface UseNodeGraphReturn {
   graph: NodeGraph
@@ -54,20 +53,16 @@ export function useNodeGraph(
 
   const connectFn = useCallback(
     (from: { nodeId: string; port: string }, to: { nodeId: string; port: string }) => {
-      let result: { ok: boolean; reason?: string } = { ok: false, reason: 'unknown' }
-      setGraph(prev => {
-        const r = connect(prev, from, to)
-        if (r.ok) {
-          result = { ok: true }
-          return r.graph
-        } else {
-          result = { ok: false, reason: r.reason }
-          return prev  // 状态不变
-        }
-      })
-      return result
+      // 基于当前 graph 计算结果（不在 setState updater 里副作用赋值，
+      // 否则 React 18 batch 会让 return 早于 updater 执行，导致 stale result）
+      const r = connect(graph, from, to)
+      if (r.ok) {
+        setGraph(r.graph)
+        return { ok: true }
+      }
+      return { ok: false, reason: r.reason }
     },
-    []
+    [graph]
   )
 
   const disconnectFn = useCallback((edgeId: string) => {

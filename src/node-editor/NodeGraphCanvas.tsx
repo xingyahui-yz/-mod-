@@ -1,25 +1,23 @@
 /**
- * 节点图画布 - 节点编辑器 v0.2
+ * 节点图画布 - 节点编辑器 v0.3
  *
- * 简化实现：
  * - SVG 画布 + 节点用 <g> + <rect> + <text>
  * - 拖动用 mouseDown/move/up + SVG 坐标
- * - 不画边（v0.3）
+ * - 边：贝塞尔曲线 <path>，点击删除
  */
 import { useState, useRef, useCallback } from 'react'
 import { GraphNode, NodeGraph, NODE_PORT_DEFS } from './types'
-import { UseNodeGraphReturn } from './useNodeGraph'
+import { edgePath, NODE_WIDTH, NODE_HEIGHT } from './graph'
 
 interface NodeGraphCanvasProps {
   graph: NodeGraph
   onMoveNode: (nodeId: string, position: { x: number; y: number }) => void
   onRemoveNode: (nodeId: string) => void
+  onDisconnect?: (edgeId: string) => void
   width?: number
   height?: number
 }
 
-const NODE_WIDTH = 120
-const NODE_HEIGHT = 60
 const TYPE_COLORS: Record<string, string> = {
   trigger: '#3b82f6',
   condition: '#a855f7',
@@ -31,6 +29,7 @@ export function NodeGraphCanvas({
   graph,
   onMoveNode,
   onRemoveNode,
+  onDisconnect,
   width = 800,
   height = 600
 }: NodeGraphCanvasProps) {
@@ -72,6 +71,9 @@ export function NodeGraphCanvas({
     setDragging(null)
   }
 
+  // 索引节点便于查找
+  const nodeIndex = new Map(graph.nodes.map(n => [n.id, n]))
+
   return (
     <svg
       ref={svgRef}
@@ -90,6 +92,31 @@ export function NodeGraphCanvas({
         </pattern>
       </defs>
       <rect width={width} height={height} fill="url(#grid)" />
+
+      {/* 边：在节点下方渲染 */}
+      <g className="edges">
+        {graph.edges.map(edge => {
+          const fromNode = nodeIndex.get(edge.from.nodeId)
+          const toNode = nodeIndex.get(edge.to.nodeId)
+          if (!fromNode || !toNode) return null
+          const d = edgePath(edge, fromNode, toNode)
+          return (
+            <path
+              key={edge.id}
+              data-testid={`edge-${edge.id}`}
+              d={d}
+              fill="none"
+              stroke="var(--accent, #60a5fa)"
+              strokeWidth={2}
+              style={{ cursor: onDisconnect ? 'pointer' : 'default' }}
+              onClick={(e) => {
+                e.stopPropagation()
+                onDisconnect?.(edge.id)
+              }}
+            />
+          )
+        })}
+      </g>
 
       {/* 节点 */}
       {graph.nodes.map(node => (
