@@ -6,7 +6,8 @@ import {
   createEmptyGraph, appendNode, removeNode, moveNode,
   connect, disconnect, hasCycle,
   serialize, deserialize, isValidGraph,
-  edgePath, getPortXY, NODE_WIDTH
+  edgePath, getPortXY, NODE_WIDTH,
+  buildNode, addNodeToGraph, touchGraph
 } from './graph'
 import { NodeGraph } from './types'
 
@@ -299,5 +300,117 @@ describe('edgePath', () => {
     // cx1 = 120 + (-20)*0.5 = 110, cx2 = 100 - (-20)*0.5 = 110
     const d = edgePath(edge, trigger, effect)
     expect(d).toContain('110 15') // cx1=cy1=110,15; cx2=cy2=110,15
+  })
+})
+
+// ============================================================================
+// v0.5.1: buildNode / addNodeToGraph / touchGraph —— 节点构造与图变更的
+// 三个公开纯函数，appendNode 是它们的组合
+// ============================================================================
+
+describe('buildNode', () => {
+  it('默认 id 是 UUID 格式', () => {
+    const n = buildNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    expect(n.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    expect(n.type).toBe('trigger')
+    expect(n.position).toEqual({ x: 0, y: 0 })
+    expect(n.data).toEqual({ event: 'onCombatStart' })
+  })
+
+  it('传 id 时用传入的 id（v0.8 AI JSON Schema 路径）', () => {
+    const n = buildNode('effect', { x: 1, y: 2 }, { kind: 'gainBuff' }, 'my-stable-id')
+    expect(n.id).toBe('my-stable-id')
+    expect(n.type).toBe('effect')
+    expect(n.data).toEqual({ kind: 'gainBuff' })
+  })
+
+  it('data 默认空对象', () => {
+    const n = buildNode('trigger', { x: 0, y: 0 })
+    expect(n.data).toEqual({})
+  })
+
+  it('不连入图（纯构造）', () => {
+    const n = buildNode('effect', { x: 0, y: 0 })
+    // 单纯返回一个节点，不操作图
+    expect(n.id).toBeTruthy()
+    // type / position / data 已断言
+  })
+})
+
+describe('addNodeToGraph', () => {
+  it('追加节点到 nodes 末尾', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const n = buildNode('effect', { x: 0, y: 0 })
+    const g2 = addNodeToGraph(g, n)
+    expect(g2.nodes).toHaveLength(1)
+    expect(g2.nodes[0]).toEqual(n)
+  })
+
+  it('不修改原图（不可变）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const n = buildNode('effect', { x: 0, y: 0 })
+    addNodeToGraph(g, n)
+    expect(g.nodes).toHaveLength(0)
+  })
+
+  it('不动 metadata（updatedAt 不变）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const before = g.metadata.updatedAt
+    const g2 = addNodeToGraph(g, buildNode('effect', { x: 0, y: 0 }))
+    expect(g2.metadata.updatedAt).toBe(before)
+  })
+
+  it('保留 edges 不变', () => {
+    // 构造：trigger→effect 已 connect，再 addNode 一个 effect
+    let g = createEmptyGraph('r', 'relic')
+    const { graph: g1, node: t } = appendNode(g, 'trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    g = g1
+    const { graph: g2, node: e } = appendNode(g, 'effect', { x: 100, y: 0 }, { kind: 'gainBuff' })
+    g = g2
+    const c = connect(g, { nodeId: t.id, port: 'out' }, { nodeId: e.id, port: 'in' })
+    if (!c.ok) throw new Error('connect failed')
+    g = c.graph
+    const f = buildNode('effect', { x: 200, y: 0 }, { kind: 'loseHp' })
+    const g3 = addNodeToGraph(g, f)
+    expect(g3.edges).toEqual(g.edges)  // edges 不变
+    expect(g3.nodes).toHaveLength(3)
+  })
+})
+
+describe('touchGraph', () => {
+  it('更新 updatedAt', async () => {
+    const g = createEmptyGraph('r', 'relic')
+    const before = g.metadata.updatedAt
+    // 等 5ms 确保 new Date() 不同
+    await new Promise(r => setTimeout(r, 5))
+    const g2 = touchGraph(g)
+    expect(g2.metadata.updatedAt).not.toBe(before)
+    // 验证确实是新 ISO 字符串
+    expect(new Date(g2.metadata.updatedAt).getTime()).toBeGreaterThan(new Date(before).getTime())
+  })
+
+  it('不动 nodes', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const g2 = touchGraph(g)
+    expect(g2.nodes).toEqual(g.nodes)
+  })
+
+  it('不动 edges', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const g2 = touchGraph(g)
+    expect(g2.edges).toEqual(g.edges)
+  })
+
+  it('保留 createdAt 不变', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const g2 = touchGraph(g)
+    expect(g2.metadata.createdAt).toBe(g.metadata.createdAt)
+  })
+
+  it('不修改原图（不可变）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const before = g.metadata.updatedAt
+    touchGraph(g)
+    expect(g.metadata.updatedAt).toBe(before)
   })
 })

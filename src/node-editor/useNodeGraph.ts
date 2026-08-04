@@ -4,7 +4,8 @@
 import { useState, useCallback } from 'react'
 import {
   createEmptyGraph, removeNode, moveNode,
-  connect, disconnect, serialize, deserialize
+  connect, disconnect, serialize, deserialize,
+  buildNode, addNodeToGraph, touchGraph
 } from './graph'
 import { EntityType, NodeGraph, GraphNode, NodeType } from './types'
 
@@ -30,15 +31,11 @@ export function useNodeGraph(
 
   const addNode = useCallback(
     (type: NodeType, position: { x: number; y: number }, data: Record<string, unknown> = {}): GraphNode => {
-      // 在 setState updater 之外计算节点 ID，确保同步返回
-      const nodeId = crypto.randomUUID()
-      const newNode: GraphNode = { id: nodeId, type, position, data }
-      setGraph(prev => ({
-        ...prev,
-        nodes: [...prev.nodes, newNode],
-        metadata: { ...prev.metadata, updatedAt: new Date().toISOString() }
-      }))
-      return newNode
+      // v0.5.1: 用 graph.ts 公开纯函数（buildNode + addNodeToGraph + touchGraph）
+      // 同步返回新节点；setState updater 用 prev，保证同一 render 多次 add 不丢
+      const node = buildNode(type, position, data)
+      setGraph(prev => touchGraph(addNodeToGraph(prev, node)))
+      return node
     },
     []
   )

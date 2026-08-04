@@ -59,33 +59,72 @@ export function createEmptyGraph(
   }
 }
 
-/** 添加节点 - 返回新图与新节点 */
-export function appendNode(
-  graph: NodeGraph,
+/**
+ * 构造一个新节点（不连入图）。
+ * id 不传时用 crypto.randomUUID()；传时直接用（v0.8 AI JSON Schema 路径）。
+ * 纯函数，不依赖图状态。
+ */
+export function buildNode(
   type: NodeType,
   position: { x: number; y: number },
-  data: Record<string, unknown> = {}
-): { graph: NodeGraph; node: GraphNode } {
-  const node: GraphNode = {
-    id: crypto.randomUUID(),
+  data: Record<string, unknown> = {},
+  id?: string
+): GraphNode {
+  return {
+    id: id ?? crypto.randomUUID(),
     type,
     position,
     data
   }
+}
+
+/**
+ * 把节点追加到图的 nodes 末尾，返回新图。
+ * 不动 metadata（updatedAt 不变）。纯函数，不动原图。
+ */
+export function addNodeToGraph(graph: NodeGraph, node: GraphNode): NodeGraph {
   return {
-    graph: { ...graph, nodes: [...graph.nodes, node], metadata: touch(graph) },
+    ...graph,
+    nodes: [...graph.nodes, node]
+  }
+}
+
+/**
+ * 触碰图，返回 metadata.updatedAt 更新到当前时刻的新图。
+ * 不动 nodes / edges；createdAt 保留。纯函数，不动原图。
+ */
+export function touchGraph(graph: NodeGraph): NodeGraph {
+  return {
+    ...graph,
+    metadata: { ...graph.metadata, updatedAt: new Date().toISOString() }
+  }
+}
+
+/**
+ * 添加节点 - 返回新图与新节点。
+ * 组合：buildNode + addNodeToGraph + touchGraph。
+ */
+export function appendNode(
+  graph: NodeGraph,
+  type: NodeType,
+  position: { x: number; y: number },
+  data: Record<string, unknown> = {},
+  id?: string
+): { graph: NodeGraph; node: GraphNode } {
+  const node = buildNode(type, position, data, id)
+  return {
+    graph: touchGraph(addNodeToGraph(graph, node)),
     node
   }
 }
 
 /** 删除节点（同时删除连接到该节点的边） */
 export function removeNode(graph: NodeGraph, nodeId: string): NodeGraph {
-  return {
+  return touchGraph({
     ...graph,
     nodes: graph.nodes.filter(n => n.id !== nodeId),
     edges: graph.edges.filter(e => e.from.nodeId !== nodeId && e.to.nodeId !== nodeId),
-    metadata: touch(graph)
-  }
+  })
 }
 
 /** 移动节点 */
@@ -94,13 +133,12 @@ export function moveNode(
   nodeId: string,
   position: { x: number; y: number }
 ): NodeGraph {
-  return {
+  return touchGraph({
     ...graph,
     nodes: graph.nodes.map(n =>
       n.id === nodeId ? { ...n, position } : n
     ),
-    metadata: touch(graph)
-  }
+  })
 }
 
 /** 校验连线合法性 */
@@ -163,17 +201,16 @@ export function connect(
   }
   return {
     ok: true,
-    graph: { ...graph, edges: [...graph.edges, edge], metadata: touch(graph) }
+    graph: touchGraph({ ...graph, edges: [...graph.edges, edge] })
   }
 }
 
 /** 删除边 */
 export function disconnect(graph: NodeGraph, edgeId: string): NodeGraph {
-  return {
+  return touchGraph({
     ...graph,
     edges: graph.edges.filter(e => e.id !== edgeId),
-    metadata: touch(graph)
-  }
+  })
 }
 
 /** 检测环（BFS）- 节点图必须是有向无环图 */
@@ -229,8 +266,4 @@ export function isValidGraph(obj: unknown): obj is NodeGraph {
     Array.isArray(g.edges) &&
     typeof g.metadata === 'object'
   )
-}
-
-function touch(graph: NodeGraph): NodeGraph['metadata'] {
-  return { ...graph.metadata, updatedAt: new Date().toISOString() }
 }
