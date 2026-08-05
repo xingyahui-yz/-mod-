@@ -8,7 +8,7 @@
  *   点 output 端口 → 选中 source；点 input 端口 → 触发 onConnect
  *   视觉：选中的端口变白 + 放大
  */
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useId } from 'react'
 import { GraphNode, NodeGraph, PortDef, NODE_PORT_DEFS } from './types'
 import { edgePath, getPortXY, NODE_WIDTH, NODE_HEIGHT } from './graph'
 
@@ -93,9 +93,9 @@ export function NodeGraphCanvas({
     if (port.kind === 'output') {
       // 点 output → 设为 source
       setPendingFrom({ nodeId: node.id, port: port.id })
-    } else if (port.kind === 'input' && pendingFrom) {
+    } else if (port.kind === 'input' && effectivePending) {
       // 点 input + 有 pending source → 连线
-      onConnect?.(pendingFrom, { nodeId: node.id, port: port.id })
+      onConnect?.(effectivePending, { nodeId: node.id, port: port.id })
       setPendingFrom(null)
     }
     // 点 input + 无 pending source → no-op
@@ -103,6 +103,12 @@ export function NodeGraphCanvas({
 
   // 索引节点便于查找
   const nodeIndex = new Map(graph.nodes.map(n => [n.id, n]))
+
+  // v0.6: 派生 effectivePending — 若 pendingFrom 指向已删除节点则视为 null
+  const effectivePending = pendingFrom && nodeIndex.has(pendingFrom.nodeId) ? pendingFrom : null
+
+  // v0.6: useId 避免多画布时 <pattern id="grid"> 冲突
+  const patternId = `grid-${useId()}`
 
   return (
     <svg
@@ -118,11 +124,11 @@ export function NodeGraphCanvas({
     >
       {/* 背景网格 */}
       <defs>
-        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+        <pattern id={patternId} width="20" height="20" patternUnits="userSpaceOnUse">
           <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
         </pattern>
       </defs>
-      <rect width={width} height={height} fill="url(#grid)" />
+      <rect width={width} height={height} fill={`url(#${patternId})`} />
 
       {/* 边：在节点下方渲染 */}
       <g className="edges">
@@ -154,7 +160,7 @@ export function NodeGraphCanvas({
         <NodeBox
           key={node.id}
           node={node}
-          pendingFrom={pendingFrom}
+          pendingFrom={effectivePending}
           onMouseDown={(e) => handleMouseDown(e, node)}
           onRemove={() => onRemoveNode(node.id)}
           onPortClick={handlePortClick}
@@ -213,6 +219,8 @@ function NodeBox({ node, pendingFrom, onMouseDown, onRemove, onPortClick }: Node
             stroke={isTargetCandidate ? '#ffffff' : 'none'}
             strokeWidth={isTargetCandidate ? 2 : 0}
             style={{ cursor: 'pointer' }}
+            // v0.6: 端口 mousedown 阻止冒泡，避免触发父 <g> 的拖动
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => onPortClick(e, p, node)}
           />
         )
