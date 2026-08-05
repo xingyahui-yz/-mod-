@@ -20,6 +20,16 @@ import { TRIGGER_KINDS, EFFECT_KINDS } from './kinds'
 // v0.5.2 part 2 已迁至 kinds.ts，这里只 re-export 不重复定义）
 export { SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS } from './kinds'
 
+/** Escape user input for embedding in C# double-quoted string literal */
+function escapeCSharpString(s: string): string {
+  return s
+    .replace(/\\/g, '\\\\')   // backslash first (creates new \\)
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
+}
+
 interface TriggerMethod {
   methodName: string
   statements: string[]
@@ -90,9 +100,9 @@ export function generateRelicCode(
   const view = {
     namespace,
     className,
-    id: relic.id,
-    name: relic.name,
-    description: relic.description,
+    id: escapeCSharpString(relic.id),
+    name: escapeCSharpString(relic.name),
+    description: escapeCSharpString(relic.description),
     tier: relic.tier,
     rarity: relic.rarity,
     triggerMethods
