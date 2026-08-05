@@ -218,3 +218,48 @@ describe('generateRelicCode - 图遍历', () => {
     expect(code).not.toContain('OnTurnStart')
   })
 })
+
+describe('escapeCSharpString (via generateRelicCode)', () => {
+  it('描述含双引号和换行时生成代码仍是合法 C#', () => {
+    const relic: RelicData = {
+      id: 'my_relic',
+      name: 'My Relic',
+      description: 'say "hello"\nthen <tab>\tand \\back\\',
+      tier: 'Common',
+      rarity: 'Common'
+    }
+    const g = createEmptyGraph('my_relic', 'relic')
+    const code = generateRelicCode(g, relic)
+    // description 被转义：\" \n \t \\
+    expect(code).toContain('Description = "say \\"hello\\"\\nthen <tab>\\tand \\\\back\\\\";')
+    // 不含裸双引号（会破坏 C#）
+    expect(code).not.toContain('Description = "say "hello"')
+  })
+
+  it('id 含反斜杠也被转义', () => {
+    const relic: RelicData = {
+      id: 'relic\\with\\backslash',
+      name: 'Test',
+      description: '',
+      tier: 'Common',
+      rarity: 'Common'
+    }
+    const g = createEmptyGraph('r', 'relic')
+    const code = generateRelicCode(g, relic)
+    expect(code).toContain('ID = "relic\\\\with\\\\backslash";')
+  })
+
+  it('className / tier / rarity 不被转义（保持原值）', () => {
+    const relic: RelicData = {
+      id: 'plain_id',
+      name: 'Plain',
+      description: 'plain',
+      tier: 'Rare',
+      rarity: 'Boss'
+    }
+    const g = createEmptyGraph('r', 'relic')
+    const code = generateRelicCode(g, relic)
+    expect(code).toContain('Tier = RelicTier.Rare;')
+    expect(code).toContain('Rarity = RelicRarity.Boss;')
+  })
+})
