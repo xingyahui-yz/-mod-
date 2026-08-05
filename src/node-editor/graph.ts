@@ -183,6 +183,14 @@ export function canConnect(
   )
   if (dup) return { ok: false, reason: '已存在相同连线' }
 
+  // 6. 新增边后不允许成环（DAG 约束）—— v0.6
+  //    hasCycle 只看 nodeId 拓扑，临时边 id 随意
+  const candidate: NodeGraph = {
+    ...graph,
+    edges: [...graph.edges, { id: 'temp-cycle-check', from, to }]
+  }
+  if (hasCycle(candidate)) return { ok: false, reason: '连线将形成环路' }
+
   return { ok: true }
 }
 

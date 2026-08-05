@@ -128,6 +128,46 @@ describe('connect - 连线校验', () => {
     expect(c2.ok).toBe(false)
     if (!c2.ok) expect(c2.reason).toMatch(/已存在/)
   })
+
+  // v0.6: 环检测（canConnect step 6）—— 反向连线成环被拒
+  it('成环被 step 6 拒绝（effect → effect 反向闭合）', () => {
+    let g = createEmptyGraph('r', 'relic')
+    const r1 = appendNode(g, 'effect', { x: 0, y: 0 })
+    g = r1.graph
+    const e1 = r1.node
+    const r2 = appendNode(g, 'effect', { x: 100, y: 0 })
+    g = r2.graph
+    const e2 = r2.node
+    // 正向 e1.out → e2.in 成功
+    const c1 = connect(g, { nodeId: e1.id, port: 'out' }, { nodeId: e2.id, port: 'in' })
+    expect(c1.ok).toBe(true)
+    if (!c1.ok) return
+    // 反向 e2.out → e1.in 会形成 e1→e2→e1 闭环，被 step 6 拒绝
+    const c2 = connect(c1.graph, { nodeId: e2.id, port: 'out' }, { nodeId: e1.id, port: 'in' })
+    expect(c2.ok).toBe(false)
+    if (!c2.ok) expect(c2.reason).toMatch(/环路/)
+  })
+
+  // v0.6: 多跳非环仍能加边（回归保护，防止环检测过激）
+  it('多跳非环仍能加边（trigger → condition → effect）', () => {
+    let g = createEmptyGraph('r', 'relic')
+    const r1 = appendNode(g, 'trigger', { x: 0, y: 0 })
+    g = r1.graph
+    const t = r1.node
+    const r2 = appendNode(g, 'condition', { x: 100, y: 0 })
+    g = r2.graph
+    const c = r2.node
+    const r3 = appendNode(g, 'effect', { x: 200, y: 0 })
+    g = r3.graph
+    const e = r3.node
+    // trigger.out → condition.in 成功
+    const c1 = connect(g, { nodeId: t.id, port: 'out' }, { nodeId: c.id, port: 'in' })
+    expect(c1.ok).toBe(true)
+    if (!c1.ok) return
+    // condition.true → effect.in 成功（多跳非环）
+    const c2 = connect(c1.graph, { nodeId: c.id, port: 'true' }, { nodeId: e.id, port: 'in' })
+    expect(c2.ok).toBe(true)
+  })
 })
 
 describe('disconnect', () => {
