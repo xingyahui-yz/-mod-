@@ -22,22 +22,9 @@ export interface CardData {
 }
 
 // ============ Relic ============
-// 节点编辑器 v0.4：表单数据 + 节点图共用
-export type RelicTier = 'Common' | 'Uncommon' | 'Rare' | 'Boss' | 'Shop'
-export type RelicRarity = 'Starter' | 'Common' | 'Uncommon' | 'Rare' | 'Boss' | 'Shop'
-
-export interface RelicData {
-  id: string                 // 文件名 ID，如 'burning_blood'
-  name: string               // 显示名
-  description: string
-  tier: RelicTier            // 颜色/分级
-  rarity: RelicRarity        // 掉落稀有度
-  /** 触发器节点的 data.event 列表，用于 codegen 派发 */
-  triggers: string[]
-  /** 节点图（由节点编辑器产出） */
-  graph?: import('../node-editor/types').NodeGraph
-}
-
+// v0.5.2 移至 src/relic/RelicData.ts（模块化）
+// import 兼容保留（其他模块可能仍在用）
+export type { RelicData, RelicTier, RelicRarity } from '../relic/RelicData'
 export interface ModManifest {
   id: string
   name: string

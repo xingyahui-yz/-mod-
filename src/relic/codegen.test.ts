@@ -1,13 +1,14 @@
 /**
  * Relic 代码生成器测试 - 节点编辑器 v0.4
+ * v0.5.2：从 src/node-editor/codegen.test.ts 移至 src/relic/codegen.test.ts
  * 覆盖：trigger 派发 + effect 派发 + 模板渲染 + BFS 遍历
  */
 import { describe, it, expect } from 'vitest'
 import {
   createEmptyGraph, appendNode, connect
-} from './graph'
+} from '../node-editor/graph'
 import { generateRelicCode, SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS } from './codegen'
-import { RelicData } from '../types'
+import { RelicData } from './RelicData'
 
 function buildRelic(overrides: Partial<RelicData> = {}): RelicData {
   return {
@@ -16,7 +17,6 @@ function buildRelic(overrides: Partial<RelicData> = {}): RelicData {
     description: '战斗结束时回复 6 点生命',
     tier: 'Common',
     rarity: 'Starter',
-    triggers: [],
     ...overrides
   }
 }
