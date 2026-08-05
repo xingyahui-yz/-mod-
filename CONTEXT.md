@@ -45,6 +45,14 @@
 - **生成（Generate）**：从 `.modstudio/` 元数据 → 编译产物（`.cs` / `.gd`）
 - **同步（Sync）**：保持 `.modstudio/` 元数据与编译产物一致
 
+### 3.4 节点种类层（v0.5.2 Relic 模块化新增）
+
+- **Kind Registry（种类注册表）**：每类实体（如 Relic）维护一张 `kinds.ts`，集中声明该实体支持的所有节点 kind（trigger / effect / condition 等）。一处定义，UI（按钮/下拉）和 codegen（派发表）都从此消费。
+- **Trigger Kind（触发器种类）**：定义在 `TRIGGER_KINDS` 表。每条记录含 `kind`、`label`、`methodName`（C# 方法名）、`defaultData`（添加节点时的默认填充）。
+- **Effect Kind（效果种类）**：定义在 `EFFECT_KINDS` 表。每条记录含 `kind`、`label`、`emitStatement(data)`（派发函数 data → C# 语句）、`defaultData`。
+- **设计动机**：v0.5.2 之前，codegen 派发表（`TRIGGER_DISPATCH` / `EFFECT_DISPATCH`）与 RelicEditor 的 `defaults` 表独立维护，新增 effect 需改两处。`kind registry` 消除这种平行维护。
+- **未来扩展（v0.9）**：每类实体（Card/Character/Potion/Event/Enemy/Buff/UI）应有各自的 `kinds.ts`，复用同一"kind registry"模式。
+
 ### 3.3 AI 层
 - **Prompt 模板（Prompt Template）**：每个实体类型对应的结构化 prompt
 - **结构化输出（Structured Output）**：LLM 返回的 JSON Schema 校验过的对象
