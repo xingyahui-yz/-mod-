@@ -1,6 +1,8 @@
 /**
  * Relic 编辑器 - 节点编辑器 v0.4
  *
+ * v0.5.2 模块化：从 src/components/RelicEditor.tsx 移至 src/relic/RelicEditor.tsx
+ *
  * v0.4 MVP 范围：
  *  - 表单：id / name / description / tier / rarity
  *  - 节点画布：useNodeGraph + NodeGraphCanvas
@@ -14,10 +16,12 @@
  *  - AI 生成节点图
  */
 import { useState, useCallback } from 'react'
-import { RelicData, RelicTier, RelicRarity } from '../types'
+import { RelicData } from './RelicData'
+import { RelicTier, RelicRarity } from '../types'
 import { useNodeGraph } from '../node-editor/useNodeGraph'
 import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
-import { generateRelicCode, SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS } from '../node-editor/codegen'
+import { generateRelicCode, SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS } from './codegen'
+// SUPPORTED_TRIGGERS / SUPPORTED_EFFECTS 在 v0.5.2 part 2 改从 './kinds' 导入
 
 interface RelicEditorProps {
   initialRelic?: Partial<RelicData>

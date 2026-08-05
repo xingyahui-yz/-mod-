@@ -10,7 +10,7 @@ import { GameLauncher } from './components/GameLauncher'
 import { AIGenerator } from './components/AIGenerator'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AboutModal } from './components/AboutModal'
-import { RelicEditor } from './components/RelicEditor'
+import { RelicEditor } from './relic/RelicEditor'
 
 type Tab = 'cards' | 'relics' | 'files' | 'test' | 'ai'
 

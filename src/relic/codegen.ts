@@ -1,9 +1,7 @@
 /**
  * Relic 代码生成器 - 节点图 + 表单数据 → C# Godot 代码
  *
- * 输入：NodeGraph + RelicData
- * 输出：完整的 .cs 文件内容
- *
+ * v0.5.2 模块化：从 src/node-editor/codegen.ts 移至 src/relic/codegen.ts
  * 设计原则：
  *  - 纯函数：不依赖 React/DOM，可单测
  *  - 派发表：trigger.event → methodName; effect.kind → statement template
@@ -11,9 +9,9 @@
  *    （v0.4 不做条件分支短路——所有 reachable effect 都执行）
  */
 import Mustache from 'mustache'
-import { NodeGraph } from './types'
-import { RelicData } from '../types'
-import relicTemplate from '../templates/relic.mustache?raw'
+import { NodeGraph } from '../node-editor/types'
+import { RelicData } from './RelicData'
+import relicTemplate from './relic.mustache?raw'
 import { toPascalCase } from '../utils/stringUtils'
 
 /** trigger.data.event → C# 方法名 */
