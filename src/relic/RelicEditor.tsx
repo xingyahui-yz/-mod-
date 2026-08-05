@@ -47,6 +47,8 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
     const result = ng.connect(from, to)
     if (!result.ok && result.reason) {
       setError(`连线失败：${result.reason}`)
+    } else if (result.ok) {
+      setError('')
     }
   }, [ng])
 

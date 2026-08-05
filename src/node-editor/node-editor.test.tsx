@@ -3,6 +3,7 @@
  * 覆盖：useNodeGraph hook + NodeGraphCanvas 渲染/拖动/删除 + 边渲染 + 点击删除边 + 序列化往返
  */
 import { describe, it, expect, vi } from 'vitest'
+import { useState } from 'react'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { renderHook } from '@testing-library/react'
 import { useNodeGraph } from './useNodeGraph'
@@ -477,5 +478,68 @@ describe('NodeGraphCanvas 端口坐标 = getPortXY (v0.5.1)', () => {
     const { container } = render(<NodeGraphCanvas graph={g} onMoveNode={() => {}} onRemoveNode={() => {}} />)
     const port = container.querySelector('[data-testid="port-e-in"]') as Element
     expect(port.getAttribute('cx')).toBe('0')
+  })
+})
+
+// ============================================================================
+// v0.6: pendingFrom 悬挂（stale）派生 effectivePending
+// 契约：选 output 后删除该节点，再点 input 不应触发 onConnect（因为 source 已不存在）
+// ============================================================================
+
+describe('NodeGraphCanvas pendingFrom 悬挂 (v0.6)', () => {
+  it('源节点被删后 pendingFrom 自动失效（点 input 不连线）', () => {
+    const onConnect = vi.fn()
+
+    function Harness() {
+      const [graph, setGraph] = useState<NodeGraph>(() => {
+        let g = createEmptyGraph('r-1', 'relic')
+        g = {
+          ...g,
+          nodes: [
+            { id: 't', type: 'trigger' as const, position: { x: 0, y: 0 }, data: {} },
+            { id: 'e', type: 'effect' as const, position: { x: 100, y: 0 }, data: {} }
+          ]
+        }
+        return g
+      })
+      const onRemoveNode = (id: string) => {
+        setGraph(prev => ({
+          ...prev,
+          nodes: prev.nodes.filter(n => n.id !== id)
+        }))
+      }
+      return (
+        <NodeGraphCanvas
+          graph={graph}
+          onMoveNode={() => {}}
+          onRemoveNode={onRemoveNode}
+          onConnect={onConnect}
+        />
+      )
+    }
+
+    const { container } = render(<Harness />)
+
+    // 1) 点 output 端口 → pendingFrom 被设置，视觉变为 pending（白+放大）
+    const outPort = container.querySelector('[data-testid="port-t-out"]') as Element
+    expect(outPort).toBeTruthy()
+    fireEvent.click(outPort)
+    expect(outPort.getAttribute('r')).toBe('6')
+    expect(outPort.getAttribute('fill')).toBe('#ffffff')
+
+    // 2) 删除 source 节点（trigger）
+    fireEvent.click(container.querySelector('[data-testid="remove-t"]') as Element)
+    // 节点 't' 已不在 DOM
+    expect(container.querySelector('[data-testid="node-box-t"]')).toBeNull()
+    expect(container.querySelector('[data-testid="port-t-out"]')).toBeNull()
+
+    // 3) 点 effect 的 input 端口 — effectivePending 应为 null（t 已删），不应触发 onConnect
+    const inPort = container.querySelector('[data-testid="port-e-in"]') as Element
+    expect(inPort).toBeTruthy()
+    fireEvent.click(inPort)
+    expect(onConnect).not.toHaveBeenCalled()
+
+    // 4) input 端口也不应有 target-candidate 高亮（无 pending source）
+    expect(inPort.getAttribute('stroke')).toBe('none')
   })
 })
