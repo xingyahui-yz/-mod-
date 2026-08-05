@@ -50,16 +50,19 @@ export function useNodeGraph(
 
   const connectFn = useCallback(
     (from: { nodeId: string; port: string }, to: { nodeId: string; port: string }) => {
-      // 基于当前 graph 计算结果（不在 setState updater 里副作用赋值，
-      // 否则 React 18 batch 会让 return 早于 updater 执行，导致 stale result）
-      const r = connect(graph, from, to)
-      if (r.ok) {
-        setGraph(r.graph)
-        return { ok: true }
-      }
-      return { ok: false, reason: r.reason }
+      // v0.6: 改纯 updater 形式，避免同一 tick 多次连读连写不一致。
+      // 不依赖外部 graph 闭包；connect 在 setGraph 的 prev 上算，prev 是最新状态。
+      // outcome 在闭包内捕获，返回给调用方。React 18 batch 内 updater 同步执行。
+      let outcome: { ok: true } | { ok: false; reason: string } = { ok: true }
+      setGraph(prev => {
+        const r = connect(prev, from, to)
+        if (r.ok) return r.graph
+        outcome = r
+        return prev
+      })
+      return outcome
     },
-    [graph]
+    []
   )
 
   const disconnectFn = useCallback((edgeId: string) => {
