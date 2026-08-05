@@ -10,7 +10,7 @@
  */
 import { useState, useRef, useCallback } from 'react'
 import { GraphNode, NodeGraph, PortDef, NODE_PORT_DEFS } from './types'
-import { edgePath, NODE_WIDTH, NODE_HEIGHT } from './graph'
+import { edgePath, getPortXY, NODE_WIDTH, NODE_HEIGHT } from './graph'
 
 export interface PortRef {
   nodeId: string
@@ -198,14 +198,16 @@ function NodeBox({ node, pendingFrom, onMouseDown, onRemove, onPortClick }: Node
       </text>
       {/* 端口 */}
       {ports.map(p => {
+        // v0.5.1: 端口坐标统一走 graph.ts 的 getPortXY（避免与 edgePath 几何发散）
+        const { x, y } = getPortXY(node, p.id)
         const isPending = pendingFrom?.nodeId === node.id && pendingFrom?.port === p.id
         const isTargetCandidate = !!pendingFrom && p.kind === 'input'
         return (
           <circle
             key={p.id}
             data-testid={`port-${node.id}-${p.id}`}
-            cx={p.kind === 'input' ? 0 : NODE_WIDTH}
-            cy={15 + ports.indexOf(p) * 12}
+            cx={x}
+            cy={y}
             r={isPending ? 6 : 4}
             fill={isPending ? '#ffffff' : color}
             stroke={isTargetCandidate ? '#ffffff' : 'none'}

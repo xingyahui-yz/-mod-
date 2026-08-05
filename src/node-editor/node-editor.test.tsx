@@ -7,7 +7,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react'
 import { renderHook } from '@testing-library/react'
 import { useNodeGraph } from './useNodeGraph'
 import { NodeGraphCanvas } from './NodeGraphCanvas'
-import { createEmptyGraph, connect } from './graph'
+import { createEmptyGraph, connect, getPortXY, NODE_WIDTH } from './graph'
 import { NodeGraph } from './types'
 
 describe('useNodeGraph hook', () => {
@@ -405,5 +405,77 @@ describe('NodeGraphCanvas 端口点击连线 (v0.5)', () => {
     // pending 清空后再点 input → 不再触发
     fireEvent.click(container.querySelector('[data-testid="port-e-in"]') as Element)
     expect(onConnect).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ============================================================================
+// v0.5.1: NodeGraphCanvas 端口坐标 === getPortXY 输出
+// 契约：canvas 端口 cx/cy 必须与 graph.ts 的 getPortXY 一致，否则两份几何会发散
+// ============================================================================
+
+describe('NodeGraphCanvas 端口坐标 = getPortXY (v0.5.1)', () => {
+  it('所有节点类型的端口 cx/cy 与 getPortXY 完全一致', () => {
+    // setup: 一图四种节点类型，覆盖单端口 (trigger/branch) + 多端口 (condition: in/true/false)
+    // 用 UUID-style nodeId 避免 portId 解析歧义（端口 in/out/true/false 都不含 '-'）
+    const nodes = [
+      { id: 'nodeT', type: 'trigger',   position: { x: 0,   y: 0 }, data: {} },
+      { id: 'nodeC', type: 'condition', position: { x: 200, y: 0 }, data: {} },
+      { id: 'nodeE', type: 'effect',    position: { x: 400, y: 0 }, data: {} },
+      { id: 'nodeB', type: 'branch',    position: { x: 600, y: 0 }, data: {} },
+    ] as const
+    let g: NodeGraph = { ...createEmptyGraph('r-geom', 'relic'), nodes: [...nodes] }
+
+    const { container } = render(
+      <NodeGraphCanvas graph={g} onMoveNode={() => {}} onRemoveNode={() => {}} />
+    )
+
+    // 显式枚举所有节点 + 端口（data-testid 格式: port-{nodeId}-{portId}）
+    // portId 都是 in/out/true/false，没有 '-'，所以可以按 'port-{nodeId}-' 前缀 + portId 后缀定位
+    const cases: { nodeId: string; portId: string }[] = []
+    for (const n of nodes) {
+      // 节点的端口声明来自 NODE_PORT_DEFS，但 graph.ts 已导出
+      // 这里用 NODE_PORT_DEFS 的简化版：trigger=out, condition=in/true/false, effect=in/out, branch=in/out
+      const portMap: Record<string, string[]> = {
+        trigger: ['out'],
+        condition: ['in', 'true', 'false'],
+        effect: ['in', 'out'],
+        branch: ['in', 'out'],
+      }
+      for (const portId of portMap[n.type]) {
+        cases.push({ nodeId: n.id, portId })
+      }
+    }
+
+    expect(cases.length).toBeGreaterThan(0)  // sanity: trigger=1 + cond=3 + effect=2 + branch=2 = 8 ports
+
+    for (const { nodeId, portId } of cases) {
+      const el = container.querySelector(`[data-testid="port-${nodeId}-${portId}"]`) as Element
+      expect(el, `${nodeId}.${portId} 元素应存在`).toBeTruthy()
+
+      const node = g.nodes.find(n => n.id === nodeId)!
+      const { x, y } = getPortXY(node, portId)
+      const cx = el.getAttribute('cx')
+      const cy = el.getAttribute('cy')
+
+      expect(cx, `${nodeId}.${portId} cx`).toBe(String(x))
+      expect(cy, `${nodeId}.${portId} cy`).toBe(String(y))
+    }
+  })
+
+  it('trigger 端口 cx = NODE_WIDTH（output 在右）', () => {
+    // 局部断言：trigger 的唯一端口是 output，在 NODE_WIDTH 处
+    let g: NodeGraph = createEmptyGraph('r-1', 'relic')
+    g = { ...g, nodes: [{ id: 't', type: 'trigger', position: { x: 0, y: 0 }, data: {} }] }
+    const { container } = render(<NodeGraphCanvas graph={g} onMoveNode={() => {}} onRemoveNode={() => {}} />)
+    const port = container.querySelector('[data-testid="port-t-out"]') as Element
+    expect(port.getAttribute('cx')).toBe(String(NODE_WIDTH))
+  })
+
+  it('effect 的 input 端口 cx = 0（在左）', () => {
+    let g: NodeGraph = createEmptyGraph('r-1', 'relic')
+    g = { ...g, nodes: [{ id: 'e', type: 'effect', position: { x: 0, y: 0 }, data: {} }] }
+    const { container } = render(<NodeGraphCanvas graph={g} onMoveNode={() => {}} onRemoveNode={() => {}} />)
+    const port = container.querySelector('[data-testid="port-e-in"]') as Element
+    expect(port.getAttribute('cx')).toBe('0')
   })
 })
