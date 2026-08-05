@@ -20,8 +20,8 @@ import { RelicData } from './RelicData'
 import { RelicTier, RelicRarity } from '../types'
 import { useNodeGraph } from '../node-editor/useNodeGraph'
 import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
-import { generateRelicCode, SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS } from './codegen'
-// SUPPORTED_TRIGGERS / SUPPORTED_EFFECTS 在 v0.5.2 part 2 改从 './kinds' 导入
+import { generateRelicCode } from './codegen'
+import { SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS, EFFECT_KINDS } from './kinds'
 
 interface RelicEditorProps {
   initialRelic?: Partial<RelicData>
@@ -36,9 +36,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
     name: initialRelic?.name ?? 'My Relic',
     description: initialRelic?.description ?? '',
     tier: initialRelic?.tier ?? 'Common',
-    rarity: initialRelic?.rarity ?? 'Common',
-    triggers: [],
-    graph: undefined
+    rarity: initialRelic?.rarity ?? 'Common'
   })
   const [generatedCode, setGeneratedCode] = useState<string>('')
   const [error, setError] = useState<string>('')
@@ -70,16 +68,12 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
   }
 
   const addEffect = (kind: string) => {
-    const defaults: Record<string, Record<string, unknown>> = {
-      gainBuff: { kind: 'gainBuff', buffType: 'Strength', amount: 1 },
-      loseHp: { kind: 'loseHp', amount: 1 },
-      gainGold: { kind: 'gainGold', amount: 50 },
-      drawCards: { kind: 'drawCards', amount: 2 }
-    }
+    // v0.5.2 part 2：从 kinds.ts 读 defaultData（消除与 codegen EFFECT_DISPATCH 的平行维护）
+    const effectKind = EFFECT_KINDS[kind]
     ng.addNode('effect', {
       x: 300 + Math.random() * 200,
       y: 50 + Math.random() * 100
-    }, defaults[kind] ?? { kind })
+    }, effectKind?.defaultData ?? { kind })
   }
 
   return (

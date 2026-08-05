@@ -17,7 +17,6 @@ function buildRelic(overrides: Partial<RelicData> = {}): RelicData {
     description: '战斗结束时回复 6 点生命',
     tier: 'Common',
     rarity: 'Starter',
-    triggers: [],
     ...overrides
   }
 }

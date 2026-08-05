@@ -2,9 +2,10 @@
  * Relic 代码生成器 - 节点图 + 表单数据 → C# Godot 代码
  *
  * v0.5.2 模块化：从 src/node-editor/codegen.ts 移至 src/relic/codegen.ts
+ * v0.5.2 part 2：派发表改读 kinds.ts（消除 codegen 与 RelicEditor defaults 表的平行维护）
  * 设计原则：
  *  - 纯函数：不依赖 React/DOM，可单测
- *  - 派发表：trigger.event → methodName; effect.kind → statement template
+ *  - 派发表：从 kinds.ts 读 TRIGGER_KINDS / EFFECT_KINDS
  *  - 遍历策略：从 trigger.out BFS 收集所有可达 effect/condition/branch
  *    （v0.4 不做条件分支短路——所有 reachable effect 都执行）
  */
@@ -13,34 +14,11 @@ import { NodeGraph } from '../node-editor/types'
 import { RelicData } from './RelicData'
 import relicTemplate from './relic.mustache?raw'
 import { toPascalCase } from '../utils/stringUtils'
+import { TRIGGER_KINDS, EFFECT_KINDS } from './kinds'
 
-/** trigger.data.event → C# 方法名 */
-const TRIGGER_DISPATCH: Record<string, string> = {
-  onCombatStart: 'OnCombatStart',
-  onTurnStart: 'OnTurnStart',
-  onCardPlayed: 'OnCardPlayed'
-}
-
-/** effect.data.kind → C# 语句模板（{buffType}/{amount} 是占位符） */
-const EFFECT_DISPATCH: Record<string, (data: Record<string, unknown>) => string | null> = {
-  gainBuff: (d) => {
-    const buff = String(d.buffType ?? 'Strength')
-    const amount = Number(d.amount ?? 1)
-    return `ApplyBuff("${buff}", ${amount});`
-  },
-  loseHp: (d) => {
-    const amount = Number(d.amount ?? 1)
-    return `Owner.LoseHp(${amount});`
-  },
-  gainGold: (d) => {
-    const amount = Number(d.amount ?? 1)
-    return `Owner.GainGold(${amount});`
-  },
-  drawCards: (d) => {
-    const amount = Number(d.amount ?? 1)
-    return `Owner.DrawCards(${amount});`
-  }
-}
+// re-export kinds 给老调用方（向后兼容：SUPPORTED_TRIGGERS / SUPPORTED_EFFECTS
+// v0.5.2 part 2 已迁至 kinds.ts，这里只 re-export 不重复定义）
+export { SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS } from './kinds'
 
 interface TriggerMethod {
   methodName: string
@@ -67,9 +45,9 @@ function collectStatements(
     // effect 节点 → 生成语句
     if (node.type === 'effect') {
       const kind = String(node.data.kind ?? '')
-      const emit = EFFECT_DISPATCH[kind]
-      if (emit) {
-        const stmt = emit(node.data)
+      const effectKind = EFFECT_KINDS[kind]
+      if (effectKind) {
+        const stmt = effectKind.emitStatement(node.data)
         if (stmt) statements.push(stmt)
       }
     }
@@ -95,10 +73,10 @@ export function generateRelicCode(
   const triggerMethods: TriggerMethod[] = triggerNodes
     .map(node => {
       const event = String(node.data.event ?? '')
-      const methodName = TRIGGER_DISPATCH[event]
-      if (!methodName) return null  // 未知 trigger，跳过
+      const triggerKind = TRIGGER_KINDS[event]
+      if (!triggerKind) return null  // 未知 trigger，跳过
       return {
-        methodName,
+        methodName: triggerKind.methodName,
         statements: collectStatements(graph, node.id)
       }
     })
@@ -122,8 +100,4 @@ export function generateRelicCode(
   return Mustache.render(relicTemplate, view)
 }
 
-/** 列出支持的 trigger 事件名（UI dropdown 用） */
-export const SUPPORTED_TRIGGERS = Object.keys(TRIGGER_DISPATCH)
-
-/** 列出支持的 effect 类型（UI dropdown 用） */
-export const SUPPORTED_EFFECTS = Object.keys(EFFECT_DISPATCH)
+// SUPPORTED_TRIGGERS / SUPPORTED_EFFECTS 已在文件头 re-export from './kinds'
