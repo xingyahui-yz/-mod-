@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest'
 import {
   createEmptyGraph, appendNode, removeNode, moveNode,
   connect, disconnect, hasCycle,
-  serialize, deserialize, isValidGraph,
+  serialize, deserialize, isValidGraph, validateGraph,
   edgePath, getPortXY, NODE_WIDTH,
   buildNode, addNodeToGraph, touchGraph
 } from './graph'
@@ -54,6 +54,13 @@ describe('removeNode', () => {
     const g3 = removeNode(g, n1.id)
     expect(g3.nodes).toHaveLength(1)
     expect(g3.edges).toHaveLength(0)
+  })
+
+  // v0.6: 短路 —— 节点不存在则返回原图（同引用，不 touch metadata）
+  it('节点不存在时短路返回原图（不 touch metadata）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const g2 = removeNode(g, 'nonexistent')
+    expect(g2).toBe(g)  // 同引用 = 无操作 = 不 touch
   })
 })
 
@@ -128,6 +135,46 @@ describe('connect - 连线校验', () => {
     expect(c2.ok).toBe(false)
     if (!c2.ok) expect(c2.reason).toMatch(/已存在/)
   })
+
+  // v0.6: 环检测（canConnect step 6）—— 反向连线成环被拒
+  it('成环被 step 6 拒绝（effect → effect 反向闭合）', () => {
+    let g = createEmptyGraph('r', 'relic')
+    const r1 = appendNode(g, 'effect', { x: 0, y: 0 })
+    g = r1.graph
+    const e1 = r1.node
+    const r2 = appendNode(g, 'effect', { x: 100, y: 0 })
+    g = r2.graph
+    const e2 = r2.node
+    // 正向 e1.out → e2.in 成功
+    const c1 = connect(g, { nodeId: e1.id, port: 'out' }, { nodeId: e2.id, port: 'in' })
+    expect(c1.ok).toBe(true)
+    if (!c1.ok) return
+    // 反向 e2.out → e1.in 会形成 e1→e2→e1 闭环，被 step 6 拒绝
+    const c2 = connect(c1.graph, { nodeId: e2.id, port: 'out' }, { nodeId: e1.id, port: 'in' })
+    expect(c2.ok).toBe(false)
+    if (!c2.ok) expect(c2.reason).toMatch(/环路/)
+  })
+
+  // v0.6: 多跳非环仍能加边（回归保护，防止环检测过激）
+  it('多跳非环仍能加边（trigger → condition → effect）', () => {
+    let g = createEmptyGraph('r', 'relic')
+    const r1 = appendNode(g, 'trigger', { x: 0, y: 0 })
+    g = r1.graph
+    const t = r1.node
+    const r2 = appendNode(g, 'condition', { x: 100, y: 0 })
+    g = r2.graph
+    const c = r2.node
+    const r3 = appendNode(g, 'effect', { x: 200, y: 0 })
+    g = r3.graph
+    const e = r3.node
+    // trigger.out → condition.in 成功
+    const c1 = connect(g, { nodeId: t.id, port: 'out' }, { nodeId: c.id, port: 'in' })
+    expect(c1.ok).toBe(true)
+    if (!c1.ok) return
+    // condition.true → effect.in 成功（多跳非环）
+    const c2 = connect(c1.graph, { nodeId: c.id, port: 'true' }, { nodeId: e.id, port: 'in' })
+    expect(c2.ok).toBe(true)
+  })
 })
 
 describe('disconnect', () => {
@@ -143,6 +190,13 @@ describe('disconnect', () => {
     const edgeId = g.edges[0].id
     const g3 = disconnect(g, edgeId)
     expect(g3.edges).toHaveLength(0)
+  })
+
+  // v0.6: 短路 —— 边不存在则返回原图（同引用，不 touch metadata）
+  it('边不存在时短路返回原图（不 touch metadata）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const g2 = disconnect(g, 'nonexistent')
+    expect(g2).toBe(g)
   })
 })
 
@@ -185,9 +239,11 @@ describe('hasCycle', () => {
 describe('serialize / deserialize', () => {
   it('往返不丢失字段', () => {
     let g = createEmptyGraph('r', 'relic')
-    const { graph: g1, node: t } = appendNode(g, 'trigger', { x: 5, y: 5 }, { foo: 'bar' })
+    // v0.6: trigger.data.event 现在必填（per-kind data 校验）
+    const { graph: g1, node: t } = appendNode(g, 'trigger', { x: 5, y: 5 }, { event: 'onCombatStart', foo: 'bar' })
     g = g1
-    const { graph: g2, node: e } = appendNode(g, 'effect', { x: 50, y: 50 })
+    // effect.data.kind 也必填
+    const { graph: g2, node: e } = appendNode(g, 'effect', { x: 50, y: 50 }, { kind: 'gainBuff' })
     g = g2
     const c = connect(g, { nodeId: t.id, port: 'out' }, { nodeId: e.id, port: 'in' })
     if (!c.ok) throw new Error('connect failed')
@@ -197,7 +253,7 @@ describe('serialize / deserialize', () => {
     const restored = deserialize(json)
     expect(restored.nodes).toHaveLength(2)
     expect(restored.edges).toHaveLength(1)
-    expect(restored.nodes[0].data).toEqual({ foo: 'bar' })
+    expect(restored.nodes[0].data).toEqual({ event: 'onCombatStart', foo: 'bar' })
   })
 
   it('拒绝无效 JSON', () => {
@@ -206,6 +262,17 @@ describe('serialize / deserialize', () => {
 
   it('拒绝非图结构', () => {
     expect(() => deserialize('{"foo":1}')).toThrow()
+  })
+
+  // v0.6: deserialize 错误信息含具体字段路径（AI 导入调试用）
+  it('无效字段给出具体路径', () => {
+    const json = JSON.stringify({
+      id: 'g1', entityId: 'r', entityType: 'relic', version: '0.1.0',
+      metadata: { createdAt: '2024-01-01', updatedAt: '2024-01-01' },
+      nodes: [{ id: 't1', type: 'trigger', position: { x: 0 }, data: { event: 'onCombatStart' } }],
+      edges: []
+    })
+    expect(() => deserialize(json)).toThrow(/position/)
   })
 })
 
@@ -218,6 +285,134 @@ describe('isValidGraph', () => {
     expect(isValidGraph(null)).toBe(false)
     expect(isValidGraph(42)).toBe(false)
     expect(isValidGraph('string')).toBe(false)
+  })
+})
+
+// ============================================================================
+// v0.6: validateGraph —— 最严校验 + 具体错误信息
+// ============================================================================
+
+describe('validateGraph', () => {
+  /** 构造一个含 trigger→effect 连线的最小合法图 */
+  function makeValidGraph() {
+    let g = createEmptyGraph('r', 'relic')
+    const r1 = appendNode(g, 'trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    g = r1.graph
+    const t = r1.node
+    const r2 = appendNode(g, 'effect', { x: 100, y: 0 }, { kind: 'gainBuff' })
+    g = r2.graph
+    const e = r2.node
+    const c = connect(g, { nodeId: t.id, port: 'out' }, { nodeId: e.id, port: 'in' })
+    if (!c.ok) throw new Error('connect failed')
+    return c.graph
+  }
+
+  it('合法图（含 trigger + effect + edge）通过', () => {
+    const g = makeValidGraph()
+    const r = validateGraph(g)
+    expect(r.ok).toBe(true)
+  })
+
+  it('空图（无节点无边）通过', () => {
+    const g = createEmptyGraph('r', 'relic')
+    expect(validateGraph(g).ok).toBe(true)
+  })
+
+  it('节点缺 position.x 报错含字段路径', () => {
+    const g = makeValidGraph()
+    const bad = JSON.parse(JSON.stringify(g))
+    bad.nodes[0].position = { y: 0 }  // 缺 x
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/nodes\[0\]\.position\.x/)
+  })
+
+  it('边指向不存在的节点报错含 from/to 路径', () => {
+    const g = makeValidGraph()
+    const bad = JSON.parse(JSON.stringify(g))
+    bad.edges[0].from.nodeId = 'ghost-node'
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/from\.nodeId.*不存在的节点/)
+  })
+
+  it('边端口方向反（input → output）被拒', () => {
+    const g = makeValidGraph()
+    const bad = JSON.parse(JSON.stringify(g))
+    // 反向：effect.in → trigger.out（端口存在但方向反）
+    bad.edges[0].from = { nodeId: g.nodes[1].id, port: 'in' }
+    bad.edges[0].to = { nodeId: g.nodes[0].id, port: 'out' }
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/from\.port.*必须是 output/)
+  })
+
+  it('trigger 缺 data.event 被拒（per-kind 校验）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const bad = {
+      ...g,
+      nodes: [{ id: 't1', type: 'trigger', position: { x: 0, y: 0 }, data: { foo: 'bar' } }]
+    }
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/trigger.*data\.event/)
+  })
+
+  it('effect 缺 data.kind 被拒（per-kind 校验）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const bad = {
+      ...g,
+      nodes: [{ id: 'e1', type: 'effect', position: { x: 0, y: 0 }, data: {} }]
+    }
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/effect.*data\.kind/)
+  })
+
+  it('重复节点 id 被拒', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const bad = {
+      ...g,
+      nodes: [
+        { id: 'dup', type: 'trigger', position: { x: 0, y: 0 }, data: { event: 'onCombatStart' } },
+        { id: 'dup', type: 'effect', position: { x: 100, y: 0 }, data: { kind: 'gainBuff' } }
+      ]
+    }
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/nodes\[1\]\.id.*重复/)
+  })
+
+  it('metadata.createdAt 缺 / 非字符串被拒', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const bad = JSON.parse(JSON.stringify(g))
+    bad.metadata = { updatedAt: '2024-01-01' }  // 缺 createdAt
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/metadata\.createdAt/)
+  })
+
+  it('未知节点 type 被拒', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const bad = {
+      ...g,
+      nodes: [{ id: 'x', type: 'alien', position: { x: 0, y: 0 }, data: {} }]
+    }
+    const r = validateGraph(bad)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/type.*alien/)
+  })
+
+  it('condition / branch 节点不要求 data 特定字段', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const good = {
+      ...g,
+      nodes: [
+        { id: 'c1', type: 'condition', position: { x: 0, y: 0 }, data: { predicate: 'isOdd' } },
+        { id: 'b1', type: 'branch', position: { x: 100, y: 0 }, data: {} }
+      ]
+    }
+    expect(validateGraph(good).ok).toBe(true)
   })
 })
 

@@ -56,7 +56,8 @@ describe('useNodeGraph hook', () => {
     const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
     act(() => {
       result.current.addNode('trigger', { x: 10, y: 20 }, { event: 'onCombatStart' })
-      result.current.addNode('effect', { x: 100, y: 20 })
+      // v0.6: effect.data.kind 现在必填（per-kind data 校验）
+      result.current.addNode('effect', { x: 100, y: 20 }, { kind: 'gainBuff' })
     })
     const json = result.current.exportJson()
     expect(json).toContain('trigger')
@@ -75,6 +76,37 @@ describe('useNodeGraph hook', () => {
     const r = result.current.importJson('not json')
     expect(r.ok).toBe(false)
     expect(r.error).toBeTruthy()
+  })
+
+  // v0.6: connect 改纯 updater —— 同一 tick 连 2 次后者不丢前者
+  it('connect 同一 tick 连 2 次后者不丢前者（updater 修复闭包旧状态）', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let trigger: ReturnType<typeof result.current.addNode>
+    let effectA: ReturnType<typeof result.current.addNode>
+    let effectB: ReturnType<typeof result.current.addNode>
+    act(() => {
+      trigger = result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+      effectA = result.current.addNode('effect', { x: 100, y: 0 }, { kind: 'gainBuff' })
+      effectB = result.current.addNode('effect', { x: 200, y: 0 }, { kind: 'loseHp' })
+    })
+    // 同一 tick 连 2 次（trigger.out → effectA.in, trigger.out → effectB.in）
+    act(() => {
+      const r1 = result.current.connect(
+        { nodeId: trigger!.id, port: 'out' },
+        { nodeId: effectA!.id, port: 'in' }
+      )
+      const r2 = result.current.connect(
+        { nodeId: trigger!.id, port: 'out' },
+        { nodeId: effectB!.id, port: 'in' }
+      )
+      expect(r1.ok).toBe(true)
+      expect(r2.ok).toBe(true)
+    })
+    // 两条边都应保留（不是后者覆盖前者）
+    expect(result.current.graph.edges).toHaveLength(2)
+    expect(result.current.graph.edges.map(e => e.to.nodeId).sort()).toEqual(
+      [effectA!.id, effectB!.id].sort()
+    )
   })
 })
 

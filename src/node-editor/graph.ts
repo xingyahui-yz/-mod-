@@ -118,8 +118,9 @@ export function appendNode(
   }
 }
 
-/** 删除节点（同时删除连接到该节点的边） */
+/** 删除节点（同时删除连接到该节点的边）—— v0.6：节点不存在则短路返回原图 */
 export function removeNode(graph: NodeGraph, nodeId: string): NodeGraph {
+  if (!graph.nodes.some(n => n.id === nodeId)) return graph
   return touchGraph({
     ...graph,
     nodes: graph.nodes.filter(n => n.id !== nodeId),
@@ -127,12 +128,13 @@ export function removeNode(graph: NodeGraph, nodeId: string): NodeGraph {
   })
 }
 
-/** 移动节点 */
+/** 移动节点 —— v0.6：节点不存在则短路返回原图 */
 export function moveNode(
   graph: NodeGraph,
   nodeId: string,
   position: { x: number; y: number }
 ): NodeGraph {
+  if (!graph.nodes.some(n => n.id === nodeId)) return graph
   return touchGraph({
     ...graph,
     nodes: graph.nodes.map(n =>
@@ -183,6 +185,14 @@ export function canConnect(
   )
   if (dup) return { ok: false, reason: '已存在相同连线' }
 
+  // 6. 新增边后不允许成环（DAG 约束）—— v0.6
+  //    hasCycle 只看 nodeId 拓扑，临时边 id 随意
+  const candidate: NodeGraph = {
+    ...graph,
+    edges: [...graph.edges, { id: 'temp-cycle-check', from, to }]
+  }
+  if (hasCycle(candidate)) return { ok: false, reason: '连线将形成环路' }
+
   return { ok: true }
 }
 
@@ -205,8 +215,9 @@ export function connect(
   }
 }
 
-/** 删除边 */
+/** 删除边 —— v0.6：边不存在则短路返回原图 */
 export function disconnect(graph: NodeGraph, edgeId: string): NodeGraph {
+  if (!graph.edges.some(e => e.id === edgeId)) return graph
   return touchGraph({
     ...graph,
     edges: graph.edges.filter(e => e.id !== edgeId),
@@ -247,23 +258,193 @@ export function serialize(graph: NodeGraph): string {
 
 export function deserialize(json: string): NodeGraph {
   const parsed = JSON.parse(json)
-  if (!isValidGraph(parsed)) {
-    throw new Error('无效的 NodeGraph JSON')
+  const result = validateGraph(parsed)
+  if (!result.ok) {
+    throw new Error(`无效的 NodeGraph JSON: ${result.reason}`)
   }
-  return parsed
+  return result.graph
 }
 
-/** Schema 校验 - 完整但不严格（接受任意 data） */
-export function isValidGraph(obj: unknown): obj is NodeGraph {
-  if (!obj || typeof obj !== 'object') return false
+/** 详细校验结果 —— v0.6：含具体字段路径，便于 v0.8 AI 导入调试 */
+export type GraphValidation =
+  | { ok: true; graph: NodeGraph }
+  | { ok: false; reason: string }
+
+/**
+ * 详细校验图数据 —— v0.6（最严 + 具体错误）
+ *
+ * 校验项：
+ *  - 顶层 7 字段（id / entityId / entityType / version / nodes / edges / metadata）
+ *  - metadata.createdAt / metadata.updatedAt 必须是字符串
+ *  - 每个节点：id 字符串 + 全图唯一；type 在 NODE_PORT_DEFS；position.x/y 是数字；
+ *    data 是对象；per-kind data：trigger.data.event / effect.data.kind 必须是字符串
+ *  - 每条边：id 字符串；from/to.nodeId 引用存在的节点；from/to.port 在对应节点的
+ *    NODE_PORT_DEFS 中存在；方向：from 是 output、to 是 input
+ *
+ * 失败时返回首个错误的字段路径（如 `nodes[2].position.x 必须是数字`）。
+ */
+export function validateGraph(obj: unknown): GraphValidation {
+  if (!obj || typeof obj !== 'object') {
+    return { ok: false, reason: 'graph 必须是对象' }
+  }
   const g = obj as Record<string, unknown>
-  return (
-    typeof g.id === 'string' &&
-    typeof g.entityId === 'string' &&
-    typeof g.entityType === 'string' &&
-    typeof g.version === 'string' &&
-    Array.isArray(g.nodes) &&
-    Array.isArray(g.edges) &&
-    typeof g.metadata === 'object'
-  )
+
+  // 顶层字段
+  if (typeof g.id !== 'string') return { ok: false, reason: 'id 必须是字符串' }
+  if (typeof g.entityId !== 'string') return { ok: false, reason: 'entityId 必须是字符串' }
+  if (typeof g.entityType !== 'string') return { ok: false, reason: 'entityType 必须是字符串' }
+  if (typeof g.version !== 'string') return { ok: false, reason: 'version 必须是字符串' }
+  if (!Array.isArray(g.nodes)) return { ok: false, reason: 'nodes 必须是数组' }
+  if (!Array.isArray(g.edges)) return { ok: false, reason: 'edges 必须是数组' }
+  if (!g.metadata || typeof g.metadata !== 'object') {
+    return { ok: false, reason: 'metadata 必须是对象' }
+  }
+
+  // metadata 形状
+  const meta = g.metadata as Record<string, unknown>
+  if (typeof meta.createdAt !== 'string') {
+    return { ok: false, reason: 'metadata.createdAt 必须是字符串' }
+  }
+  if (typeof meta.updatedAt !== 'string') {
+    return { ok: false, reason: 'metadata.updatedAt 必须是字符串' }
+  }
+
+  // 节点校验 + 重复 id
+  const validNodeTypes = Object.keys(NODE_PORT_DEFS) as NodeType[]
+  const nodeIds = new Set<string>()
+  const nodeMap = new Map<string, Record<string, unknown>>()
+  const nodesRaw = g.nodes as Array<unknown>
+  for (let i = 0; i < nodesRaw.length; i++) {
+    const n = nodesRaw[i]
+    const prefix = `nodes[${i}]`
+    if (!n || typeof n !== 'object') {
+      return { ok: false, reason: `${prefix} 必须是对象` }
+    }
+    const node = n as Record<string, unknown>
+    if (typeof node.id !== 'string') {
+      return { ok: false, reason: `${prefix}.id 必须是字符串` }
+    }
+    if (nodeIds.has(node.id)) {
+      return { ok: false, reason: `${prefix}.id "${node.id}" 重复` }
+    }
+    nodeIds.add(node.id)
+    nodeMap.set(node.id, node)
+
+    if (typeof node.type !== 'string' || !validNodeTypes.includes(node.type as NodeType)) {
+      return {
+        ok: false,
+        reason: `${prefix}.type "${String(node.type)}" 必须是 ${validNodeTypes.join('/')} 之一`
+      }
+    }
+
+    const pos = node.position as Record<string, unknown> | undefined
+    if (!pos || typeof pos !== 'object') {
+      return { ok: false, reason: `${prefix}.position 必须是对象` }
+    }
+    if (typeof pos.x !== 'number') {
+      return { ok: false, reason: `${prefix}.position.x 必须是数字` }
+    }
+    if (typeof pos.y !== 'number') {
+      return { ok: false, reason: `${prefix}.position.y 必须是数字` }
+    }
+
+    if (!node.data || typeof node.data !== 'object') {
+      return { ok: false, reason: `${prefix}.data 必须是对象` }
+    }
+
+    // per-kind data 校验
+    const data = node.data as Record<string, unknown>
+    const nodeType = node.type as NodeType
+    if (nodeType === 'trigger') {
+      if (typeof data.event !== 'string') {
+        return { ok: false, reason: `${prefix} (trigger) data.event 必须是字符串` }
+      }
+    } else if (nodeType === 'effect') {
+      if (typeof data.kind !== 'string') {
+        return { ok: false, reason: `${prefix} (effect) data.kind 必须是字符串` }
+      }
+    }
+    // condition / branch 不要求 data 特定字段
+  }
+
+  // 边校验
+  const edgesRaw = g.edges as Array<unknown>
+  for (let i = 0; i < edgesRaw.length; i++) {
+    const e = edgesRaw[i]
+    const prefix = `edges[${i}]`
+    if (!e || typeof e !== 'object') {
+      return { ok: false, reason: `${prefix} 必须是对象` }
+    }
+    const edge = e as Record<string, unknown>
+    if (typeof edge.id !== 'string') {
+      return { ok: false, reason: `${prefix}.id 必须是字符串` }
+    }
+
+    const from = edge.from as Record<string, unknown> | undefined
+    const to = edge.to as Record<string, unknown> | undefined
+    if (!from || typeof from !== 'object') {
+      return { ok: false, reason: `${prefix}.from 必须是对象` }
+    }
+    if (!to || typeof to !== 'object') {
+      return { ok: false, reason: `${prefix}.to 必须是对象` }
+    }
+    if (typeof from.nodeId !== 'string' || !nodeIds.has(from.nodeId)) {
+      return {
+        ok: false,
+        reason: `${prefix}.from.nodeId "${String(from.nodeId)}" 指向不存在的节点`
+      }
+    }
+    if (typeof to.nodeId !== 'string' || !nodeIds.has(to.nodeId)) {
+      return {
+        ok: false,
+        reason: `${prefix}.to.nodeId "${String(to.nodeId)}" 指向不存在的节点`
+      }
+    }
+    if (typeof from.port !== 'string') {
+      return { ok: false, reason: `${prefix}.from.port 必须是字符串` }
+    }
+    if (typeof to.port !== 'string') {
+      return { ok: false, reason: `${prefix}.to.port 必须是字符串` }
+    }
+
+    // 端口存在性 + 方向校验（按 NODE_PORT_DEFS）
+    const fromNode = nodeMap.get(from.nodeId as string)!
+    const toNode = nodeMap.get(to.nodeId as string)!
+    const fromPorts = NODE_PORT_DEFS[fromNode.type as NodeType]
+    const toPorts = NODE_PORT_DEFS[toNode.type as NodeType]
+    const fromPort = fromPorts.find(p => p.id === from.port)
+    const toPort = toPorts.find(p => p.id === to.port)
+
+    if (!fromPort) {
+      return {
+        ok: false,
+        reason: `${prefix}.from.port "${from.port}" 在 ${fromNode.type} 上不存在`
+      }
+    }
+    if (!toPort) {
+      return {
+        ok: false,
+        reason: `${prefix}.to.port "${to.port}" 在 ${toNode.type} 上不存在`
+      }
+    }
+    if (fromPort.kind !== 'output') {
+      return {
+        ok: false,
+        reason: `${prefix}.from.port "${from.port}" 必须是 output，实际是 ${fromPort.kind}`
+      }
+    }
+    if (toPort.kind !== 'input') {
+      return {
+        ok: false,
+        reason: `${prefix}.to.port "${to.port}" 必须是 input，实际是 ${toPort.kind}`
+      }
+    }
+  }
+
+  return { ok: true, graph: g as unknown as NodeGraph }
+}
+
+/** 快速 boolean 检查（向后兼容）—— 等价于 validateGraph(obj).ok */
+export function isValidGraph(obj: unknown): obj is NodeGraph {
+  return validateGraph(obj).ok
 }
