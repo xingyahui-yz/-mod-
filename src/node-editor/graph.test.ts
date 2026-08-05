@@ -55,6 +55,13 @@ describe('removeNode', () => {
     expect(g3.nodes).toHaveLength(1)
     expect(g3.edges).toHaveLength(0)
   })
+
+  // v0.6: 短路 —— 节点不存在则返回原图（同引用，不 touch metadata）
+  it('节点不存在时短路返回原图（不 touch metadata）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const g2 = removeNode(g, 'nonexistent')
+    expect(g2).toBe(g)  // 同引用 = 无操作 = 不 touch
+  })
 })
 
 describe('moveNode', () => {
@@ -183,6 +190,13 @@ describe('disconnect', () => {
     const edgeId = g.edges[0].id
     const g3 = disconnect(g, edgeId)
     expect(g3.edges).toHaveLength(0)
+  })
+
+  // v0.6: 短路 —— 边不存在则返回原图（同引用，不 touch metadata）
+  it('边不存在时短路返回原图（不 touch metadata）', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const g2 = disconnect(g, 'nonexistent')
+    expect(g2).toBe(g)
   })
 })
 

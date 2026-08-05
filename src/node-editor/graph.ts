@@ -118,8 +118,9 @@ export function appendNode(
   }
 }
 
-/** 删除节点（同时删除连接到该节点的边） */
+/** 删除节点（同时删除连接到该节点的边）—— v0.6：节点不存在则短路返回原图 */
 export function removeNode(graph: NodeGraph, nodeId: string): NodeGraph {
+  if (!graph.nodes.some(n => n.id === nodeId)) return graph
   return touchGraph({
     ...graph,
     nodes: graph.nodes.filter(n => n.id !== nodeId),
@@ -127,12 +128,13 @@ export function removeNode(graph: NodeGraph, nodeId: string): NodeGraph {
   })
 }
 
-/** 移动节点 */
+/** 移动节点 —— v0.6：节点不存在则短路返回原图 */
 export function moveNode(
   graph: NodeGraph,
   nodeId: string,
   position: { x: number; y: number }
 ): NodeGraph {
+  if (!graph.nodes.some(n => n.id === nodeId)) return graph
   return touchGraph({
     ...graph,
     nodes: graph.nodes.map(n =>
@@ -213,8 +215,9 @@ export function connect(
   }
 }
 
-/** 删除边 */
+/** 删除边 —— v0.6：边不存在则短路返回原图 */
 export function disconnect(graph: NodeGraph, edgeId: string): NodeGraph {
+  if (!graph.edges.some(e => e.id === edgeId)) return graph
   return touchGraph({
     ...graph,
     edges: graph.edges.filter(e => e.id !== edgeId),
