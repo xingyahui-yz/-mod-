@@ -81,33 +81,6 @@ describe('BaseLLMAdapter', () => {
     })
   })
 
-  describe('validateCardItem', () => {
-    it('有效卡牌应通过验证', () => {
-      const adapter = new MockAdapter({ apiKey: 'test' })
-      const isValid = (adapter as any).validateCardItem({
-        name: '测试',
-        cost: 1,
-        type: 'Attack',
-        rarity: 'Common',
-        description: '描述'
-      })
-
-      expect(isValid).toBe(true)
-    })
-
-    it('无效type应被拒绝', () => {
-      const adapter = new MockAdapter({ apiKey: 'test' })
-      const isValid = (adapter as any).validateCardItem({
-        name: '测试',
-        cost: 1,
-        type: 'Invalid',
-        rarity: 'Common',
-        description: '描述'
-      })
-
-      expect(isValid).toBe(false)
-    })
-  })
 
   describe('generateCards', () => {
     it('应该返回成功结果', async () => {

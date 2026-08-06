@@ -19,6 +19,24 @@ describe('useNodeGraph hook', () => {
     expect(result.current.graph.entityType).toBe('relic')
   })
 
+  it('entityId 变化时重建图，避免编辑器沿用旧实体图', () => {
+    const { result, rerender } = renderHook(
+      ({ entityId }) => useNodeGraph(entityId, 'relic'),
+      { initialProps: { entityId: 'r-1' } }
+    )
+    act(() => {
+      result.current.addNode('effect', { x: 10, y: 20 }, { kind: 'gainBuff' })
+    })
+    expect(result.current.graph.entityId).toBe('r-1')
+    expect(result.current.graph.nodes).toHaveLength(1)
+
+    act(() => {
+      rerender({ entityId: 'r-2' })
+    })
+    expect(result.current.graph.entityId).toBe('r-2')
+    expect(result.current.graph.nodes).toHaveLength(0)
+  })
+
   it('addNode 增加节点', () => {
     const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
     act(() => {
@@ -573,5 +591,422 @@ describe('NodeGraphCanvas pendingFrom 悬挂 (v0.6)', () => {
 
     // 4) input 端口也不应有 target-candidate 高亮（无 pending source）
     expect(inPort.getAttribute('stroke')).toBe('none')
+  })
+})
+
+// v0.7: undo / redo
+// 覆盖设计文档 §测试矩阵 10 项
+// ============================================================================
+
+describe('useNodeGraph undo/redo (v0.7)', () => {
+  it('1. 初始 canUndo=false / canRedo=false', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.canRedo).toBe(false)
+  })
+
+  it('2. add → undo 恢复空图；redo 恢复节点', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let nodeId: string
+    act(() => {
+      nodeId = result.current.addNode('effect', { x: 10, y: 20 }, { kind: 'gainBuff' }).id
+    })
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.canUndo).toBe(true)
+    expect(result.current.canRedo).toBe(false)
+
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.canRedo).toBe(true)
+
+    act(() => { result.current.redo() })
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.graph.nodes[0].id).toBe(nodeId!)
+    expect(result.current.canUndo).toBe(true)
+    expect(result.current.canRedo).toBe(false)
+  })
+
+  it('3. move → undo 恢复旧坐标', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let nodeId: string
+    act(() => {
+      nodeId = result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' }).id
+    })
+    act(() => {
+      result.current.moveNode(nodeId!, { x: 50, y: 60 })
+    })
+    expect(result.current.graph.nodes[0].position).toEqual({ x: 50, y: 60 })
+
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes[0].position).toEqual({ x: 0, y: 0 })
+  })
+
+  it('4. connect → undo 删除边；redo 恢复边', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let triggerId: string, effectId: string
+    act(() => {
+      triggerId = result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' }).id
+      effectId = result.current.addNode('effect', { x: 100, y: 0 }, { kind: 'gainBuff' }).id
+    })
+    act(() => {
+      const r = result.current.connect(
+        { nodeId: triggerId!, port: 'out' },
+        { nodeId: effectId!, port: 'in' }
+      )
+      expect(r.ok).toBe(true)
+    })
+    expect(result.current.graph.edges).toHaveLength(1)
+    const edgeId = result.current.graph.edges[0].id
+
+    act(() => { result.current.undo() })
+    expect(result.current.graph.edges).toHaveLength(0)
+
+    act(() => { result.current.redo() })
+    expect(result.current.graph.edges).toHaveLength(1)
+    expect(result.current.graph.edges[0].id).toBe(edgeId)
+  })
+
+  it('5. remove（带边）→ undo 同时恢复节点和边', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let triggerId: string, effectId: string
+    act(() => {
+      triggerId = result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' }).id
+      effectId = result.current.addNode('effect', { x: 100, y: 0 }, { kind: 'gainBuff' }).id
+    })
+    act(() => {
+      const r = result.current.connect(
+        { nodeId: triggerId!, port: 'out' },
+        { nodeId: effectId!, port: 'in' }
+      )
+      expect(r.ok).toBe(true)
+    })
+    expect(result.current.graph.edges).toHaveLength(1)
+
+    // 删除 effect（会级联删除边）
+    act(() => { result.current.removeNode(effectId!) })
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.graph.edges).toHaveLength(0)
+
+    // undo 应同时恢复 effect 节点和那条边
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(2)
+    expect(result.current.graph.nodes.find(n => n.id === effectId)).toBeTruthy()
+    expect(result.current.graph.edges).toHaveLength(1)
+    expect(result.current.graph.edges[0].from.nodeId).toBe(triggerId!)
+    expect(result.current.graph.edges[0].to.nodeId).toBe(effectId!)
+  })
+
+  it('6. 失败 connect / 未知 id 的 remove/move/disconnect 不入栈', () => {
+    // 前置：1 次成功 add，建立 baseline canUndo=true / past.length=1
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    act(() => {
+      result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    })
+    expect(result.current.canUndo).toBe(true)
+
+    // 失败 connect：目标端口是 output（违反方向 → canConnect 失败）
+    // trigger 没有 in 端口，所以自环用 trigger→trigger 端口不存在的方式表达
+    act(() => {
+      const r = result.current.connect(
+        { nodeId: result.current.graph.nodes[0].id, port: 'out' },
+        { nodeId: result.current.graph.nodes[0].id, port: 'in' }  // 不存在的端口
+      )
+      expect(r.ok).toBe(false)
+    })
+    // 失败 connect 不应入栈
+    expect(result.current.canUndo).toBe(true)
+    // 还原（1 次 add）：undo 一次应回到空图
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.canRedo).toBe(true)
+
+    // redo 回到 1 个节点
+    act(() => { result.current.redo() })
+    expect(result.current.graph.nodes).toHaveLength(1)
+
+    // 未知节点 remove / move / disconnect：每个都包在 act 里，断言状态不变
+    act(() => { result.current.removeNode('does-not-exist') })
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.canUndo).toBe(true)
+
+    act(() => { result.current.moveNode('does-not-exist', { x: 0, y: 0 }) })
+    expect(result.current.graph.nodes).toHaveLength(1)
+
+    act(() => { result.current.disconnect('does-not-exist') })
+    expect(result.current.graph.nodes).toHaveLength(1)
+
+    // 最终：连续 4 次 undo 应能回到最初空图
+    // 4 次 = 1 次 add + 3 次失败操作的撤销（失败不入栈，所以实际只需 1 次 undo）
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+    expect(result.current.canUndo).toBe(false)
+  })
+
+  it('7. undo 后新 add 清空 redo', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    act(() => {
+      result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' })
+      result.current.addNode('effect', { x: 100, y: 0 }, { kind: 'loseHp' })
+    })
+    expect(result.current.canRedo).toBe(false)
+
+    // undo 一次
+    act(() => { result.current.undo() })
+    expect(result.current.canRedo).toBe(true)
+
+    // 新 add → redo 栈应清空
+    act(() => {
+      result.current.addNode('effect', { x: 200, y: 0 }, { kind: 'applyDebuff' })
+    })
+    expect(result.current.canRedo).toBe(false)
+
+    // 再 undo 一次：应回到只有 1 个节点的状态（不是回到 2 个节点）
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.graph.nodes[0].data).toEqual({ kind: 'gainBuff' })
+  })
+
+  it('8. 同一 React batch 内连续 mutation 形成两个独立历史步骤（顺序正确）', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    act(() => {
+      result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' })
+      result.current.addNode('effect', { x: 100, y: 0 }, { kind: 'loseHp' })
+    })
+    // 同一 batch 内 2 次 add：历史栈应只有 1 项（2 次 commit 都基于空图，最后只剩 1 个 past entry）
+    expect(result.current.canUndo).toBe(true)
+
+    act(() => { result.current.undo() })
+    // 回到只有一个节点的状态（不是空图）
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.graph.nodes[0].data).toEqual({ kind: 'gainBuff' })
+
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+
+    // 顺序 redo：先 add gainBuff，再 add loseHp
+    act(() => { result.current.redo() })
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.graph.nodes[0].data).toEqual({ kind: 'gainBuff' })
+
+    act(() => { result.current.redo() })
+    expect(result.current.graph.nodes).toHaveLength(2)
+  })
+
+  it('9. entityId 变化后图为空，旧图不可 undo/redo', () => {
+    const { result, rerender } = renderHook(
+      ({ entityId }) => useNodeGraph(entityId, 'relic'),
+      { initialProps: { entityId: 'r-1' } }
+    )
+    act(() => {
+      result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' })
+      result.current.addNode('effect', { x: 100, y: 0 }, { kind: 'loseHp' })
+    })
+    expect(result.current.canUndo).toBe(true)
+
+    // 切换 entity
+    act(() => { rerender({ entityId: 'r-2' }) })
+
+    // 新图为空、history 清空
+    expect(result.current.graph.nodes).toHaveLength(0)
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.canRedo).toBe(false)
+
+    // undo/redo 在新实体上无操作（不抛错、不变状态）
+    act(() => { result.current.undo() })
+    act(() => { result.current.redo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.canRedo).toBe(false)
+
+    // 新实体可以正常 add → undo
+    act(() => {
+      result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'applyDebuff' })
+    })
+    expect(result.current.canUndo).toBe(true)
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+  })
+
+  it('10. history 上限裁剪到 100', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    // 先加一个起始节点（让后面 move 都有意义）
+    let nodeId: string
+    act(() => {
+      nodeId = result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' }).id
+    })
+
+    // 做 120 次 move：每次都会 commit
+    act(() => {
+      for (let i = 1; i <= 120; i++) {
+        result.current.moveNode(nodeId!, { x: i, y: i })
+      }
+    })
+
+    // React 18 batch 让 setHistory 在 act 内不会刷新 result.current；
+    // 每次 undo 单独 act 才能让 canUndo 更新。
+    // 总 commit 数 = 1 add + 120 move = 121，past 上限 100，
+    // 所以只能 undo 100 次，回到 past[0] = 第 21 次 commit 的 prev（即第 20 次 move 的结果）。
+    for (let i = 0; i < 100; i++) {
+      act(() => { result.current.undo() })
+    }
+    expect(result.current.canUndo).toBe(false)
+
+    // 此时位置应停在 (20, 20)：第 20 次 move 的结果。
+    // 计算：1 add + 120 moves = 121 commits。past[0] = commit #102 的 prev。
+    //   commit #1  prev = emptyGraph（裁掉）
+    //   commit #2  prev = graphWithNode（裁掉）
+    //   commit #3  prev = moved1（裁掉）
+    //   ...
+    //   commit #101 切掉 commit #1 的 prev（emptyGraph）→ past = [graphWithNode, ..., moved99]
+    //   commit #102 切掉 commit #2 的 prev → past = [moved1, ..., moved100]
+    //   ...逐次向后滑动
+    //   commit #121 切掉 commit #21 的 prev（即 moved19），past = [moved20, ..., moved119]
+    // undo 100 次 → present = past[0] = moved20，位置 (20, 20)
+    expect(result.current.graph.nodes[0].position).toEqual({ x: 20, y: 20 })
+
+    // 再 undo 10 次都应是 no-op（past 已空）
+    for (let i = 0; i < 10; i++) {
+      act(() => { result.current.undo() })
+    }
+    expect(result.current.graph.nodes[0].position).toEqual({ x: 20, y: 20 })
+    expect(result.current.canUndo).toBe(false)
+  })
+
+  it('no-op 保持原图引用（无虚假 updatedAt、无虚假历史）', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    const beforeGraph = result.current.graph
+    const beforeUpdatedAt = beforeGraph.metadata.updatedAt
+
+    // removeNode 不存在的节点 → graph.ts 返回原图 → commit 视作 no-op
+    act(() => { result.current.removeNode('nope') })
+    expect(result.current.graph).toBe(beforeGraph)
+    expect(result.current.graph.metadata.updatedAt).toBe(beforeUpdatedAt)
+    expect(result.current.canUndo).toBe(false)
+
+    // 同样：moveNode 不存在的节点
+    act(() => { result.current.moveNode('nope', { x: 1, y: 1 }) })
+    expect(result.current.graph).toBe(beforeGraph)
+    expect(result.current.canUndo).toBe(false)
+  })
+
+  it('undo/redo 自身不产生新历史', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    act(() => {
+      result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' })
+    })
+    expect(result.current.canUndo).toBe(true)
+
+    // undo → 现在 canUndo=false、canRedo=true
+    act(() => { result.current.undo() })
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.canRedo).toBe(true)
+
+    // 多次 undo/redo 都不入栈（no-op）
+    act(() => { result.current.undo() })
+    act(() => { result.current.undo() })
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.canRedo).toBe(true)
+
+    act(() => { result.current.redo() })
+    act(() => { result.current.redo() })  // future 空 → no-op
+    expect(result.current.canUndo).toBe(true)
+    expect(result.current.canRedo).toBe(false)
+  })
+
+  it('importJson 成功时记录历史；失败时不记录', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    act(() => {
+      result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' })
+    })
+    // 1 次 add → undo 回到空图
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+
+    // 构造一个有效的 JSON
+    const validJson = result.current.exportJson()
+    // 先 add 一个不同的节点让 exportJson 的图 ≠ 空图
+    act(() => {
+      result.current.addNode('effect', { x: 50, y: 50 }, { kind: 'loseHp' })
+    })
+    const json2 = result.current.exportJson()
+    expect(json2).not.toBe(validJson)
+
+    // 导入 validJson：成功，应记录
+    act(() => {
+      const r = result.current.importJson(validJson)
+      expect(r.ok).toBe(true)
+    })
+    expect(result.current.canUndo).toBe(true)
+    act(() => { result.current.undo() })
+    // 回到 importJson 之前
+    expect(result.current.graph.nodes).toHaveLength(1)
+    expect(result.current.graph.nodes[0].data).toEqual({ kind: 'loseHp' })
+
+    // 失败 importJson：不入栈
+    const undoBefore = result.current.canUndo
+    act(() => {
+      const r = result.current.importJson('not valid json')
+      expect(r.ok).toBe(false)
+    })
+    expect(result.current.canUndo).toBe(undoBefore)
+  })
+  it('importJson 重复导入同一 JSON 不入栈（Q5 stringify 深比较）', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    act(() => {
+      result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' })
+    })
+    const beforeGraph = result.current.graph
+    const json = result.current.exportJson()
+
+    act(() => {
+      const r = result.current.importJson(json)
+      expect(r.ok).toBe(true)
+    })
+
+    // deserialize 会返回新对象，但同内容导入仍保持当前引用与历史长度。
+    expect(result.current.graph).toBe(beforeGraph)
+    expect(result.current.canUndo).toBe(true)
+    act(() => { result.current.undo() })
+    expect(result.current.graph.nodes).toHaveLength(0)
+    expect(result.current.canRedo).toBe(true)
+  })
+
+  it('historyLimit 合法选项按实例裁剪历史', () => {
+    const { result } = renderHook(
+      () => useNodeGraph('r-1', 'relic', undefined, { historyLimit: 2 })
+    )
+    let nodeId: string
+    act(() => {
+      nodeId = result.current.addNode('effect', { x: 0, y: 0 }, { kind: 'gainBuff' }).id
+    })
+    act(() => {
+      result.current.moveNode(nodeId!, { x: 1, y: 1 })
+      result.current.moveNode(nodeId!, { x: 2, y: 2 })
+      result.current.moveNode(nodeId!, { x: 3, y: 3 })
+    })
+
+    act(() => { result.current.undo() })
+    act(() => { result.current.undo() })
+    expect(result.current.canUndo).toBe(false)
+    expect(result.current.graph.nodes[0].position).toEqual({ x: 1, y: 1 })
+  })
+
+  it('historyLimit 非法值开发环境告警并回退默认值', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      renderHook(() => useNodeGraph(
+        'r-invalid-limit',
+        'relic',
+        undefined,
+        { historyLimit: 1.5 }
+      ))
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('invalid historyLimit=1.5')
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

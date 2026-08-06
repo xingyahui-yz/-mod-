@@ -4,7 +4,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { generateCardCode } from '../utils/codeGenerator'
-import { validateCard, parseCardFromCode } from '../utils/cardParser'
+import { parseCardFromCode } from '../utils/cardParser'
+import { validateCard } from '../card/cardValidation'
 import { exportCards, importCards } from '../utils/cardIO'
 import { HTTPAdapter, PROVIDER_CONFIGS } from '../services/llm/adapters/httpAdapter'
 import * as FileService from '../services/FileService'

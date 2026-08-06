@@ -2,6 +2,7 @@
  * 卡牌导入导出工具
  */
 import { CardData } from '../types'
+import { parseCardData } from '../card/cardValidation'
 
 const FORMAT_VERSION = '1.0'
 
@@ -47,8 +48,11 @@ export function importCards(jsonStr: string): { success: boolean; cards: CardDat
       return { success: false, cards: [], error: '无法识别的卡牌数据格式' }
     }
 
-    // 验证和过滤卡牌
-    const validCards = cards.filter(validateCardData)
+    // 统一解析和过滤卡牌；返回值已经是完整的 CardData
+    const validCards = cards.flatMap(card => {
+      const parsed = parseCardData(card)
+      return parsed ? [parsed] : []
+    })
     if (validCards.length === 0) {
       return { success: false, cards: [], error: '没有有效的卡牌数据' }
     }
@@ -57,24 +61,6 @@ export function importCards(jsonStr: string): { success: boolean; cards: CardDat
   } catch (err) {
     return { success: false, cards: [], error: `解析失败: ${err}` }
   }
-}
-
-/**
- * 验证卡牌数据格式
- */
-function validateCardData(card: any): card is CardData {
-  return (
-    typeof card === 'object' &&
-    card !== null &&
-    typeof card.name === 'string' &&
-    typeof card.cost === 'number' &&
-    typeof card.type === 'string' &&
-    typeof card.rarity === 'string' &&
-    typeof card.description === 'string' &&
-    Array.isArray(card.keywords) &&
-    ['Attack', 'Skill', 'Power'].includes(card.type) &&
-    ['Common', 'Uncommon', 'Rare'].includes(card.rarity)
-  )
 }
 
 /**
