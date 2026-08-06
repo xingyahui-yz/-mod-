@@ -1,9 +1,10 @@
 import { CardData } from '../types'
+import { parseCardData } from '../card/cardValidation'
 
 /**
  * 从C#代码中解析卡牌数据
  */
-export function parseCardFromCode(code: string): Partial<CardData> | null {
+export function parseCardFromCode(code: string): CardData | null {
   const result: Partial<CardData> = {}
 
   // 解析Name
@@ -56,8 +57,18 @@ export function parseCardFromCode(code: string): Partial<CardData> | null {
     result.keywords = keywords
   }
 
-  // 只有当解析到Name时才返回有效结果
-  return result.name ? result : null
+  // 只有当解析到Name时才返回有效结果；统一 seam 补齐并校验 CardData。
+  const name = result.name
+  if (!name) return null
+
+  return parseCardData({
+    name,
+    cost: result.cost ?? 0,
+    type: result.type ?? 'Attack',
+    rarity: result.rarity ?? 'Common',
+    description: result.description ?? '',
+    keywords: result.keywords ?? []
+  })
 }
 
 /**
@@ -77,16 +88,7 @@ export async function scanCardsFromDirectory(
         const content = await readFile(entry.path)
         if (content) {
           const parsed = parseCardFromCode(content)
-          if (parsed && parsed.name) {
-            cards.push({
-              name: parsed.name || 'Unknown',
-              cost: parsed.cost || 0,
-              type: parsed.type || 'Attack',
-              rarity: parsed.rarity || 'Common',
-              description: parsed.description || '',
-              keywords: parsed.keywords || []
-            })
-          }
+          if (parsed) cards.push(parsed)
         }
       }
     }
@@ -95,33 +97,4 @@ export async function scanCardsFromDirectory(
   }
 
   return cards
-}
-
-/**
- * 验证卡牌数据
- */
-export function validateCard(card: Partial<CardData>): string[] {
-  const errors: string[] = []
-
-  if (!card.name?.trim()) {
-    errors.push('卡牌名称不能为空')
-  }
-
-  if (card.name && card.name.length > 50) {
-    errors.push('卡牌名称过长（最大50字符）')
-  }
-
-  if (card.cost === undefined || card.cost < 0 || card.cost > 99) {
-    errors.push('费用必须在0-99之间')
-  }
-
-  if (!card.description?.trim()) {
-    errors.push('卡牌描述不能为空')
-  }
-
-  if (card.description && card.description.length > 500) {
-    errors.push('卡牌描述过长（最大500字符）')
-  }
-
-  return errors
 }

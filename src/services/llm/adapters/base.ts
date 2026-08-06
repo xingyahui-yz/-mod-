@@ -3,6 +3,7 @@
  * 所有模型适配器必须实现此接口
  */
 import { CardData } from '../../../types'
+import { parseCardData } from '../../../card/cardValidation'
 
 export interface LLMResponse {
   success: boolean
@@ -131,40 +132,12 @@ ${typeHint ? `偏好类型: ${typeHint}` : ''}
         return []
       }
 
-      return parsed
-        .filter(item => this.validateCardItem(item))
-        .map(item => this.normalizeCardItem(item))
+      return parsed.flatMap(item => {
+        const card = parseCardData(item)
+        return card ? [card] : []
+      })
     } catch {
       return []
-    }
-  }
-
-  /**
-   * 验证卡牌数据是否有效
-   */
-  protected validateCardItem(item: any): boolean {
-    return (
-      typeof item.name === 'string' &&
-      typeof item.cost === 'number' &&
-      typeof item.type === 'string' &&
-      typeof item.rarity === 'string' &&
-      typeof item.description === 'string' &&
-      ['Attack', 'Skill', 'Power'].includes(item.type) &&
-      ['Common', 'Uncommon', 'Rare'].includes(item.rarity)
-    )
-  }
-
-  /**
-   * 规范化卡牌数据
-   */
-  protected normalizeCardItem(item: any): CardData {
-    return {
-      name: item.name,
-      cost: item.cost,
-      type: item.type,
-      rarity: item.rarity,
-      description: item.description,
-      keywords: Array.isArray(item.keywords) ? item.keywords : []
     }
   }
 }

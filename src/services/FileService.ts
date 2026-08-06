@@ -3,6 +3,7 @@
  * 提供深层的、可测试的接口
  */
 import { CardData } from '../types'
+import { parseCardFromCode } from '../utils/cardParser'
 import { generateCardCode } from '../utils/codeGenerator'
 import { toPascalCase } from '../utils/stringUtils'
 
@@ -174,52 +175,6 @@ export async function saveCardToProject(
   }
 }
 
-// ============ 工具函数 ============
-
-function parseCardFromCode(code: string): CardData | null {
-  const result: Partial<CardData> = {}
-
-  const nameMatch = code.match(/Name\s*=\s*"([^"]+)"/)
-  if (nameMatch) result.name = nameMatch[1]
-
-  const costMatch = code.match(/Cost\s*=\s*(\d+)/)
-  if (costMatch) result.cost = parseInt(costMatch[1])
-
-  const typeMatch = code.match(/Type\s*=\s*CardType\.(\w+)/)
-  if (typeMatch) {
-    const typeMap: Record<string, CardData['type']> = {
-      'Attack': 'Attack', 'Skill': 'Skill', 'Power': 'Power'
-    }
-    result.type = typeMap[typeMatch[1]] || 'Attack'
-  }
-
-  const rarityMatch = code.match(/Rarity\s*=\s*CardRarity\.(\w+)/)
-  if (rarityMatch) {
-    const rarityMap: Record<string, CardData['rarity']> = {
-      'Common': 'Common', 'Uncommon': 'Uncommon', 'Rare': 'Rare'
-    }
-    result.rarity = rarityMap[rarityMatch[1]] || 'Common'
-  }
-
-  const descMatch = code.match(/Description\s*=\s*"([^"]+)"/)
-  if (descMatch) result.description = descMatch[1]
-
-  const keywords: string[] = []
-  const keywordMatches = code.matchAll(/Keywords\.Add\(\s*"([^"]+)"\s*\)/g)
-  for (const match of keywordMatches) {
-    keywords.push(match[1])
-  }
-  if (keywords.length > 0) result.keywords = keywords
-
-  return result.name ? {
-    name: result.name,
-    cost: result.cost || 0,
-    type: result.type || 'Attack',
-    rarity: result.rarity || 'Common',
-    description: result.description || '',
-    keywords: result.keywords || []
-  } : null
-}
 
 // ============ 游戏启动 ============
 
