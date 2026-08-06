@@ -15,13 +15,25 @@
  *  - 加载已有 Relic
  *  - AI 生成节点图
  */
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { RelicData } from './RelicData'
 import { RelicTier, RelicRarity } from '../types'
 import { useNodeGraph } from '../node-editor/useNodeGraph'
 import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
 import { generateRelicCode } from './codegen'
 import { SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS, EFFECT_KINDS } from './kinds'
+
+/**
+ * 判断当前键盘事件的目标是否是可编辑文本控件。
+ * 是则跳过全局快捷键，让浏览器原生 undo 处理。
+ */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+  if (target.isContentEditable) return true
+  return false
+}
 
 interface RelicEditorProps {
   initialRelic?: Partial<RelicData>
@@ -61,6 +73,27 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [ng.graph, relic])
+
+  // v0.7: 快捷键 — Ctrl/Cmd+Z 撤销、Ctrl/Cmd+Shift+Z 重做、Ctrl/Cmd+Y 重做
+  // 输入框/textarea/select/contenteditable 焦点时不拦截
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return
+      const key = e.key.toLowerCase()
+      if (key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        ng.undo()
+      } else if ((key === 'z' && e.shiftKey) || (key === 'y' && mod)) {
+        // 重做：Cmd/Ctrl+Shift+Z；Ctrl/Cmd+Y 作为别名
+        e.preventDefault()
+        ng.redo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ng])
 
   const addTrigger = (event: string) => {
     ng.addNode('trigger', {
@@ -134,6 +167,26 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
       {/* 中间：节点画布 */}
       <div className="relic-graph" data-testid="relic-graph">
         <div className="graph-toolbar">
+          {/* v0.7: 撤销/重做按钮 + 快捷键提示 */}
+          <button
+            onClick={ng.undo}
+            disabled={!ng.canUndo}
+            data-testid="undo"
+            type="button"
+            title="撤销 (Ctrl/Cmd+Z)"
+          >
+            ↶ 撤销
+          </button>
+          <button
+            onClick={ng.redo}
+            disabled={!ng.canRedo}
+            data-testid="redo"
+            type="button"
+            title="重做 (Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y)"
+          >
+            ↷ 重做
+          </button>
+          <span className="graph-toolbar-divider">|</span>
           <span>触发器：</span>
           {SUPPORTED_TRIGGERS.map(t => (
             <button

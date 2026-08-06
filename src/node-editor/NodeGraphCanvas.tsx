@@ -117,6 +117,8 @@ export function NodeGraphCanvas({
       width={width}
       height={height}
       data-testid="node-graph-canvas"
+      tabIndex={0}
+      aria-label="节点图画布"
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
