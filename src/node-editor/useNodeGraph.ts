@@ -2,6 +2,7 @@
  * 节点图 React hook - 封装 graph.ts 纯函数到 React state
  */
 import { useState, useCallback } from 'react'
+import { flushSync } from 'react-dom'
 import {
   createEmptyGraph, removeNode, moveNode,
   connect, disconnect, serialize, deserialize,
@@ -54,11 +55,13 @@ export function useNodeGraph(
       // 不依赖外部 graph 闭包；connect 在 setGraph 的 prev 上算，prev 是最新状态。
       // outcome 在闭包内捕获，返回给调用方。React 18 batch 内 updater 同步执行。
       let outcome: { ok: true } | { ok: false; reason: string } = { ok: true }
-      setGraph(prev => {
-        const r = connect(prev, from, to)
-        if (r.ok) return r.graph
-        outcome = r
-        return prev
+      flushSync(() => {
+        setGraph(prev => {
+          const r = connect(prev, from, to)
+          if (r.ok) return r.graph
+          outcome = r
+          return prev
+        })
       })
       return outcome
     },

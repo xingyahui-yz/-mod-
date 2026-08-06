@@ -108,6 +108,24 @@ describe('useNodeGraph hook', () => {
       [effectA!.id, effectB!.id].sort()
     )
   })
+  it('connect 失败时返回 {ok:false, reason}（v0.6 closure bug 修复）', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let nodeId: string
+    act(() => {
+      nodeId = result.current.addNode(
+        'trigger',
+        { x: 0, y: 0 },
+        { event: 'onCombatStart' }
+      ).id
+    })
+
+    const r = result.current.connect(
+      { nodeId: nodeId!, port: 'out' },
+      { nodeId: nodeId!, port: 'in' }
+    )
+    expect(r.ok).toBe(false)
+    expect((r as { ok: false; reason: string }).reason).toBeTruthy()
+  })
 })
 
 describe('NodeGraphCanvas 渲染', () => {
