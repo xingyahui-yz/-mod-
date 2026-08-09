@@ -9,6 +9,7 @@ import { validateCard } from '../card/cardValidation'
 import { exportCards, importCards } from '../utils/cardIO'
 import { HTTPAdapter, PROVIDER_CONFIGS } from '../services/llm/adapters/httpAdapter'
 import * as FileService from '../services/FileService'
+import { createFileService } from '../services/FileService'
 import { CardData } from '../types'
 
 const sampleCard: CardData = {
@@ -231,10 +232,8 @@ describe('4. HTTP LLM 适配器', () => {
   })
 })
 
-describe('5. FileService 文件系统（依赖注入）', () => {
-  beforeEach(() => {
-    // 重置 API（每个测试用 mock 重新注入）
-  })
+describe('5. FileService 文件系统（依赖注入 — factory seam v0.8-2）', () => {
+  // 每个测试创建独立 service — 不再 setApi 改模块全局
 
   it('loadCardsFromProject 扫描 scripts/Cards 目录下的 .cs 文件', async () => {
     const mockCode = generateCardCode(sampleCard, 'MyMod.Cards')
@@ -254,9 +253,9 @@ describe('5. FileService 文件系统（依赖注入）', () => {
       launchGame: vi.fn(),
       showInFolder: vi.fn()
     }
-    FileService.setApi(mockApi)
+    const svc = createFileService({ api: mockApi })
 
-    const cards = await FileService.loadCardsFromProject('/proj')
+    const cards = await svc.loadCardsFromProject('/proj')
 
     expect(mockApi.readDirectory).toHaveBeenCalledWith('/proj/scripts/Cards')
     expect(cards).toHaveLength(1) // 只 Fireball.cs 通过
@@ -273,11 +272,11 @@ describe('5. FileService 文件系统（依赖注入）', () => {
       copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
       launchGame: vi.fn(), showInFolder: vi.fn()
     }
-    FileService.setApi(mockApi)
+    const svc = createFileService({ api: mockApi })
 
     // 用英文名确保 PascalCase 转换产出有意义类名
     const englishCard: CardData = { ...sampleCard, name: 'fireball' }
-    const result = await FileService.saveCardToProject('/proj', englishCard)
+    const result = await svc.saveCardToProject('/proj', englishCard)
 
     expect(result.success).toBe(true)
     expect(result.fileName).toBe('Fireball.cs')
@@ -297,9 +296,9 @@ describe('5. FileService 文件系统（依赖注入）', () => {
       copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
       launchGame: vi.fn(), showInFolder: vi.fn()
     }
-    FileService.setApi(mockApi)
+    const svc = createFileService({ api: mockApi })
 
-    const result = await FileService.saveCardToProject('/proj', sampleCard)  // '火球术'
+    const result = await svc.saveCardToProject('/proj', sampleCard)  // '火球术'
 
     expect(result.fileName).toBe('MyCard.cs')
   })
@@ -317,9 +316,9 @@ describe('5. FileService 文件系统（依赖注入）', () => {
       copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
       launchGame: vi.fn(), showInFolder: vi.fn()
     }
-    FileService.setApi(mockApi)
+    const svc = createFileService({ api: mockApi })
 
-    const manifest = await FileService.loadModManifest('/proj')
+    const manifest = await svc.loadModManifest('/proj')
 
     expect(manifest).not.toBeNull()
     expect(manifest!.name).toBe('MyMod')
@@ -339,9 +338,9 @@ describe('5. FileService 文件系统（依赖注入）', () => {
       copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
       launchGame: vi.fn(), showInFolder: vi.fn()
     }
-    FileService.setApi(mockApi)
+    const svc = createFileService({ api: mockApi })
 
-    const sorted = await FileService.getProjectFiles('/x')
+    const sorted = await svc.getProjectFiles('/x')
 
     // 目录排前，文件排后；同类型内按名称排序
     // （注意：localeCompare 默认不分大小写，alpha < Alpha）

@@ -12,6 +12,7 @@ import { Toast } from './Toast'
 import { CardEditor } from './CardEditor'
 import { useCardStore } from '../stores/useCardStore'
 import * as FileService from '../services/FileService'
+import { installFileService } from '../services/FileService'
 import { CardData } from '../types'
 
 // 重置持久化 store（persist 中间件会写 localStorage）
@@ -228,7 +229,7 @@ describe('CardEditor 过滤 + 原始索引', () => {
   })
 
   it('loadExistingCards 失败时显示 Toast 错误', async () => {
-    // 通过 FileService.setApi 注入拒绝响应的 API
+    // 通过 installFileService 注入拒绝响应的 API (v0.8-2 factory seam)
     const mockApi: FileService.ElectronAPI = {
       openDirectory: vi.fn(), saveDirectory: vi.fn(),
       readDirectory: vi.fn().mockRejectedValue(new Error('EACCES: permission denied')),
@@ -236,7 +237,7 @@ describe('CardEditor 过滤 + 原始索引', () => {
       copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
       launchGame: vi.fn(), showInFolder: vi.fn()
     }
-    FileService.setApi(mockApi)
+    installFileService({ api: mockApi })
 
     await act(async () => {
       render(<CardEditor projectPath="/bad/path" />)
@@ -255,7 +256,7 @@ describe('CardEditor 过滤 + 原始索引', () => {
       copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
       launchGame: vi.fn(), showInFolder: vi.fn()
     }
-    FileService.setApi(mockApi)
+    installFileService({ api: mockApi })
 
     await act(async () => {
       render(<CardEditor projectPath="/empty" />)
