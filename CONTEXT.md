@@ -59,6 +59,7 @@
 - **不可变 Mutation（Immutable Mutation）**：所有 mutation 返回新 `NodeGraph`，引用相等表示 no-op，约定由 [v0.6 数据层硬化](./docs/architecture-review-2026-08-06.md) 沉淀。
 - **External Data Seam**（v0.8 新增）：所有外部输入（JSON / LLM 响应 / C# 反向解析）必须经过 `src/card/cardValidation.ts:parseCardData(value: unknown): CardData | null` —— 卡片实体的唯一可信 seam。其他实体在 v0.9+ 各自延展。
 - **Factory Seam**（v0.8-2 新增，候选 2）：store 与 service 改为工厂模式 `createX({ dependency })`，消除模块级 `window.__adapterFactory` / `let api = window.electronAPI` 全局 — 解并行测试全局污染。详见架构评审报告 §Candidate 2。
+- **ConnectError Lifecycle Seam**（v0.8-3 新增，候选 3）：`useNodeGraph` 拥有 `connectError: string | null` + `clearConnectError()` —— connect 成败路径都更新 hook 内部状态，编辑器纯观察 + 渲染 + 触发清除。详见架构评审报告 §Candidate 3。
 
 ### 3.3 AI 层
 - **Prompt 模板（Prompt Template）**：每个实体类型对应的结构化 prompt
@@ -77,7 +78,7 @@
 
 非 ADR 但已沉淀的决策：
 
-- **`/improve-codebase-architecture` 评审 5 候选**（2026-08-06）：[docs/architecture-review-2026-08-06.md](./docs/architecture-review-2026-08-06.md)。Candidate 1（CardData 单 validator）已在 v0.8-1 实施；Candidate 2（factory seam）在 v0.8-2 计划中。
+- **`/improve-codebase-architecture` 评审 5 候选**（2026-08-06）：[docs/architecture-review-2026-08-06.md](./docs/architecture-review-2026-08-06.md)。Candidate 1（CardData 单 validator）v0.8-1 ✅；Candidate 2（factory seam）v0.8-2 ✅；Candidate 3（connectError 入 hook）v0.8-3 ✅。Candidate 4/5 延后到 v0.9+。
 
 ## 5. 项目目录结构
 
@@ -98,7 +99,7 @@ MyMod/                          ← 用户项目根
     └── ai-history/             ← AI 对话历史（按实体 ID 组织）
 ```
 
-## 6. 当前状态（截至 2026-08-06，v0.8-1 合入 main）
+## 6. 当前状态（截至 2026-08-12，v0.8-3 已 commit 待 PR）
 
 ### 6.1 已实现
 
@@ -122,8 +123,9 @@ MyMod/                          ← 用户项目根
 ### 6.2 未实现（按优先级排序）
 
 **v0.8 待做**
-- ⏳ v0.8-2 — factory seam（`useAIStore` + `FileService` 去 window 全局）— 候选 2，Strong
-- ⏳ v0.8-3 — `connectError` 生命周期入 `useNodeGraph` — 候选 3，Worth exploring
+- ✅ v0.8-1 — CardData 单 validator seam — 候选 1（PR `ae0c558` 已合入 main）
+- ✅ v0.8-2 — factory seam（`useAIStore` + `FileService` 去 window 全局）— 候选 2，Strong（已 commit `7ee6602`，待 PR）
+- ✅ v0.8-3 — `connectError` 生命周期入 `useNodeGraph` — 候选 3，Worth exploring（已 commit `cb48666`，待 PR）
 
 **v0.9+ 待做**
 - ❌ Candidate 4（快捷键 + `isEditableTarget` 抽 seam）等 CardEditor 接入撤销再做
@@ -139,7 +141,7 @@ MyMod/                          ← 用户项目根
 ### 6.3 当前活跃主线
 
 - **节点编辑器**：v0.6 数据层硬化 ✅ → v0.7 撤销 / 重做 ✅ → v0.9 接入 E1
-- **架构清理**：v0.8-1 CardData seam ✅ → v0.8-2 factory seam → v0.8-3 connectError 入 hook
+- **架构清理**：v0.8-1 CardData seam ✅ → v0.8-2 factory seam ✅ → v0.8-3 connectError 入 hook ✅ → 等待 main 合入 → 评估 v0.9 起点
 
 ## 7. 修订记录
 
@@ -147,3 +149,4 @@ MyMod/                          ← 用户项目根
 |---|---|---|
 | 2026-08-03 | v1.0 初始建立 | 用户 + Claude `/grill-with-docs` |
 | 2026-08-06 | v1.1 同步到 v0.8-1 — 新增 §3.5 节点编辑器层 / 更新 §4 加 ADR-0005 / 重写 §6.1 全已实现清单 / 拆 §6.2 为 v0.8/v0.9/v1.0 三档 / 新增 §6.3 当前活跃主线 | Claude（基于 git log + 架构评审） |
+| 2026-08-12 | v1.2 同步到 v0.8-3 — §3.5 加 ConnectError Lifecycle Seam / §4 评审候选进度更新到 3/5 / §6 状态日期更新 / §6.2 v0.8 三档全标 ✅ / §6.3 活跃主线补 v0.9 评估节点 | Claude（基于 commit `cb48666` + 架构评审进度） |
