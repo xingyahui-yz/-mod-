@@ -7,6 +7,13 @@
  *   - 同引用视为 no-op：不入栈、不动 present 引用。
  *   - entity 切换视为新实体，清空历史。
  *   - undo/redo 自身不产生新历史。
+ *
+ * v0.8-3 (Candidate 3): connectError 生命周期入 hook。
+ *   - `connectError: string | null` — 失败原因（带 '连线失败：' 前缀）由 hook 自己拥有
+ *   - `clearConnectError()` — 调用方主动清除（例如错误提示的 × 按钮）
+ *   - 成功 connect 自动清除 error — 失败的 connect 不入栈，但 error 会被设置
+ *   - entity 切换视为新上下文，清除 error
+ *   - 编辑器只需观察 + 渲染，不再手动调 `setError('连线失败：' + reason)` 的 glue
  */
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
@@ -57,6 +64,9 @@ export interface UseNodeGraphReturn {
   redo: () => void
   canUndo: boolean
   canRedo: boolean
+  /** v0.8-3 (Candidate 3): connectError 生命周期 — hook 拥有 */
+  connectError: string | null
+  clearConnectError: () => void
 }
 
 export interface UseNodeGraphOptions {
@@ -112,6 +122,9 @@ export function useNodeGraph(
     present: initial ?? createEmptyGraph(entityId, entityType),
     future: []
   }))
+  // v0.8-3 (Candidate 3): connectError 入 hook. 成功 connect 自动清除,
+  // entity 切换视为新上下文清除. 编辑器纯展示.
+  const [connectError, setConnectError] = useState<string | null>(null)
 
   // The initializer only runs on mount. Track identity separately so a
   // subsequent entity switch cannot keep editing the previous graph, while
@@ -126,6 +139,8 @@ export function useNodeGraph(
       present: createEmptyGraph(entityId, entityType),
       future: []
     })
+    // entity 切换视为新上下文, 清掉遗留 connectError
+    setConnectError(null)
   }, [entityId, entityType])
 
   const addNode = useCallback(
@@ -152,6 +167,7 @@ export function useNodeGraph(
     (from: { nodeId: string; port: string }, to: { nodeId: string; port: string }) => {
       // v0.6: 改纯 updater 形式，避免同一 tick 多次连读连写不一致。
       // v0.7: 失败时 commit 直接返回 prev（不入栈）。
+      // v0.8-3 (Candidate 3): connectError 生命周期入 hook — 成功清除, 失败设置.
       // React 18 batch 内 setState updater **不是**同步执行；这里要同步读 outcome，
       // 所以用 flushSync 包一层。flushSync 是 React 官方推荐的"同步执行 updater"方式，
       // 代价是同一 tick 触发一次同步 re-render（编辑器交互下可接受）。
@@ -161,9 +177,11 @@ export function useNodeGraph(
           const r = connect(prev.present, from, to)
           if (r.ok) {
             outcome = { ok: true }
+            setConnectError(null)  // 成功 connect 自动清除
             return commit(prev, r.graph, historyLimit)
           }
           outcome = r
+          setConnectError(`连线失败：${r.reason}`)  // 失败设置可读错误
           return prev  // 失败不入栈（connect 已返回原 prev.present）
         })
       })
@@ -220,6 +238,10 @@ export function useNodeGraph(
     })
   }, [])
 
+  const clearConnectError = useCallback(() => {
+    setConnectError(null)
+  }, [])
+
   return {
     graph: history.present,
     addNode,
@@ -232,6 +254,9 @@ export function useNodeGraph(
     undo,
     redo,
     canUndo: history.past.length > 0,
-    canRedo: history.future.length > 0
+    canRedo: history.future.length > 0,
+    // v0.8-3 (Candidate 3): connectError 生命周期 seam
+    connectError,
+    clearConnectError,
   }
 }

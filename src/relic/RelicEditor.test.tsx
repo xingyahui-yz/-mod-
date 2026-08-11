@@ -265,3 +265,30 @@ describe('RelicEditor undo/redo UI (v0.7)', () => {
     expect(canvas.querySelectorAll('[data-testid^="edge-"]')).toHaveLength(1)
   })
 })
+
+// ============================================================================
+// v0.8-3: connectError 渲染 (Candidate 3 — 编辑器纯展示)
+// 契约: connectError 由 hook 拥有, 编辑器只观察 + 渲染 + 提供 × 清除按钮
+// ============================================================================
+
+describe('RelicEditor connectError UI (v0.8-3)', () => {
+  it('初始状态: 无 connect-error 元素 (null → 不渲染)', () => {
+    render(<RelicEditor />)
+    expect(screen.queryByTestId('connect-error')).toBeNull()
+  })
+
+  it('成功 connect 后仍无 connect-error 元素', () => {
+    render(<RelicEditor initialRelic={{ id: 'burning_blood', name: 'Burning Blood' }} />)
+    fireEvent.click(screen.getByTestId('add-trigger-onCombatStart'))
+    fireEvent.click(screen.getByTestId('add-effect-gainBuff'))
+
+    const canvas = screen.getByTestId('node-graph-canvas')
+    const triggerOut = canvas.querySelector('[data-testid^="port-"][data-testid$="-out"]') as Element
+    const effectIn = canvas.querySelector('[data-testid^="port-"][data-testid$="-in"]') as Element
+    fireEvent.click(triggerOut)
+    fireEvent.click(effectIn)
+
+    // 成功 connect → hook 自动清除 connectError (这里本就是 null, 仍不应渲染)
+    expect(screen.queryByTestId('connect-error')).toBeNull()
+  })
+})

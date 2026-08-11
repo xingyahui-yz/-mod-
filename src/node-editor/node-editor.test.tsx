@@ -1010,3 +1010,136 @@ describe('useNodeGraph undo/redo (v0.7)', () => {
     }
   })
 })
+
+// ============================================================================
+// v0.8-3: connectError 生命周期入 hook (Candidate 3)
+// 契约:
+//   - connectError 默认 null
+//   - 成功 connect 不写错误 (且清除之前遗留错误)
+//   - 失败 connect 设置 `连线失败：${reason}`
+//   - clearConnectError() 把错误清回 null
+//   - entity 切换视为新上下文, 清掉遗留错误
+// ============================================================================
+
+describe('useNodeGraph connectError 生命周期 (v0.8-3)', () => {
+  it('初始 connectError = null, 暴露 clearConnectError', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    expect(result.current.connectError).toBeNull()
+    expect(typeof result.current.clearConnectError).toBe('function')
+  })
+
+  it('成功 connect 不写错误, 且清除之前的遗留错误', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let trigger: ReturnType<typeof result.current.addNode>
+    let effect: ReturnType<typeof result.current.addNode>
+    act(() => {
+      trigger = result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+      effect = result.current.addNode('effect', { x: 100, y: 0 }, { kind: 'gainBuff' })
+    })
+
+    // 先制造一次失败 → 错误被设置
+    act(() => {
+      const r = result.current.connect(
+        { nodeId: trigger!.id, port: 'out' },
+        { nodeId: trigger!.id, port: 'in' }  // 目标端口不存在 → 失败
+      )
+      expect(r.ok).toBe(false)
+    })
+    expect(result.current.connectError).toMatch(/^连线失败：/)
+
+    // 再成功 connect → 错误应自动清除
+    act(() => {
+      const r = result.current.connect(
+        { nodeId: trigger!.id, port: 'out' },
+        { nodeId: effect!.id, port: 'in' }
+      )
+      expect(r.ok).toBe(true)
+    })
+    expect(result.current.connectError).toBeNull()
+  })
+
+  it('失败 connect 设置 `连线失败：${reason}` 字符串', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let trigger: ReturnType<typeof result.current.addNode>
+    act(() => {
+      trigger = result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    })
+
+    // trigger 没有 in 端口 → connect 试图连到自身不存在的端口 → 失败
+    act(() => {
+      const r = result.current.connect(
+        { nodeId: trigger!.id, port: 'out' },
+        { nodeId: trigger!.id, port: 'in' }
+      )
+      expect(r.ok).toBe(false)
+    })
+
+    expect(result.current.connectError).toBeTruthy()
+    expect(result.current.connectError).toMatch(/^连线失败：/)
+    expect(result.current.connectError!.length).toBeGreaterThan(4)
+  })
+
+  it('clearConnectError() 把错误清回 null', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    let trigger: ReturnType<typeof result.current.addNode>
+    act(() => {
+      trigger = result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    })
+
+    // 制造一次失败
+    act(() => {
+      result.current.connect(
+        { nodeId: trigger!.id, port: 'out' },
+        { nodeId: trigger!.id, port: 'in' }
+      )
+    })
+    expect(result.current.connectError).toBeTruthy()
+
+    // 主动清除
+    act(() => { result.current.clearConnectError() })
+    expect(result.current.connectError).toBeNull()
+  })
+
+  it('entity 切换视为新上下文, 清掉遗留 connectError', () => {
+    const { result, rerender } = renderHook(
+      ({ entityId }) => useNodeGraph(entityId, 'relic'),
+      { initialProps: { entityId: 'r-1' } }
+    )
+    let trigger: ReturnType<typeof result.current.addNode>
+    act(() => {
+      trigger = result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    })
+    // 在 r-1 上制造一次失败
+    act(() => {
+      result.current.connect(
+        { nodeId: trigger!.id, port: 'out' },
+        { nodeId: trigger!.id, port: 'in' }
+      )
+    })
+    expect(result.current.connectError).toBeTruthy()
+
+    // 切到 r-2 → connectError 应被清掉
+    act(() => { rerender({ entityId: 'r-2' }) })
+    expect(result.current.connectError).toBeNull()
+  })
+
+  it('失败 connect 不入栈 (与 canUndo 状态一致)', () => {
+    // 前置: 1 次成功 add 建立 baseline
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    act(() => {
+      result.current.addNode('trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
+    })
+    expect(result.current.canUndo).toBe(true)
+
+    // 失败 connect → 不入栈, 但 connectError 被设置
+    act(() => {
+      const r = result.current.connect(
+        { nodeId: result.current.graph.nodes[0].id, port: 'out' },
+        { nodeId: result.current.graph.nodes[0].id, port: 'in' }
+      )
+      expect(r.ok).toBe(false)
+    })
+    expect(result.current.canUndo).toBe(true)  // 仍是 1 次 add 的历史
+    expect(result.current.connectError).toBeTruthy()
+  })
+})

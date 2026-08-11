@@ -3,6 +3,12 @@
  *
  * v0.5.2 模块化：从 src/components/RelicEditor.tsx 移至 src/relic/RelicEditor.tsx
  *
+ * v0.8-3 (Candidate 3): 编辑器纯展示化 — 删除 `handleConnect` glue 与 `setError('连线失败：'...)` glue.
+ *   - 失败 connect 现在由 hook 内部设置 `ng.connectError`（含 '连线失败：' 前缀）
+ *   - 成功 connect 自动清除
+ *   - 编辑器只在画布下方展示 `ng.connectError`，× 按钮调 `ng.clearConnectError`
+ *   - codegen 错误（`handleGenerate` 抛错）仍走本地 `error` state — 不污染 connect 错误
+ *
  * v0.4 MVP 范围：
  *  - 表单：id / name / description / tier / rarity
  *  - 节点画布：useNodeGraph + NodeGraphCanvas
@@ -51,18 +57,10 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
     rarity: initialRelic?.rarity ?? 'Common'
   })
   const [generatedCode, setGeneratedCode] = useState<string>('')
+  // v0.8-3 (Candidate 3): 本地 error 只承担 codegen 错误; connect 错误由 hook 拥有.
   const [error, setError] = useState<string>('')
 
   const ng = useNodeGraph(relic.id, 'relic')
-
-  const handleConnect = useCallback((from: { nodeId: string; port: string }, to: { nodeId: string; port: string }) => {
-    const result = ng.connect(from, to)
-    if (!result.ok && result.reason) {
-      setError(`连线失败：${result.reason}`)
-    } else if (result.ok) {
-      setError('')
-    }
-  }, [ng])
 
   const handleGenerate = useCallback(() => {
     try {
@@ -223,8 +221,22 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
           onMoveNode={ng.moveNode}
           onRemoveNode={ng.removeNode}
           onDisconnect={ng.disconnect}
-          onConnect={handleConnect}
+          onConnect={ng.connect}
         />
+        {/* v0.8-3 (Candidate 3): connect 错误由 hook 拥有, 编辑器纯展示 */}
+        {ng.connectError && (
+          <div className="connect-error" data-testid="connect-error">
+            <span>{ng.connectError}</span>
+            <button
+              onClick={ng.clearConnectError}
+              data-testid="connect-error-clear"
+              type="button"
+              aria-label="关闭连线错误"
+            >
+              ×
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 右侧：预览 */}
