@@ -6,6 +6,7 @@ import {
   GraphNode, GraphEdge, NodeGraph, NodeType, EntityType, PortKind,
   NODE_PORT_DEFS
 } from './types'
+import { TRIGGER_KINDS } from '../shared/kinds'
 
 /** 节点尺寸（与 NodeGraphCanvas 共享） */
 export const NODE_WIDTH = 120
@@ -359,6 +360,15 @@ export function validateGraph(obj: unknown): GraphValidation {
       if (typeof data.event !== 'string') {
         return { ok: false, reason: `${prefix} (trigger) data.event 必须是字符串` }
       }
+      // v0.9 (ADR-0006 §决策 §4): trigger.entity === graph.entityType
+      const event = data.event as string
+      const triggerKind = TRIGGER_KINDS[event]
+      if (triggerKind && triggerKind.entity !== g.entityType) {
+        return {
+          ok: false,
+          reason: `${prefix} (trigger) event '${event}' 不允许用于实体类型 '${String(g.entityType)}'（属于 '${triggerKind.entity}'）`
+        }
+      }
     } else if (nodeType === 'effect') {
       if (typeof data.kind !== 'string') {
         return { ok: false, reason: `${prefix} (effect) data.kind 必须是字符串` }
@@ -437,6 +447,71 @@ export function validateGraph(obj: unknown): GraphValidation {
       return {
         ok: false,
         reason: `${prefix}.to.port "${to.port}" 必须是 input，实际是 ${toPort.kind}`
+      }
+    }
+  }
+
+  // v0.9 (ADR-0006 §决策 §8.3): 形态 2 effect (ToEventTarget / Card 后缀) 不在 Any trigger 后拒绝
+  // 收集所有 Any trigger 节点 id 集合（forward reachability 的根）
+  const anyTriggerIds = new Set<string>()
+  for (const node of nodesRaw) {
+    if (!node || typeof node !== 'object') continue
+    const n = node as Record<string, unknown>
+    if (n.type !== 'trigger') continue
+    const event = (n.data as Record<string, unknown> | undefined)?.event
+    if (typeof event === 'string' && event.startsWith('onAny')) {
+      anyTriggerIds.add(n.id as string)
+    }
+  }
+
+  // 从非 Any trigger 出发 BFS, 收集 effect.kind
+  function bfsCollectEffectsFromTriggers(startIds: string[]): Set<string> {
+    const visited = new Set<string>()
+    const queue = [...startIds]
+    const effectKinds = new Set<string>()
+    while (queue.length > 0) {
+      const id = queue.shift()!
+      if (visited.has(id)) continue
+      visited.add(id)
+      const node = nodeMap.get(id)
+      if (!node) continue
+      if (node.type === 'effect') {
+        const kind = (node.data as Record<string, unknown> | undefined)?.kind
+        if (typeof kind === 'string') effectKinds.add(kind)
+      }
+      // 沿所有 output 端口的出边继续
+      for (const edgeRaw of edgesRaw) {
+        if (!edgeRaw || typeof edgeRaw !== 'object') continue
+        const e = edgeRaw as Record<string, unknown>
+        const fromObj = e.from as Record<string, unknown> | undefined
+        if (fromObj?.nodeId === id) {
+          const toObj = e.to as Record<string, unknown> | undefined
+          if (typeof toObj?.nodeId === 'string') queue.push(toObj.nodeId)
+        }
+      }
+    }
+    return effectKinds
+  }
+
+  const nonAnyTriggerIds: string[] = []
+  for (const node of nodesRaw) {
+    if (!node || typeof node !== 'object') continue
+    const n = node as Record<string, unknown>
+    if (n.type !== 'trigger') continue
+    const event = (n.data as Record<string, unknown> | undefined)?.event
+    if (typeof event === 'string' && !event.startsWith('onAny')) {
+      nonAnyTriggerIds.push(n.id as string)
+    }
+  }
+
+  if (nonAnyTriggerIds.length > 0) {
+    const effectsFromNonAny = bfsCollectEffectsFromTriggers(nonAnyTriggerIds)
+    for (const kind of effectsFromNonAny) {
+      if (kind.endsWith('ToEventTarget') || kind.endsWith('Card')) {
+        return {
+          ok: false,
+          reason: `Effect '${kind}' 必须跟随 Any trigger (onAny*)，不能在普通 trigger 后使用`
+        }
       }
     }
   }
