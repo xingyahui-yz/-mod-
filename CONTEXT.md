@@ -75,6 +75,7 @@
 - **ADR-0003**：本地文件夹项目结构（不云端）
 - **ADR-0004**：多 mod 模式（用户管理多个项目）
 - **ADR-0005**：节点编辑器撤销 / 重做 — History Stack（不可变快照），不采用 Command Pattern
+- **ADR-0006**：v0.9 Card 节点 schema — 完全同构 trigger→effect 链 + Self/Any 前缀命名（详见 `docs/adr/0006-v0.9-card-node-schema.md`）
 
 非 ADR 但已沉淀的决策：
 
@@ -130,7 +131,7 @@ MyMod/                          ← 用户项目根
 **v0.9+ 待做**
 - ❌ Candidate 4（快捷键 + `isEditableTarget` 抽 seam）等 CardEditor 接入撤销再做
 - ❌ Candidate 5（kinds registry 注入 `validateGraph`）等 v0.9 AI JSON Schema 决策
-- ❌ **E1 卡牌接入节点编辑器**（v0.9）：卡片目前只有表单，接入节点编辑器后支持 trigger / effect 节点 — 同时是 AI JSON Schema 落地的载体
+- ❌ **E1 卡牌接入节点编辑器**（v0.9，ADR-0006 已锁定形态）：Card = 完全同构 trigger→effect 链；Card 4 trigger（onPlay / onSelfDraw / onSelfExhaust / onSelfDiscard）；Relic 加 2 个 Any 全局监听（onAnyCardExhausted / onAnyCardDiscarded）；EFFECT_KINDS 100% 共享
 - ❌ AI 对话式迭代（多轮）
 - ❌ AI 结构化输出（JSON Schema 校验）
 - ❌ E2、E4-E8 实体编辑器（Character / Potion / Event / Enemy / Buff / UI）
@@ -150,3 +151,4 @@ MyMod/                          ← 用户项目根
 | 2026-08-03 | v1.0 初始建立 | 用户 + Claude `/grill-with-docs` |
 | 2026-08-06 | v1.1 同步到 v0.8-1 — 新增 §3.5 节点编辑器层 / 更新 §4 加 ADR-0005 / 重写 §6.1 全已实现清单 / 拆 §6.2 为 v0.8/v0.9/v1.0 三档 / 新增 §6.3 当前活跃主线 | Claude（基于 git log + 架构评审） |
 | 2026-08-12 | v1.2 同步到 v0.8-3 — §3.5 加 ConnectError Lifecycle Seam / §4 评审候选进度更新到 3/5 / §6 状态日期更新 / §6.2 v0.8 三档全标 ✅ / §6.3 活跃主线补 v0.9 评估节点 | Claude（基于 commit `cb48666` + 架构评审进度） |
+| 2026-08-12 | v1.3 同步 ADR-0006 — §4 加 v0.9 Card 节点 schema 决策 / §6.2 E1 加 ADR-0006 锁定形态 / 修订记录加 v1.3 行 | 用户 + Claude `/grill-with-docs`（4 Q 评审：同构性 / 表结构 / trigger 范围 / Self-Any 命名） |
