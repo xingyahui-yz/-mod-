@@ -9,7 +9,7 @@ import { renderHook } from '@testing-library/react'
 import { useNodeGraph } from './useNodeGraph'
 import { NodeGraphCanvas } from './NodeGraphCanvas'
 import { createEmptyGraph, connect, getPortXY, NODE_WIDTH } from './graph'
-import { NodeGraph } from './types'
+import { NodeGraph, EntityType } from './types'
 
 describe('useNodeGraph hook', () => {
   it('默认创建空图', () => {
@@ -1141,5 +1141,54 @@ describe('useNodeGraph connectError 生命周期 (v0.8-3)', () => {
     })
     expect(result.current.canUndo).toBe(true)  // 仍是 1 次 add 的历史
     expect(result.current.connectError).toBeTruthy()
+  })
+})
+
+// ============================================================================
+// v0.9 (Step 2 — ADR-0006 §决策 §4): palette 按 entityType 过滤
+// ============================================================================
+
+describe('useNodeGraph availableTriggers / availableEffects (v0.9 Step 2)', () => {
+  it('relic 实体: availableTriggers = 3 个 Relic trigger, availableEffects = 4 个 (当前 effects 都未标 entity → 通用)', () => {
+    const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
+    expect(result.current.availableTriggers.sort()).toEqual(
+      ['onCardPlayed', 'onCombatStart', 'onTurnStart']
+    )
+    // 4 个现有 effect 都还没标 entity 字段 (Step 7 才整合) → 全实体可见
+    expect(result.current.availableEffects.sort()).toEqual(
+      ['drawCards', 'gainBuff', 'gainGold', 'loseHp']
+    )
+  })
+
+  it('card 实体: availableTriggers = 空（Card trigger 待 Step 4 接入）；availableEffects = 4 个 (同上通用原则)', () => {
+    // 当前 TRIGGER_KINDS 里没有 entity === 'card' 的项 → card trigger palette 为空
+    // Step 4 (CardEditor) 会加 4 个 Card trigger
+    // effects 没标 entity → 通用，全部可见
+    const { result } = renderHook(() => useNodeGraph('c-1', 'card'))
+    expect(result.current.availableTriggers).toEqual([])
+    expect(result.current.availableEffects.sort()).toEqual(
+      ['drawCards', 'gainBuff', 'gainGold', 'loseHp']
+    )
+  })
+
+  it('entityType 切换时 availableTriggers 自动重算（effects 因通用不随 entityType 变）', () => {
+    const { result, rerender } = renderHook(
+      ({ et }: { et: EntityType }) => useNodeGraph('e-1', et),
+      { initialProps: { et: 'relic' as EntityType } }
+    )
+
+    // 初始 = relic: 3 trigger + 4 effect
+    expect(result.current.availableTriggers.length).toBe(3)
+    expect(result.current.availableEffects.length).toBe(4)
+
+    // 切到 card: 0 trigger (没注册) + 4 effect (通用)
+    rerender({ et: 'card' as EntityType })
+    expect(result.current.availableTriggers).toEqual([])
+    expect(result.current.availableEffects.length).toBe(4)
+
+    // 切回 relic: 3 + 4
+    rerender({ et: 'relic' as EntityType })
+    expect(result.current.availableTriggers.length).toBe(3)
+    expect(result.current.availableEffects.length).toBe(4)
   })
 })

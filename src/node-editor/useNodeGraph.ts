@@ -14,8 +14,13 @@
  *   - 成功 connect 自动清除 error — 失败的 connect 不入栈，但 error 会被设置
  *   - entity 切换视为新上下文，清除 error
  *   - 编辑器只需观察 + 渲染，不再手动调 `setError('连线失败：' + reason)` 的 glue
+ *
+ * v0.9 (Step 2 — ADR-0006 §决策 §4): palette 按 entityType 过滤。
+ *   - `availableTriggers` / `availableEffects` 用当前 entityType 过滤 shared/kinds.ts
+ *   - editor 改用 hook 返回值，不再直接 import SUPPORTED_TRIGGERS/SUPPORTED_EFFECTS
+ *   - entity 切换时 React 自动重算（useMemo 依赖 entityType）
  */
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { flushSync } from 'react-dom'
 import {
   createEmptyGraph, removeNode, moveNode,
@@ -23,6 +28,7 @@ import {
   buildNode, addNodeToGraph, touchGraph
 } from './graph'
 import { EntityType, NodeGraph, GraphNode, NodeType } from './types'
+import { triggersForEntity, effectsForEntity } from '../shared/kinds'
 
 /** 历史上限：保留最近 100 个 present 之前的快照 */
 export const HISTORY_LIMIT = 100
@@ -67,6 +73,10 @@ export interface UseNodeGraphReturn {
   /** v0.8-3 (Candidate 3): connectError 生命周期 — hook 拥有 */
   connectError: string | null
   clearConnectError: () => void
+  /** v0.9 (Step 2 — ADR-0006 §决策 §4): 当前 entityType 的 trigger 列表 (palette 用) */
+  availableTriggers: string[]
+  /** v0.9 (Step 2 — ADR-0006 §决策 §4): 当前 entityType 的 effect 列表 (palette 用) */
+  availableEffects: string[]
 }
 
 export interface UseNodeGraphOptions {
@@ -242,6 +252,17 @@ export function useNodeGraph(
     setConnectError(null)
   }, [])
 
+  // v0.9 (Step 2): palette 按当前 entityType 过滤。entity 切换自动重算
+  // （依赖 entityType，useMemo 失效重算 → 引用变化 → 编辑器 React 子树自动重渲染）
+  const availableTriggers = useMemo(
+    () => triggersForEntity(entityType),
+    [entityType]
+  )
+  const availableEffects = useMemo(
+    () => effectsForEntity(entityType),
+    [entityType]
+  )
+
   return {
     graph: history.present,
     addNode,
@@ -258,5 +279,8 @@ export function useNodeGraph(
     // v0.8-3 (Candidate 3): connectError 生命周期 seam
     connectError,
     clearConnectError,
+    // v0.9 (Step 2): entityType 过滤的 palette
+    availableTriggers,
+    availableEffects,
   }
 }
