@@ -88,6 +88,36 @@ export const TRIGGER_KINDS: Record<string, TriggerKind> = {
     methodName: 'OnCardPlayed',
     defaultData: { event: 'onCardPlayed' },
   },
+  // ---- Card triggers (v0.9 Step 4 — ADR-0006 §决策 §8: Card 全形态 1 卡自触发) ----
+  onPlay: {
+    kind: 'onPlay',
+    entity: 'card',
+    label: '卡牌打出',
+    methodName: 'OnPlay',
+    defaultData: { event: 'onPlay' },
+    // isAnyTrigger 缺省 = false (形态 1：卡自触发，不是外部事件订阅)
+  },
+  onSelfDraw: {
+    kind: 'onSelfDraw',
+    entity: 'card',
+    label: '自己被抽到',
+    methodName: 'OnSelfDraw',
+    defaultData: { event: 'onSelfDraw' },
+  },
+  onSelfExhaust: {
+    kind: 'onSelfExhaust',
+    entity: 'card',
+    label: '自己被消耗',
+    methodName: 'OnSelfExhaust',
+    defaultData: { event: 'onSelfExhaust' },
+  },
+  onSelfDiscard: {
+    kind: 'onSelfDiscard',
+    entity: 'card',
+    label: '自己被丢弃',
+    methodName: 'OnSelfDiscard',
+    defaultData: { event: 'onSelfDiscard' },
+  },
 }
 
 /** 效果注册表 — v0.9 Step 1 起步：4 个 Relic effect (现有)
@@ -104,6 +134,8 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `ApplyBuff("${buff}", ${amount});`
     },
     defaultData: { kind: 'gainBuff', buffType: 'Strength', amount: 1 },
+    // v0.9 Step 4: Relic 专属 (ApplyBuff 在 Relic 上下文用); Step 7 引入通用 applyBuff (with target)
+    entity: 'relic',
   },
   loseHp: {
     kind: 'loseHp',
@@ -113,6 +145,8 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `Owner.LoseHp(${amount});`
     },
     defaultData: { kind: 'loseHp', amount: 1 },
+    // v0.9 Step 4: Relic 专属 (Owner.LoseHp 上下文是 relic); 未来 Card 形态 2 走 applyDebuffToEventTarget
+    entity: 'relic',
   },
   gainGold: {
     kind: 'gainGold',
@@ -122,6 +156,8 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `Owner.GainGold(${amount});`
     },
     defaultData: { kind: 'gainGold', amount: 50 },
+    // v0.9 Step 4: Relic 专属 (金币是 relic 经济)
+    entity: 'relic',
   },
   drawCards: {
     kind: 'drawCards',
@@ -131,6 +167,43 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `Owner.DrawCards(${amount});`
     },
     defaultData: { kind: 'drawCards', amount: 2 },
+    // v0.9 Step 4: 通用 (Owner.DrawCards 对 Relic 和 Card 都合理, 符合 ADR-0006 §决策 §6 "drawCards 复用现有 Relic 版")
+    // entity 缺省 = 通用
+  },
+  // ---- Card 专属 effect (v0.9 Step 4 — ADR-0006 §决策 §6: 实体绑定 effect 各占一条) ----
+  exhaustSelf: {
+    kind: 'exhaustSelf',
+    label: '消耗自己',
+    emitStatement: () => `Exhaust();`,
+    defaultData: { kind: 'exhaustSelf' },
+    entity: 'card',
+  },
+  discardSelf: {
+    kind: 'discardSelf',
+    label: '丢弃自己',
+    emitStatement: () => `Discard();`,
+    defaultData: { kind: 'discardSelf' },
+    entity: 'card',
+  },
+  addCardToHand: {
+    kind: 'addCardToHand',
+    label: '添加卡到手牌',
+    emitStatement: (d) => {
+      const cardId = String(d.cardId ?? 'MyCard')
+      return `AddCardToHand("${cardId}");`
+    },
+    defaultData: { kind: 'addCardToHand', cardId: 'MyCard' },
+    entity: 'card',
+  },
+  addCardToDeck: {
+    kind: 'addCardToDeck',
+    label: '添加卡到牌库',
+    emitStatement: (d) => {
+      const cardId = String(d.cardId ?? 'MyCard')
+      return `AddCardToDeck("${cardId}");`
+    },
+    defaultData: { kind: 'addCardToDeck', cardId: 'MyCard' },
+    entity: 'card',
   },
 }
 

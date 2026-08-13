@@ -1,7 +1,7 @@
-# ADR-0005：节点编辑器撤销 / 重做 — History Stack（不可变快照），非 Command Pattern
+# ADR-0005：实体编辑器撤销 / 重做 — History Stack（不可变快照），非 Command Pattern
 
-> 状态：已接受 · 日期：2026-08-06 · 来源：v0.7 实施（commit `9d54ee6`）+ `/improve-codebase-architecture` 评审（2026-08-06，候选 5 之外）
-> 适用范围：`src/node-editor/useNodeGraph.ts`（节点图编辑器的撤销 / 重做机制）
+> 状态：已接受 · 日期：2026-08-06 · 修订：2026-08-13 · 来源：v0.7 实施（commit `9d54ee6`）+ `/improve-codebase-architecture` 评审（2026-08-06，候选 5 之外）+ `/grill-with-docs`
+> 适用范围：节点图编辑器，以及 v0.9 起包含表单与行为图的实体编辑器
 
 ## 背景（Context）
 
@@ -28,6 +28,28 @@
 - HISTORY_LIMIT = 100（实现常量；超过则裁剪最旧）
 
 `undo / redo / canUndo / canRedo` 作为 hook 的返回字段；编辑器和 UI 不感知栈结构。
+
+### v0.9 Card 扩展：以完整 Card 草稿为历史边界
+
+Card 的基本属性与行为图属于同一个聚合，因此 CardEditor 使用统一的 `HistoryState<CardEditSnapshot>`；快照同时包含 Card 基本属性与 `NodeGraph`。表单修改和节点图 mutation 按发生顺序进入同一时间线，Ctrl/Cmd+Z 不根据当前焦点选择不同历史。
+
+- 每张 Card 拥有独立历史；切换 Card 不混合时间线
+- 自动保存、保存状态、生成校验、C# 生成及“生成未同步”状态不进入编辑历史
+- 撤销/重做改变完整 Card 草稿后，会像普通编辑一样触发草稿自动保存，但不会自动生成 C#
+- CardEditor 激活时，Ctrl/Cmd+Z 与 Ctrl/Cmd+Shift+Z 操作统一 Card 历史，不再让输入控件形成第二套权威撤销时间线
+- History Stack 机制不变，只把 `present` 从单独 `NodeGraph` 提升为完整 Card 编辑快照
+
+### 编辑事务边界
+
+历史的一步表示一个用户意图，而不是每次状态变化：
+
+- 同一字段的连续文本输入合并；约 750ms 无输入或失焦时结束事务
+- 一次下拉选择或关键词增删各自成一步
+- 节点拖动从 pointer down 到 pointer up 合并为一步，不为每帧位置变化建快照
+- 添加/删除节点、连接/断开边各自成一步
+- 自动保存不会开始、结束或插入历史事务
+
+事务合并由编辑历史层统一实现，控件只报告事务开始、更新与提交，不各自实现撤销规则。
 
 ## 备选方案（Alternatives Considered）
 
@@ -59,6 +81,16 @@
   - 历史占内存（每张图 = 节点 + 边的快照）
   - 不能跨实体共享 history（每个 `useNodeGraph` 实例独立）—— 这是设计选择不是缺陷
   - 持久化需要全图序列化（暂未做；重启编辑器历史归零，明确写在设计文档非目标里）
+
+### 备选 C：Card 表单与节点图各自维护历史
+
+- **优点**：可以直接复用现有 `useNodeGraph`，表单只需另加一套较小历史。
+- **缺点**：Ctrl/Cmd+Z 必须根据焦点猜测目标；用户在表单和画布之间交替编辑时，无法按真实操作顺序撤销。Card 文档既是单一聚合，其编辑历史也应采用同一边界。
+
+### 备选 D：每个状态变化都创建 Card 快照
+
+- **优点**：提交规则最简单，每次 setter 后立即记录。
+- **缺点**：输入一个字段或拖动一个节点会快速耗尽历史上限，撤销粒度也不符合用户意图。采用编辑事务合并连续变化，同时保留完整快照机制。
 
 ## 关键发现
 
@@ -95,7 +127,7 @@ const commit = (prev: HistoryState, next: NodeGraph): HistoryState => {
 
 - **实现统一**：5 个 mutation 共用 `commit(next)` 一个 helper — 集中"如何记录历史"的代码到一处。
 - **测试分工清晰**：graph.ts 不动，v0.7 undo/redo 测试只覆盖"栈行为"。
-- **跨编辑器复用预备**：当未来 CardEditor / CharacterEditor / EventEditor 等其他实体接入节点编辑器（v0.9+），每个实例用同一个 hook，**默认值即可**为它们提供撤销 / 重做。
+- **跨编辑器复用**：v0.9 CardEditor 将同一 History Stack 机制提升到完整实体草稿；未来 CharacterEditor / EventEditor 可复用相同的泛型历史边界。
 - **不需要持久化序列化即可工作**：重启即丢弃历史，符合 MVP 节奏。
 
 ### 负面
@@ -116,3 +148,5 @@ const commit = (prev: HistoryState, next: NodeGraph): HistoryState => {
 | 日期 | 变更 |
 |---|---|
 | 2026-08-06 | v1.0 初始建立 — v0.7 实施后的回溯性 ADR |
+| 2026-08-13 | v1.1 Card 统一编辑历史 — 快照从 NodeGraph 提升为完整 Card 草稿；表单与行为图共享时间线，自动保存与生成状态不入历史 |
+| 2026-08-13 | v1.2 编辑事务边界 — 连续输入按 750ms/失焦合并、一次拖动合并，离散表单与图操作各自成步；Card 历史接管快捷键 |

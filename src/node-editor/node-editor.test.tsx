@@ -1149,29 +1149,31 @@ describe('useNodeGraph connectError 生命周期 (v0.8-3)', () => {
 // ============================================================================
 
 describe('useNodeGraph availableTriggers / availableEffects (v0.9 Step 2)', () => {
-  it('relic 实体: availableTriggers = 3 个 Relic trigger, availableEffects = 4 个 (当前 effects 都未标 entity → 通用)', () => {
+  it('relic 实体: availableTriggers = 3 个 Relic trigger, availableEffects = 4 个 (3 relic + 1 通用 drawCards)', () => {
     const { result } = renderHook(() => useNodeGraph('r-1', 'relic'))
     expect(result.current.availableTriggers.sort()).toEqual(
       ['onCardPlayed', 'onCombatStart', 'onTurnStart']
     )
-    // 4 个现有 effect 都还没标 entity 字段 (Step 7 才整合) → 全实体可见
+    // 3 relic entity + 1 通用 (drawCards entity 缺省) = 4
+    // 注: 截至 v0.9 Step 4, gainBuff/loseHp/gainGold 已标 entity='relic', drawCards 通用
     expect(result.current.availableEffects.sort()).toEqual(
       ['drawCards', 'gainBuff', 'gainGold', 'loseHp']
     )
   })
 
-  it('card 实体: availableTriggers = 空（Card trigger 待 Step 4 接入）；availableEffects = 4 个 (同上通用原则)', () => {
-    // 当前 TRIGGER_KINDS 里没有 entity === 'card' 的项 → card trigger palette 为空
-    // Step 4 (CardEditor) 会加 4 个 Card trigger
-    // effects 没标 entity → 通用，全部可见
+  it('card 实体: availableTriggers = 4 个 Card trigger, availableEffects = 5 个 (4 card + 1 通用 drawCards)', () => {
+    // v0.9 Step 4: Card 4 个 trigger (onPlay / onSelfDraw / onSelfExhaust / onSelfDiscard) 已加入
     const { result } = renderHook(() => useNodeGraph('c-1', 'card'))
-    expect(result.current.availableTriggers).toEqual([])
+    expect(result.current.availableTriggers.sort()).toEqual(
+      ['onPlay', 'onSelfDiscard', 'onSelfDraw', 'onSelfExhaust']
+    )
+    // 4 card entity + 1 通用 (drawCards) = 5
     expect(result.current.availableEffects.sort()).toEqual(
-      ['drawCards', 'gainBuff', 'gainGold', 'loseHp']
+      ['addCardToDeck', 'addCardToHand', 'discardSelf', 'drawCards', 'exhaustSelf']
     )
   })
 
-  it('entityType 切换时 availableTriggers 自动重算（effects 因通用不随 entityType 变）', () => {
+  it('entityType 切换时 availableTriggers / availableEffects 自动重算', () => {
     const { result, rerender } = renderHook(
       ({ et }: { et: EntityType }) => useNodeGraph('e-1', et),
       { initialProps: { et: 'relic' as EntityType } }
@@ -1181,10 +1183,10 @@ describe('useNodeGraph availableTriggers / availableEffects (v0.9 Step 2)', () =
     expect(result.current.availableTriggers.length).toBe(3)
     expect(result.current.availableEffects.length).toBe(4)
 
-    // 切到 card: 0 trigger (没注册) + 4 effect (通用)
+    // 切到 card: 4 trigger + 5 effect (4 card + 1 通用)
     rerender({ et: 'card' as EntityType })
-    expect(result.current.availableTriggers).toEqual([])
-    expect(result.current.availableEffects.length).toBe(4)
+    expect(result.current.availableTriggers.length).toBe(4)
+    expect(result.current.availableEffects.length).toBe(5)
 
     // 切回 relic: 3 + 4
     rerender({ et: 'relic' as EntityType })
