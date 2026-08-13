@@ -57,6 +57,8 @@ export interface EffectKind {
   emitStatement: (data: Record<string, unknown>) => string | null
   /** 添加 effect 节点时的默认 data */
   defaultData: Record<string, unknown>
+  /** 固定接收者语义；v0.9 不注册 eventTarget。 */
+  receiver: 'self' | 'owner'
   /** 实体绑定（可选）：仅实体专属 effect 标记（如 exhaustSelf / exhaustCard） */
   entity?: EntityType
   /** 形态 2 标识：effect 操作 event target（仅 Relic 形态 2 effect 为 true） */
@@ -134,6 +136,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `ApplyBuff("${buff}", ${amount});`
     },
     defaultData: { kind: 'gainBuff', buffType: 'Strength', amount: 1 },
+    receiver: 'self',
     // v0.9 Step 4: Relic 专属 (ApplyBuff 在 Relic 上下文用); Step 7 引入通用 applyBuff (with target)
     entity: 'relic',
   },
@@ -145,6 +148,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `Owner.LoseHp(${amount});`
     },
     defaultData: { kind: 'loseHp', amount: 1 },
+    receiver: 'owner',
     // v0.9 Step 4: Relic 专属 (Owner.LoseHp 上下文是 relic); 未来 Card 形态 2 走 applyDebuffToEventTarget
     entity: 'relic',
   },
@@ -156,6 +160,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `Owner.GainGold(${amount});`
     },
     defaultData: { kind: 'gainGold', amount: 50 },
+    receiver: 'owner',
     // v0.9 Step 4: Relic 专属 (金币是 relic 经济)
     entity: 'relic',
   },
@@ -167,6 +172,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `Owner.DrawCards(${amount});`
     },
     defaultData: { kind: 'drawCards', amount: 2 },
+    receiver: 'owner',
     // v0.9 Step 4: 通用 (Owner.DrawCards 对 Relic 和 Card 都合理, 符合 ADR-0006 §决策 §6 "drawCards 复用现有 Relic 版")
     // entity 缺省 = 通用
   },
@@ -176,6 +182,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
     label: '消耗自己',
     emitStatement: () => `Exhaust();`,
     defaultData: { kind: 'exhaustSelf' },
+    receiver: 'self',
     entity: 'card',
   },
   discardSelf: {
@@ -183,6 +190,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
     label: '丢弃自己',
     emitStatement: () => `Discard();`,
     defaultData: { kind: 'discardSelf' },
+    receiver: 'self',
     entity: 'card',
   },
   addCardToHand: {
@@ -193,6 +201,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `AddCardToHand("${cardId}");`
     },
     defaultData: { kind: 'addCardToHand', cardId: 'MyCard' },
+    receiver: 'owner',
     entity: 'card',
   },
   addCardToDeck: {
@@ -203,6 +212,7 @@ export const EFFECT_KINDS: Record<string, EffectKind> = {
       return `AddCardToDeck("${cardId}");`
     },
     defaultData: { kind: 'addCardToDeck', cardId: 'MyCard' },
+    receiver: 'owner',
     entity: 'card',
   },
 }

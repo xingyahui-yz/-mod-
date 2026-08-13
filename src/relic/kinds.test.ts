@@ -70,6 +70,7 @@ describe('EFFECT_KINDS', () => {
       expect(e.emitStatement, `${kind}.emitStatement`).toBeTypeOf('function')
       expect(e.defaultData, `${kind}.defaultData`).toBeTypeOf('object')
       expect(e.defaultData.kind, `${kind}.defaultData.kind`).toBe(kind)
+      expect(['self', 'owner']).toContain(e.receiver)
     }
   })
 

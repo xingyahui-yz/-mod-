@@ -432,9 +432,7 @@ describe('validateGraph', () => {
     }
   })
 
-  it('trigger.event 不在 TRIGGER_KINDS（未知字符串）通过（不主动拒，兼容性原则）', () => {
-    // 当前实现：trigger.entity 校验仅在 TRIGGER_KINDS 里有定义时触发；
-    // 未知 event 不主动报错，留给 codegen 兜底
+  it('trigger.event 不在 v0.9 registry 时拒绝', () => {
     const g = createEmptyGraph('r', 'relic')
     const ok = {
       ...g,
@@ -442,11 +440,12 @@ describe('validateGraph', () => {
         { id: 't1', type: 'trigger', position: { x: 0, y: 0 }, data: { event: 'onFutureEvent' } }
       ]
     }
-    expect(validateGraph(ok).ok).toBe(true)
+    const result = validateGraph(ok)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toMatch(/未注册/)
   })
 
-  // v0.9 (ADR-0006 §决策 §8.3): 形态 2 effect (kind 以 ToEventTarget / Card 结尾) 必须在 Any trigger 后
-  it('形态 2 effect（exhaustCard）在普通 trigger 后被拒', () => {
+  it('未注册 EventTarget effect 在 v0.9 被拒', () => {
     const g = createEmptyGraph('r', 'relic')
     let cur = g
     const r1 = appendNode(cur, 'trigger', { x: 0, y: 0 }, { event: 'onCombatStart' })
@@ -459,10 +458,10 @@ describe('validateGraph', () => {
     if (!c.ok) throw new Error('connect failed')
     const r = validateGraph(c.graph)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.reason).toMatch(/Effect 'exhaustCard'.*必须跟随 Any trigger/)
+    if (!r.ok) expect(r.reason).toMatch(/未注册/)
   })
 
-  it('形态 2 effect（applyBuffToEventTarget）在普通 trigger 后被拒', () => {
+  it('未注册 EventTarget effect 不因 trigger 形态而放行', () => {
     const g = createEmptyGraph('r', 'relic')
     let cur = g
     const r1 = appendNode(cur, 'trigger', { x: 0, y: 0 }, { event: 'onCardPlayed' })
@@ -475,10 +474,10 @@ describe('validateGraph', () => {
     if (!c.ok) throw new Error('connect failed')
     const r = validateGraph(c.graph)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.reason).toMatch(/Effect 'applyBuffToEventTarget'.*必须跟随 Any trigger/)
+    if (!r.ok) expect(r.reason).toMatch(/未注册/)
   })
 
-  it('形态 2 effect 在 Any trigger（onAnyCardExhausted）后通过', () => {
+  it('未注册 Any trigger 在 v0.9 被拒', () => {
     const g = createEmptyGraph('r', 'relic')
     let cur = g
     const r1 = appendNode(cur, 'trigger', { x: 0, y: 0 }, { event: 'onAnyCardExhausted' })
@@ -490,7 +489,7 @@ describe('validateGraph', () => {
     const c = connect(cur, { nodeId: t.id, port: 'out' }, { nodeId: e.id, port: 'in' })
     if (!c.ok) throw new Error('connect failed')
     const r = validateGraph(c.graph)
-    expect(r.ok).toBe(true)
+    expect(r.ok).toBe(false)
   })
 
   it('形态 1 effect（gainBuff）在普通 trigger 后仍通过（不受形态 2 规则影响）', () => {
