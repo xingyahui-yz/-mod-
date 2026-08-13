@@ -34,7 +34,6 @@ interface CardEditorProps {
 
 const TYPES: CardData['type'][] = ['Attack', 'Skill', 'Power']
 const RARITIES: CardData['rarity'][] = ['Common', 'Uncommon', 'Rare']
-const TARGETS: CardData['target'][] = ['self', 'eventTarget']
 
 export function CardEditor({ initialCard }: CardEditorProps = {}) {
   const [card, setCard] = useState<CardData>({ ...createDefaultCard(), ...initialCard })
@@ -150,16 +149,6 @@ export function CardEditor({ initialCard }: CardEditorProps = {}) {
             data-testid="card-rarity"
           >
             {RARITIES.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </label>
-        <label className="card-target">
-          <span>Target (Step 6 接入)</span>
-          <select
-            value={card.target}
-            onChange={e => setCard({ ...card, target: e.target.value as CardData['target'] })}
-            data-testid="card-target"
-          >
-            {TARGETS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </label>
         <label className="card-desc">

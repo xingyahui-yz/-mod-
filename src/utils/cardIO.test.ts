@@ -7,6 +7,7 @@ import { CardData } from '../types'
 
 const testCards: CardData[] = [
   {
+    id: 'Fireball',
     name: 'Fireball',
     cost: 1,
     type: 'Attack',
@@ -15,6 +16,7 @@ const testCards: CardData[] = [
     keywords: ['Fire', 'Damage']
   },
   {
+    id: 'Shield',
     name: 'Shield',
     cost: 1,
     type: 'Skill',

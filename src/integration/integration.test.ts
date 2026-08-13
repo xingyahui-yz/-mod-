@@ -13,6 +13,7 @@ import { createFileService } from '../services/FileService'
 import { CardData } from '../types'
 
 const sampleCard: CardData = {
+  id: 'MyCard',
   name: '火球术',
   cost: 1,
   type: 'Attack',
@@ -47,12 +48,11 @@ describe('1. 卡牌 → C#代码 → 卡牌 往返', () => {
     expect(code).toContain('Keywords.Add("Damage")')
   })
 
-  it('类名通过 PascalCase 转换（英文输入）', () => {
-    // fire-ball → Fireball（实现：分隔符吃掉第一个字符，仅后续字符大写）
+  it('类名使用不可变 Card ID，而不是显示名称', () => {
     expect(generateCardCode({ ...sampleCard, name: 'fire-ball' }, 'X').match(/class (\w+)/)![1])
-      .toBe('Fireball')
+      .toBe('MyCard')
     expect(generateCardCode({ ...sampleCard, name: 'defend' }, 'X').match(/class (\w+)/)![1])
-      .toBe('Defend')
+      .toBe('MyCard')
   })
 
   it('空名称回退到 MyCard', () => {
@@ -275,7 +275,7 @@ describe('5. FileService 文件系统（依赖注入 — factory seam v0.8-2）'
     const svc = createFileService({ api: mockApi })
 
     // 用英文名确保 PascalCase 转换产出有意义类名
-    const englishCard: CardData = { ...sampleCard, name: 'fireball' }
+    const englishCard: CardData = { ...sampleCard, id: 'Fireball', name: 'fireball' }
     const result = await svc.saveCardToProject('/proj', englishCard)
 
     expect(result.success).toBe(true)

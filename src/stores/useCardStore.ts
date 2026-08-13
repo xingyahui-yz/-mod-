@@ -18,6 +18,7 @@ interface CardStore {
 }
 
 const defaultCard: CardData = {
+  id: 'NewCard',
   name: '',
   cost: 1,
   type: 'Attack',
@@ -53,7 +54,8 @@ export const useCardStore = create<CardStore>()(
       updateCard: (index: number, card: Partial<CardData>) => {
         set(state => {
           const newCards = [...state.cards]
-          newCards[index] = { ...newCards[index], ...card }
+          const { id: _ignoredId, ...mutableFields } = card
+          newCards[index] = { ...newCards[index], ...mutableFields }
           return {
             cards: newCards,
             currentCard: state.selectedCardIndex === index

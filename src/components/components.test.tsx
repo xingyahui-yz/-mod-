@@ -162,9 +162,9 @@ describe('Toast 统一样式', () => {
 
 describe('CardEditor 过滤 + 原始索引', () => {
   const seedCards: CardData[] = [
-    { name: '火球', cost: 1, type: 'Attack', rarity: 'Common', description: '造成6点伤害', keywords: ['Fire'] },
-    { name: '护盾', cost: 1, type: 'Skill', rarity: 'Common', description: '获得5点格挡', keywords: ['Block'] },
-    { name: '寒冰', cost: 2, type: 'Attack', rarity: 'Common', description: '造成4点伤害', keywords: ['Ice'] }
+    { id: 'Fireball', name: '火球', cost: 1, type: 'Attack', rarity: 'Common', description: '造成6点伤害', keywords: ['Fire'] },
+    { id: 'Shield', name: '护盾', cost: 1, type: 'Skill', rarity: 'Common', description: '获得5点格挡', keywords: ['Block'] },
+    { id: 'Frost', name: '寒冰', cost: 2, type: 'Attack', rarity: 'Common', description: '造成4点伤害', keywords: ['Ice'] }
   ]
 
   // 卡牌列表容器（「火球」也会出现在预览区，需限定查询范围）

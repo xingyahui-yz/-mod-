@@ -6,6 +6,7 @@ import { generateCardCode } from './codeGenerator'
 import { CardData } from '../types'
 
 const baseCard: CardData = {
+  id: 'Fireball',
   name: 'Fireball',
   cost: 1,
   type: 'Attack',
@@ -46,10 +47,9 @@ describe('generateCardCode', () => {
     expect(code).not.toContain('Keywords.Add')
   })
 
-  it('应该处理特殊字符卡牌名称（转为默认类名）', () => {
+  it('类名使用不可变 Card ID，而不是显示名称', () => {
     const code = generateCardCode({ ...baseCard, name: '!!!' })
-    // 全是特殊字符时，使用默认名 MyCard
-    expect(code).toContain('public class MyCard')
+    expect(code).toContain('public class Fireball')
     // 描述应保留原始字符串
     expect(code).toContain('Name = "!!!"')
   })

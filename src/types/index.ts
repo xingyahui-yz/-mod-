@@ -12,6 +12,8 @@ export interface FileStat {
 }
 
 export interface CardData {
+  /** 持久化标识：PascalCase ASCII，创建后不可变 */
+  id: string
   name: string
   cost: number
   type: 'Attack' | 'Skill' | 'Power'
@@ -19,6 +21,19 @@ export interface CardData {
   description: string
   keywords: string[]
   imagePath?: string
+}
+
+/** 新建卡牌的唯一默认值，供所有入口共享。 */
+export function createDefaultCard(): CardData {
+  return {
+    id: 'MyCard',
+    name: 'My Card',
+    cost: 1,
+    type: 'Attack',
+    rarity: 'Common',
+    description: '',
+    keywords: [],
+  }
 }
 
 // ============ Relic ============

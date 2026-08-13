@@ -15,6 +15,21 @@ function isCardRarity(value: unknown): value is CardData['rarity'] {
   return typeof value === 'string' && CARD_RARITIES.includes(value as CardData['rarity'])
 }
 
+export const CARD_ID_PATTERN = /^[A-Z][A-Za-z0-9]*$/
+
+export function isValidCardId(value: unknown): value is string {
+  return typeof value === 'string' && CARD_ID_PATTERN.test(value)
+}
+
+/** 从英文名称生成候选 PascalCase ID；没有 ASCII 单词时返回 null。 */
+export function suggestCardId(name: string): string | null {
+  const words = name.match(/[A-Za-z0-9]+/g) ?? []
+  const suggestion = words
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join('')
+  return isValidCardId(suggestion) ? suggestion : null
+}
+
 /**
  * 将外部数据解析为完整的 CardData。
  *
@@ -24,7 +39,7 @@ function isCardRarity(value: unknown): value is CardData['rarity'] {
 export function parseCardData(value: unknown): CardData | null {
   if (!isRecord(value)) return null
 
-  const { name, cost, type, rarity, description, keywords, imagePath } = value
+  const { id, name, cost, type, rarity, description, keywords, imagePath } = value
 
   if (
     typeof name !== 'string' ||
@@ -52,7 +67,11 @@ export function parseCardData(value: unknown): CardData | null {
     return null
   }
 
+  if (id !== undefined && !isValidCardId(id)) return null
+
   const card: CardData = {
+    // AI/旧 JSON 尚未携带 ID 时只生成候选；持久化 CardDocument 会再次要求合法 ID。
+    id: typeof id === 'string' ? id : (suggestCardId(name) ?? ''),
     name,
     cost,
     type,

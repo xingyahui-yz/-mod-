@@ -7,6 +7,10 @@ import { parseCardData } from '../card/cardValidation'
 export function parseCardFromCode(code: string): CardData | null {
   const result: Partial<CardData> = {}
 
+  // 旧 C# 解析仅作为兼容 seam：优先读取 class 标识，不把 C# 作为 CardDocument 加载路径。
+  const classMatch = code.match(/\bclass\s+([A-Za-z][A-Za-z0-9]*)\b/)
+  if (classMatch) result.id = classMatch[1]
+
   // 解析Name
   const nameMatch = code.match(/Name\s*=\s*"([^"]+)"/)
   if (nameMatch) {
@@ -62,6 +66,7 @@ export function parseCardFromCode(code: string): CardData | null {
   if (!name) return null
 
   return parseCardData({
+    id: result.id,
     name,
     cost: result.cost ?? 0,
     type: result.type ?? 'Attack',

@@ -60,11 +60,18 @@ describe('useCardStore persist behavior', () => {
     expect(state.cards[0].cost).toBe(5)
   })
 
+  it('updateCard 不允许修改已创建卡牌的 ID', () => {
+    const { addCardWithData, updateCard } = useCardStore.getState()
+    addCardWithData({ id: 'StableId', name: 'Old', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] })
+    updateCard(0, { id: 'ChangedId', name: 'Renamed' })
+    expect(useCardStore.getState().cards[0]).toMatchObject({ id: 'StableId', name: 'Renamed' })
+  })
+
   it('deleteCard应该删除指定索引的卡牌', () => {
     const { addCardWithData, deleteCard, selectCard } = useCardStore.getState()
 
-    addCardWithData({ name: 'Card 1', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] })
-    addCardWithData({ name: 'Card 2', cost: 2, type: 'Skill', rarity: 'Common', description: '', keywords: [] })
+    addCardWithData({ id: 'CardOne', name: 'Card 1', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] })
+    addCardWithData({ id: 'CardTwo', name: 'Card 2', cost: 2, type: 'Skill', rarity: 'Common', description: '', keywords: [] })
     selectCard(0)
 
     deleteCard(0)
@@ -90,8 +97,8 @@ describe('useCardStore persist behavior', () => {
   it('loadCards应该替换现有卡牌', () => {
     const { loadCards } = useCardStore.getState()
     const newCards = [
-      { name: 'A', cost: 1, type: 'Attack' as const, rarity: 'Common' as const, description: '', keywords: [] },
-      { name: 'B', cost: 2, type: 'Skill' as const, rarity: 'Rare' as const, description: '', keywords: [] }
+      { id: 'A', name: 'A', cost: 1, type: 'Attack' as const, rarity: 'Common' as const, description: '', keywords: [] },
+      { id: 'B', name: 'B', cost: 2, type: 'Skill' as const, rarity: 'Rare' as const, description: '', keywords: [] }
     ]
 
     loadCards(newCards)

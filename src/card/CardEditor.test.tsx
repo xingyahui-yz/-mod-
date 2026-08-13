@@ -24,14 +24,13 @@ describe('CardEditor 端到端 (v0.9 Step 4 — 走法 1)', () => {
     expect(screen.queryByTestId('card-preview-body')).toBeNull()
   })
 
-  it('默认 CardData：id=my_card, cost=1, type=Attack, target=self', () => {
+  it('默认 CardData：id=MyCard, cost=1, type=Attack', () => {
     render(<CardEditor />)
-    expect((screen.getByTestId('card-id') as HTMLInputElement).value).toBe('my_card')
+    expect((screen.getByTestId('card-id') as HTMLInputElement).value).toBe('MyCard')
     expect((screen.getByTestId('card-name') as HTMLInputElement).value).toBe('My Card')
     expect((screen.getByTestId('card-cost') as HTMLInputElement).value).toBe('1')
     expect((screen.getByTestId('card-type') as HTMLSelectElement).value).toBe('Attack')
     expect((screen.getByTestId('card-rarity') as HTMLSelectElement).value).toBe('Common')
-    expect((screen.getByTestId('card-target') as HTMLSelectElement).value).toBe('self')
   })
 
   it('initialCard 覆盖默认值', () => {
@@ -193,12 +192,4 @@ describe('CardEditor 端到端 (v0.9 Step 4 — 走法 1)', () => {
     expect(code).toContain('Keywords.Add("Damage");')
   })
 
-  it('target 字段 (Step 4 暴露控件, Step 6 接入 codegen) — UI 可切换', () => {
-    render(<CardEditor />)
-    const target = screen.getByTestId('card-target') as HTMLSelectElement
-    expect(target.value).toBe('self')
-    fireEvent.change(target, { target: { value: 'eventTarget' } })
-    expect(target.value).toBe('eventTarget')
-    // 注: target 影响 codegen 输出是 Step 6 的事, Step 4 不做
-  })
 })

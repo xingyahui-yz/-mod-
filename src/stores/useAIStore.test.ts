@@ -158,7 +158,7 @@ describe('useAIStore (factory seam)', () => {
   describe('clearGeneratedCards', () => {
     it('应清除生成结果', () => {
       store.setState({
-        generatedCards: [{ name: 'X', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] }]
+        generatedCards: [{ id: 'X', name: 'X', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] }]
       })
       const { clearGeneratedCards } = store.getState()
       clearGeneratedCards()

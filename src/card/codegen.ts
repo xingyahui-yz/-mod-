@@ -15,7 +15,7 @@
 import Mustache from 'mustache'
 import { NodeGraph } from '../node-editor/types'
 import { EFFECT_KINDS } from '../shared/kinds'
-import { CardData } from './CardData'
+import { CardData } from '../types'
 import cardTemplate from './card.mustache?raw'
 import { toPascalCase } from '../utils/stringUtils'
 
