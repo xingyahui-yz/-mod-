@@ -51,6 +51,9 @@ export function migrateCardDocument(input: unknown): MigrationResult {
   }
 
   const parsed = parseCardDocument(migrated)
+  if (parsed.status === 'read-only') {
+    return { status: 'read-only', reason: parsed.reason, raw: parsed.raw }
+  }
   if (parsed.status !== 'editable') return { status: 'invalid', reason: '迁移结果无效', raw: input }
   return {
     status: 'migrated',
