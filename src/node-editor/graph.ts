@@ -179,6 +179,22 @@ export function canConnect(
     }
   }
 
+  // Card v0.9 的编辑态就是 trigger → 单链 effect；Relic 保留旧的
+  // condition/branch 能力，避免改变现有实体的交互语义。
+  if (graph.entityType === 'card') {
+    const allowedOrder = (fromNode.type === 'trigger' && toNode.type === 'effect')
+      || (fromNode.type === 'effect' && toNode.type === 'effect')
+    if (!allowedOrder) {
+      return { ok: false, reason: 'Card v0.9 只允许 trigger → effect → effect 的线性顺序' }
+    }
+    if (graph.edges.some(edge => edge.from.nodeId === from.nodeId)) {
+      return { ok: false, reason: 'Card 节点只能有一条出边，不能创建分叉' }
+    }
+    if (graph.edges.some(edge => edge.to.nodeId === to.nodeId)) {
+      return { ok: false, reason: 'Card 节点只能有一条入边，不能共享分支' }
+    }
+  }
+
   // 5. 不允许重复连线（同 from+to 视为重复）
   const dup = graph.edges.find(
     e => e.from.nodeId === from.nodeId && e.from.port === from.port
@@ -459,6 +475,11 @@ export function validateGraph(obj: unknown): GraphValidation {
         reason: `${prefix}.to.port "${to.port}" 必须是 input，实际是 ${toPort.kind}`
       }
     }
+  }
+
+  // 结构层保证图是 DAG；是否满足某个实体的业务链规则由上层语义校验负责。
+  if (hasCycle(g as unknown as NodeGraph)) {
+    return { ok: false, reason: 'edges 将形成环路' }
   }
 
   return { ok: true, graph: g as unknown as NodeGraph }

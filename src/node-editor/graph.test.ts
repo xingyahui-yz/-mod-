@@ -175,6 +175,41 @@ describe('connect - 连线校验', () => {
     const c2 = connect(c1.graph, { nodeId: c.id, port: 'true' }, { nodeId: e.id, port: 'in' })
     expect(c2.ok).toBe(true)
   })
+
+  it('Card 图编辑时拒绝第二条出边和第二条入边', () => {
+    let g = createEmptyGraph('Fireball', 'card')
+    const t = appendNode(g, 'trigger', { x: 0, y: 0 }, { event: 'onPlay' })
+    g = t.graph
+    const e1 = appendNode(g, 'effect', { x: 120, y: 0 }, { kind: 'exhaustSelf' })
+    g = e1.graph
+    const e2 = appendNode(g, 'effect', { x: 120, y: 80 }, { kind: 'discardSelf' })
+    g = e2.graph
+    const first = connect(g, { nodeId: t.node.id, port: 'out' }, { nodeId: e1.node.id, port: 'in' })
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+
+    const secondOut = connect(first.graph, { nodeId: t.node.id, port: 'out' }, { nodeId: e2.node.id, port: 'in' })
+    expect(secondOut.ok).toBe(false)
+    if (!secondOut.ok) expect(secondOut.reason).toMatch(/出边|线性/)
+
+    const secondIn = connect(first.graph, { nodeId: e2.node.id, port: 'out' }, { nodeId: e1.node.id, port: 'in' })
+    expect(secondIn.ok).toBe(false)
+    if (!secondIn.ok) expect(secondIn.reason).toMatch(/入边|已存在/)
+  })
+
+  it('Card 图编辑时拒绝 effect → trigger 和 condition/branch 节点', () => {
+    let g = createEmptyGraph('Fireball', 'card')
+    const t = appendNode(g, 'trigger', { x: 0, y: 0 }, { event: 'onPlay' })
+    g = t.graph
+    const e = appendNode(g, 'effect', { x: 120, y: 0 }, { kind: 'exhaustSelf' })
+    g = e.graph
+    const condition = appendNode(g, 'condition', { x: 120, y: 80 }, {})
+    g = condition.graph
+    const toTrigger = connect(g, { nodeId: e.node.id, port: 'out' }, { nodeId: t.node.id, port: 'out' })
+    expect(toTrigger.ok).toBe(false)
+    const toCondition = connect(g, { nodeId: t.node.id, port: 'out' }, { nodeId: condition.node.id, port: 'in' })
+    expect(toCondition.ok).toBe(false)
+  })
 })
 
 describe('disconnect', () => {
@@ -494,6 +529,23 @@ describe('validateGraph', () => {
 
   it('形态 1 effect（gainBuff）在普通 trigger 后仍通过（不受形态 2 规则影响）', () => {
     const g = makeValidGraph()
+    expect(validateGraph(g).ok).toBe(true)
+  })
+
+  it('结构校验拒绝有向环，但允许空图草稿', () => {
+    const g = createEmptyGraph('r', 'relic')
+    const first = appendNode(g, 'effect', { x: 0, y: 0 }, { kind: 'gainBuff' })
+    const second = appendNode(first.graph, 'effect', { x: 100, y: 0 }, { kind: 'gainBuff' })
+    const cyclic = {
+      ...second.graph,
+      edges: [
+        { id: 'a', from: { nodeId: first.node.id, port: 'out' }, to: { nodeId: second.node.id, port: 'in' } },
+        { id: 'b', from: { nodeId: second.node.id, port: 'out' }, to: { nodeId: first.node.id, port: 'in' } },
+      ],
+    }
+    const result = validateGraph(cyclic)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.reason).toMatch(/环路/)
     expect(validateGraph(g).ok).toBe(true)
   })
 })
