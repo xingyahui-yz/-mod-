@@ -11,6 +11,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { CardData } from '../types'
+import type { CardDocument } from '../card/cardDocument'
+import type { CardProposal } from '../card/cardAiProposal'
 import {
   createAdapter,
   LLMProvider,
@@ -32,12 +34,16 @@ interface AIState {
   generatedCards: CardData[]
   lastError: string | null
   lastRawResponse: string | null
+  proposal: CardProposal | null
+  proposalError: string | null
 
   // Actions
   setProvider: (provider: LLMProvider) => void
   setApiKey: (apiKey: string) => void
   generateCards: (description: string, preferredType?: CardData['type']) => Promise<CardData[]>
+  generateCardProposal: (baseDocument: CardDocument, description: string) => Promise<CardProposal | null>
   clearGeneratedCards: () => void
+  clearProposal: () => void
   clearError: () => void
 }
 
@@ -64,6 +70,8 @@ export function createAIStore(deps: { factory: AdapterFactory; persistName?: str
         generatedCards: [],
         lastError: null,
         lastRawResponse: null,
+        proposal: null,
+        proposalError: null,
 
         setProvider: (provider) => {
           set({ provider, lastError: null })
@@ -123,8 +131,37 @@ export function createAIStore(deps: { factory: AdapterFactory; persistName?: str
           }
         },
 
+        generateCardProposal: async (baseDocument, description) => {
+          const { provider, apiKey, isConfigured } = get()
+          if (!isConfigured) {
+            set({ proposalError: '请先配置API密钥' })
+            return null
+          }
+          if (!description.trim()) {
+            set({ proposalError: '请输入卡牌描述' })
+            return null
+          }
+          set({ isGenerating: true, proposal: null, proposalError: null })
+          try {
+            const result = await factory(provider, apiKey).generateCardProposal(baseDocument, description)
+            if (result.success && result.proposal) {
+              set({ proposal: result.proposal, proposalError: null, isGenerating: false, lastRawResponse: result.rawResponse ?? null })
+              return result.proposal
+            }
+            set({ proposalError: result.violations.length > 0 ? result.violations.join('；') : (result.error || 'AI 提案生成失败'), isGenerating: false })
+            return null
+          } catch (error) {
+            set({ proposalError: `AI 提案生成失败: ${error instanceof Error ? error.message : String(error)}`, isGenerating: false })
+            return null
+          }
+        },
+
         clearGeneratedCards: () => {
           set({ generatedCards: [], lastRawResponse: null })
+        },
+
+        clearProposal: () => {
+          set({ proposal: null, proposalError: null })
         },
 
         clearError: () => {

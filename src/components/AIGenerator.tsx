@@ -4,6 +4,8 @@ import { useCardStore } from '../stores/useCardStore'
 import { LLM_PROVIDERS, LLMProvider } from '../services/llm/adapters'
 import { CardData } from '../types'
 import { getTypeColor } from '../utils/cardUtils'
+import { isValidCardId, suggestCardId } from '../card/cardValidation'
+import { isCardProposalStale } from '../card/cardAiProposal'
 
 interface AIGeneratorProps {
   onClose?: () => void
@@ -16,27 +18,56 @@ export function AIGenerator({ onClose }: AIGeneratorProps) {
     isConfigured,
     isGenerating,
     generatedCards,
+    proposal,
+    proposalError,
     lastError,
     setProvider,
     setApiKey,
     generateCards,
+    generateCardProposal,
     clearGeneratedCards,
+    clearProposal,
     clearError
   } = useAIStore()
 
-  const { addCardWithData } = useCardStore()
+  const { addCardWithData, currentDocument, applyCardProposal } = useCardStore()
 
   const [description, setDescription] = useState('')
   const [preferredType, setPreferredType] = useState<CardData['type'] | undefined>(undefined)
   const [showSettings, setShowSettings] = useState(!isConfigured)
+  const proposalStale = Boolean(proposal && currentDocument && isCardProposalStale(proposal, currentDocument))
 
   const handleGenerate = async () => {
     clearError()
     await generateCards(description, preferredType)
   }
 
+  const handleGenerateProposal = async () => {
+    if (!currentDocument) return
+    clearProposal()
+    await generateCardProposal(currentDocument, description)
+  }
+
+  const handleApplyProposal = () => {
+    if (!proposal) return
+    if (applyCardProposal(proposal)) {
+      clearProposal()
+    }
+  }
+
   const handleSelectCard = (card: CardData) => {
-    addCardWithData(card)
+    let nextCard = card
+    if (!isValidCardId(card.id)) {
+      const suggestion = suggestCardId(card.name)
+      const confirmed = typeof window !== 'undefined'
+        ? window.prompt('请为这张 Card 确认 PascalCase ID（创建后不可修改）', suggestion ?? '')
+        : null
+      if (!confirmed || !isValidCardId(confirmed)) {
+        return
+      }
+      nextCard = { ...card, id: confirmed }
+    }
+    if (!addCardWithData(nextCard)) return
     if (onClose) onClose()
   }
 
@@ -128,6 +159,15 @@ export function AIGenerator({ onClose }: AIGeneratorProps) {
             >
               {isGenerating ? '🔄 生成中...' : '✨ 生成卡牌'}
             </button>
+            {currentDocument && (
+              <button
+                className="proposal-btn"
+                onClick={() => void handleGenerateProposal()}
+                disabled={isGenerating || !description.trim() || !isConfigured}
+              >
+                🧩 为当前 Card 生成提案
+              </button>
+            )}
           </div>
 
           {/* 错误提示 */}
@@ -135,6 +175,26 @@ export function AIGenerator({ onClose }: AIGeneratorProps) {
             <div className="error-box">
               ⚠️ {lastError}
               <button className="retry-btn" onClick={clearError}>×</button>
+            </div>
+          )}
+
+          {proposalError && (
+            <div className="error-box" data-testid="ai-proposal-error">
+              ⚠️ {proposalError}
+            </div>
+          )}
+
+          {proposal && (
+            <div className="proposal-preview" data-testid="ai-proposal-preview">
+              <h4>AI Card 提案预览</h4>
+              <p>名称：{proposal.document.card.name}（当前：{currentDocument?.card.name}）</p>
+              <p>节点：{currentDocument?.graph.nodes.length ?? 0} → {proposal.document.graph.nodes.length}</p>
+              <p>连线：{currentDocument?.graph.edges.length ?? 0} → {proposal.document.graph.edges.length}</p>
+              {proposalStale && <p className="proposal-stale">当前 Card 已变化，此提案已过期，请重新生成。</p>}
+              <div className="proposal-actions">
+                <button onClick={handleApplyProposal} disabled={proposalStale}>确认应用（一次撤销事务）</button>
+                <button onClick={clearProposal}>取消</button>
+              </div>
             </div>
           )}
 
@@ -235,6 +295,34 @@ export function AIGenerator({ onClose }: AIGeneratorProps) {
           width: 100%;
           margin-top: 8px;
           font-weight: 600;
+        }
+
+        .proposal-btn {
+          width: 100%;
+          margin-top: 8px;
+          background: var(--bg-tertiary);
+        }
+
+        .proposal-preview {
+          margin: 0 16px 16px;
+          padding: 12px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+        }
+
+        .proposal-preview h4,
+        .proposal-preview p {
+          margin: 4px 0;
+        }
+
+        .proposal-stale {
+          color: #f59e0b;
+        }
+
+        .proposal-actions {
+          display: flex;
+          gap: 8px;
+          margin-top: 10px;
         }
 
         .error-box {

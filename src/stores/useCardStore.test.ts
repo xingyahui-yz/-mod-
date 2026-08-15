@@ -37,6 +37,21 @@ describe('useCardStore persist behavior', () => {
     expect(state.selectedCardIndex).toBe(0)
   })
 
+  it('新建 Card 不复用已存在的默认 ID', () => {
+    const { addCard } = useCardStore.getState()
+    addCard()
+    addCard()
+    expect(useCardStore.getState().cards.map(card => card.id)).toEqual(['NewCard', 'NewCard2'])
+  })
+
+  it('外部 CardData 必须先通过合法且唯一 ID seam', () => {
+    const { addCardWithData } = useCardStore.getState()
+    const card = { id: 'StableId', name: 'Stable', cost: 1, type: 'Attack' as const, rarity: 'Common' as const, description: '', keywords: [] }
+    expect(addCardWithData({ ...card, id: '中文' })).toBe(false)
+    expect(addCardWithData(card)).toBe(true)
+    expect(addCardWithData(card)).toBe(false)
+  })
+
   it('Card 数据不写入 localStorage，由项目文档负责持久化', () => {
     const { addCard } = useCardStore.getState()
     addCard()

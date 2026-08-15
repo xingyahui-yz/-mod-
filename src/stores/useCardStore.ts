@@ -17,7 +17,7 @@ interface CardStore {
   selectedCardIndex: number | null
 
   addCard: () => void
-  addCardWithData: (card: CardData) => void
+  addCardWithData: (card: CardData) => boolean
   updateCard: (cardId: string, card: Partial<CardData>) => void
   updateGraph: (cardId: string, graph: CardDocument['graph']) => void
   applyCardProposal: (proposal: CardProposal) => boolean
@@ -53,6 +53,14 @@ function documentForCard(card: CardData): CardDocument {
   }
 }
 
+function nextCardId(cards: CardData[]): string {
+  const used = new Set(cards.map(card => card.id.toLowerCase()))
+  if (!used.has('newcard')) return 'NewCard'
+  let suffix = 2
+  while (used.has(`newcard${suffix}`)) suffix += 1
+  return `NewCard${suffix}`
+}
+
 function historyDocument(document: CardDocument): CardDocument {
   return {
     ...document,
@@ -73,7 +81,7 @@ export const useCardStore = create<CardStore>()(
       selectedCardIndex: null,
 
       addCard: () => {
-        const newCard: CardData = { ...defaultCard }
+        const newCard: CardData = { ...defaultCard, id: nextCardId(get().cards) }
         const document = documentForCard(newCard)
         set(state => ({
           cards: [...state.cards, newCard],
@@ -89,6 +97,8 @@ export const useCardStore = create<CardStore>()(
       },
 
       addCardWithData: (card: CardData) => {
+        const ids = get().cards.map(item => item.id.toLowerCase())
+        if (!isValidCardId(card.id) || ids.includes(card.id.toLowerCase())) return false
         const document = documentForCard(card)
         set(state => ({
           cards: [...state.cards, card],
@@ -101,6 +111,7 @@ export const useCardStore = create<CardStore>()(
           selectedCardId: card.id,
           selectedCardIndex: state.cards.length
         }))
+        return true
       },
 
       updateCard: (cardId: string, card: Partial<CardData>) => {

@@ -38,7 +38,7 @@ export interface CardTrashRepository {
 }
 
 const CARDS_DIR = '.modstudio/cards'
-const TRASH_DIR = '.modstudio/trash'
+const TRASH_DIR = '.modstudio/trash/cards'
 const ARTIFACTS_DIR = 'scripts/Cards'
 
 function joinPath(...parts: string[]): string {

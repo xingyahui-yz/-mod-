@@ -7,6 +7,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createAIStore, AdapterFactory, AIStore } from './useAIStore'
 import { BaseLLMAdapter, LLMResponse } from '../services/llm/adapters'
+import { createEmptyGraph } from '../node-editor/graph'
+import type { CardDocument } from '../card/cardDocument'
 
 // Mock Adapter
 class MockSuccessAdapter extends BaseLLMAdapter {
@@ -38,8 +40,23 @@ class MockErrorAdapter extends BaseLLMAdapter {
   }
 }
 
+class MockProposalAdapter extends BaseLLMAdapter {
+  getModelName() { return 'mock-proposal' }
+  async generate(): Promise<LLMResponse> {
+    const graph = createEmptyGraph('ProposalCard', 'card')
+    return {
+      success: true,
+      content: JSON.stringify({
+        card: { id: 'ProposalCard', name: 'After', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] },
+        graph,
+      }),
+    }
+  }
+}
+
 const successFactory: AdapterFactory = () => new MockSuccessAdapter({ apiKey: 'test' })
 const errorFactory: AdapterFactory = () => new MockErrorAdapter({ apiKey: 'test' })
+const proposalFactory: AdapterFactory = () => new MockProposalAdapter({ apiKey: 'test' })
 
 describe('useAIStore (factory seam)', () => {
   let store: AIStore
@@ -165,6 +182,22 @@ describe('useAIStore (factory seam)', () => {
 
       const state = store.getState()
       expect(state.generatedCards).toEqual([])
+    })
+  })
+
+  describe('generateCardProposal', () => {
+    it('完整 proposal 先进入预览状态，不直接修改 CardStore', async () => {
+      const proposalStore = createAIStore({ factory: proposalFactory, persistName: 'test-proposal' })
+      proposalStore.getState().setApiKey('key')
+      const base: CardDocument = {
+        schemaVersion: 2,
+        card: { id: 'ProposalCard', name: 'Before', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] },
+        graph: createEmptyGraph('ProposalCard', 'card'),
+        generation: { lastGeneratedFingerprint: null },
+      }
+      const proposal = await proposalStore.getState().generateCardProposal(base, '修改名称')
+      expect(proposal?.document.card.name).toBe('After')
+      expect(proposalStore.getState().proposal?.document.card.name).toBe('After')
     })
   })
 
