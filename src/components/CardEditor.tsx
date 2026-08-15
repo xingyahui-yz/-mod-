@@ -255,7 +255,18 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         setErrors([saved.error])
         return
       }
-      const result = await FileService.generateCardArtifact(projectPath, currentDocument)
+      let result = await FileService.generateCardArtifact(projectPath, currentDocument)
+      if (result.status === 'blocked') {
+        const confirmed = typeof window !== 'undefined' && window.confirm('检测到外部 C# 修改。是否先备份外部版本并重新生成？')
+        if (confirmed) {
+          const backup = await FileService.backupCardArtifact(projectPath, currentDocument.card.id)
+          if (!backup.ok) {
+            setErrors([backup.error])
+            return
+          }
+          result = await FileService.generateCardArtifact(projectPath, currentDocument, { allowExternalOverwrite: true })
+        }
+      }
       if (result.status === 'generated') {
         setGeneratedDocument(result.document)
         setGeneratedCode(generateCardDocumentCode(result.document, 'MyMod.Cards'))

@@ -69,7 +69,8 @@ export interface FileService {
   listCardTrash(projectPath: string): Promise<CardTrashEntry[]>
   restoreCardFromTrash(projectPath: string, trashId: string): Promise<CardTrashRestoreResult>
   preflightCardProject(projectPath: string, options?: CardPreflightOptions): Promise<CardPreflightReport>
-  generateCardArtifact(projectPath: string, document: CardDocument): Promise<CardGenerationResult>
+  backupCardArtifact(projectPath: string, cardId: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+  generateCardArtifact(projectPath: string, document: CardDocument, options?: { allowExternalOverwrite?: boolean }): Promise<CardGenerationResult>
   saveCardToProject(
     projectPath: string,
     card: CardData,
@@ -204,7 +205,17 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       return evaluateCardPreflight(entries, options)
     },
 
-    async generateCardArtifact(projectPath, document) {
+    async backupCardArtifact(projectPath, cardId) {
+      const source = `${projectPath}/${CARDS_DIR}/${cardId}.cs`
+      const content = await api.readFile(source)
+      if (content === null) return { ok: false, error: 'C# 产物不存在，无法备份' }
+      const backup = `${source}.external-${Date.now()}.bak`
+      return await api.writeFile(backup, content)
+        ? { ok: true, path: backup }
+        : { ok: false, error: '无法写入外部 C# 备份' }
+    },
+
+    async generateCardArtifact(projectPath, document, options = {}) {
       return writeCardArtifact(projectPath, document, {
         files: {
           mkdir: path => api.mkdir(path),
@@ -214,6 +225,10 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
           readFile: path => api.readFile(path),
         },
         saveDocument: async next => (await cardDocumentRepository.save(projectPath, next)).ok,
+        allowExternalOverwrite: options.allowExternalOverwrite,
+        backupExternalArtifact: options.allowExternalOverwrite
+          ? async (path, content) => api.writeFile(`${path}.external-${Date.now()}.bak`, content)
+          : undefined,
       })
     },
 
@@ -332,8 +347,14 @@ export const restoreCardFromTrash = (projectPath: string, trashId: string) =>
 export const preflightCardProject = (projectPath: string, options?: CardPreflightOptions) =>
   getDefaultService().preflightCardProject(projectPath, options)
 
-export const generateCardArtifact = (projectPath: string, document: CardDocument) =>
-  getDefaultService().generateCardArtifact(projectPath, document)
+export const generateCardArtifact = (
+  projectPath: string,
+  document: CardDocument,
+  options?: { allowExternalOverwrite?: boolean },
+) => getDefaultService().generateCardArtifact(projectPath, document, options)
+
+export const backupCardArtifact = (projectPath: string, cardId: string) =>
+  getDefaultService().backupCardArtifact(projectPath, cardId)
 export const saveCardToProject = (
   projectPath: string,
   card: CardData,
