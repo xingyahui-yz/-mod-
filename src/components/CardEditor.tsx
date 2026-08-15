@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useCardStore } from '../stores/useCardStore'
 import { CardData } from '../types'
 import { generateCardDocumentCode } from '../card/codegen'
@@ -13,6 +13,7 @@ import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
 import { appendNode, connect, disconnect, moveNode, removeNode } from '../node-editor/graph'
 import type { NodeGraph } from '../node-editor/types'
 import { effectsForEntity, triggersForEntity, EFFECT_KINDS } from '../shared/kinds'
+import { serializeCardDocument } from '../card/cardDocument'
 
 interface CardEditorProps {
   projectPath: string | null
@@ -34,6 +35,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     canUndoCard,
     canRedoCard,
     updateGraph,
+    setGeneratedDocument,
   } = useCardStore()
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
@@ -46,11 +48,61 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [typeFilter, setTypeFilter] = useState<'all' | CardData['type']>('all')
   const [graph, setGraph] = useState<NodeGraph | null>(null)
   const [graphError, setGraphError] = useState<string | null>(null)
+  const [autosaveState, setAutosaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const persistedSnapshot = useRef<string | null>(null)
 
   useEffect(() => {
     setGraph(currentDocument?.graph ?? null)
     setGraphError(null)
   }, [currentDocument])
+
+  // Card 属性与行为图共享同一份防抖草稿自动保存；generation 指纹随编辑
+  // 失效但不会在这里生成 C#。effect cleanup 会在切换 Card/项目或卸载前
+  // 尽力 flush 当前待保存快照，避免用户快速切换丢失最后一次编辑。
+  useEffect(() => {
+    if (autosaveTimer.current) {
+      clearTimeout(autosaveTimer.current)
+      autosaveTimer.current = null
+    }
+    if (!projectPath || !currentDocument) {
+      persistedSnapshot.current = null
+      setAutosaveState('idle')
+      return
+    }
+
+    const snapshot = serializeCardDocument(currentDocument)
+    if (persistedSnapshot.current === null) {
+      persistedSnapshot.current = snapshot
+      setAutosaveState('saved')
+      return
+    }
+    if (persistedSnapshot.current === snapshot) return
+
+    setAutosaveState('pending')
+    const documentToSave = currentDocument
+    const projectToSave = projectPath
+    const flush = async () => {
+      setAutosaveState('saving')
+      const result = await FileService.saveCardDocument(projectToSave, documentToSave)
+      if (result.ok) {
+        persistedSnapshot.current = snapshot
+        setAutosaveState('saved')
+      } else {
+        setAutosaveState('error')
+      }
+    }
+    autosaveTimer.current = setTimeout(() => { void flush() }, 500)
+
+    return () => {
+      if (autosaveTimer.current) {
+        clearTimeout(autosaveTimer.current)
+        autosaveTimer.current = null
+        // 不等待 Promise，先启动写入；Electron 文件端口会自行完成原子写。
+        void flush()
+      }
+    }
+  }, [projectPath, currentDocument])
 
   // 当项目路径变化时，加载现有卡牌
   useEffect(() => {
@@ -124,6 +176,27 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     updateGraph(selectedCardId, next)
   }
 
+  const handleDeleteCard = async (cardId: string) => {
+    if (!projectPath) {
+      deleteCard(cardId)
+      return
+    }
+    const document = useCardStore.getState().documents.find(item => item.card.id === cardId)
+    if (!document) return
+    // 删除前先 flush 权威 CardDocument，再把文档和活动 C# 一起移入回收站。
+    const saved = await FileService.saveCardDocument(projectPath, document)
+    if (!saved.ok) {
+      showLoadMessage('error', `删除失败：${saved.error}`)
+      return
+    }
+    const removed = await FileService.deleteCardToTrash(projectPath, cardId)
+    if (removed.status !== 'deleted') {
+      showLoadMessage('error', `删除失败：${removed.reason}`)
+      return
+    }
+    deleteCard(cardId)
+  }
+
   const addTrigger = (event: string) => {
     if (!graph) return
     applyGraph(appendNode(graph, 'trigger', { x: 50 + graph.nodes.length * 24, y: 50 }, { event }).graph)
@@ -166,6 +239,39 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     }
   }
 
+  const handleGenerateArtifact = async () => {
+    if (!projectPath || !currentCard || !currentDocument) return
+    const validationErrors = validateCard(currentCard)
+    if (validationErrors.length > 0) {
+      setErrors(validationErrors)
+      return
+    }
+    setSaving(true)
+    setErrors([])
+    try {
+      // 先保存源数据，再显式生成 C#；自动保存不会触发此路径。
+      const saved = await FileService.saveCardDocument(projectPath, currentDocument)
+      if (!saved.ok) {
+        setErrors([saved.error])
+        return
+      }
+      const result = await FileService.generateCardArtifact(projectPath, currentDocument)
+      if (result.status === 'generated') {
+        setGeneratedDocument(result.document)
+        setGeneratedCode(generateCardDocumentCode(result.document, 'MyMod.Cards'))
+        showSaveMessage('success', `已生成 C#：${result.path}`)
+      } else if (result.status === 'blocked') {
+        setErrors([`检测到${result.reason === 'external-modification' ? '外部修改' : '未跟踪'}的 C#，请先备份/导出后再确认重生成`])
+      } else {
+        setErrors([result.reason])
+      }
+    } catch (error) {
+      setErrors([error instanceof Error ? error.message : String(error)])
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // 保存卡牌到项目
   const handleSave = async () => {
     if (!projectPath || !currentCard || !currentDocument) return
@@ -183,6 +289,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       const result = await FileService.saveCardDocument(projectPath, currentDocument)
 
       if (result.ok) {
+        persistedSnapshot.current = serializeCardDocument(currentDocument)
+        setAutosaveState('saved')
         showSaveMessage('success', `已保存到 ${result.path}`)
       } else {
         setErrors([result.error || '保存失败，请检查目录权限'])
@@ -213,6 +321,10 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         <div className="header-actions">
           {loadingCards && <span className="loading-text">加载中...</span>}
           <CardIOButtons />
+          {autosaveState === 'pending' && <span className="loading-text">草稿待保存</span>}
+          {autosaveState === 'saving' && <span className="loading-text">自动保存中...</span>}
+          {autosaveState === 'saved' && <span className="loading-text">草稿已保存</span>}
+          {autosaveState === 'error' && <span className="error-text">自动保存失败</span>}
           <button onClick={undoCard} disabled={!canUndoCard} title="撤销 Card 编辑">↶ 撤销</button>
           <button onClick={redoCard} disabled={!canRedoCard} title="重做 Card 编辑">↷ 重做</button>
           <button onClick={addCard}>+ 新建卡牌</button>
@@ -255,7 +367,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 <span className="card-name">{card.name || '未命名'}</span>
                 <button
                   className="delete-btn"
-                  onClick={(e) => { e.stopPropagation(); deleteCard(card.id); }}
+                  onClick={(e) => { e.stopPropagation(); void handleDeleteCard(card.id); }}
                 >
                   ×
                 </button>
@@ -410,6 +522,13 @@ export function CardEditor({ projectPath }: CardEditorProps) {
               <div className="form-actions">
                 <button onClick={handlePreview} className="preview-btn">
                   👁️ 预览代码
+                </button>
+                <button
+                  onClick={() => void handleGenerateArtifact()}
+                  className="preview-btn"
+                  disabled={saving || !projectPath}
+                >
+                  ⚡ 生成 C#
                 </button>
                 <button
                   onClick={handleSave}

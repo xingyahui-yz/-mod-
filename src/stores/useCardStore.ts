@@ -21,6 +21,7 @@ interface CardStore {
   updateCard: (cardId: string, card: Partial<CardData>) => void
   updateGraph: (cardId: string, graph: CardDocument['graph']) => void
   applyCardProposal: (proposal: CardProposal) => boolean
+  setGeneratedDocument: (document: CardDocument) => boolean
   deleteCard: (cardId: string) => void
   selectCard: (cardId: string | null) => void
   setCurrentCard: (card: CardData | null) => void
@@ -187,6 +188,19 @@ export const useCardStore = create<CardStore>()(
           cardHistory: nextHistory,
           canUndoCard: nextHistory ? nextHistory.past.length > 0 : false,
           canRedoCard: nextHistory ? nextHistory.future.length > 0 : false,
+        })
+        return true
+      },
+
+      setGeneratedDocument: (document) => {
+        const state = get()
+        if (!state.documents.some(item => item.card.id === document.card.id)) return false
+        const documents = state.documents.map(item => item.card.id === document.card.id ? document : item)
+        set({
+          documents,
+          cards: documents.map(item => item.card),
+          currentDocument: state.selectedCardId === document.card.id ? document : state.currentDocument,
+          currentCard: state.selectedCardId === document.card.id ? document.card : state.currentCard,
         })
         return true
       },

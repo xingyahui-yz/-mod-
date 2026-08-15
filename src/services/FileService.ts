@@ -16,6 +16,7 @@ import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocu
 import type { CardDocument } from '../card/cardDocument'
 import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEntry, type CardTrashRestoreResult } from '../card/cardTrash'
 import { buildPreflightEntries, evaluateCardPreflight, type CardPreflightOptions, type CardPreflightReport } from '../card/cardPreflight'
+import { generateCardArtifact as writeCardArtifact, type CardGenerationResult } from '../card/cardGeneration'
 
 export interface FileEntry {
   name: string
@@ -68,6 +69,7 @@ export interface FileService {
   listCardTrash(projectPath: string): Promise<CardTrashEntry[]>
   restoreCardFromTrash(projectPath: string, trashId: string): Promise<CardTrashRestoreResult>
   preflightCardProject(projectPath: string, options?: CardPreflightOptions): Promise<CardPreflightReport>
+  generateCardArtifact(projectPath: string, document: CardDocument): Promise<CardGenerationResult>
   saveCardToProject(
     projectPath: string,
     card: CardData,
@@ -202,6 +204,19 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       return evaluateCardPreflight(entries, options)
     },
 
+    async generateCardArtifact(projectPath, document) {
+      return writeCardArtifact(projectPath, document, {
+        files: {
+          mkdir: path => api.mkdir(path),
+          writeFile: (path, content) => api.writeFile(path, content),
+          rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
+          remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
+          readFile: path => api.readFile(path),
+        },
+        saveDocument: async next => (await cardDocumentRepository.save(projectPath, next)).ok,
+      })
+    },
+
     async saveCardToProject(projectPath, card, namespace = 'MyMod.Cards') {
       try {
         const className =
@@ -316,6 +331,9 @@ export const restoreCardFromTrash = (projectPath: string, trashId: string) =>
 
 export const preflightCardProject = (projectPath: string, options?: CardPreflightOptions) =>
   getDefaultService().preflightCardProject(projectPath, options)
+
+export const generateCardArtifact = (projectPath: string, document: CardDocument) =>
+  getDefaultService().generateCardArtifact(projectPath, document)
 export const saveCardToProject = (
   projectPath: string,
   card: CardData,
