@@ -1,6 +1,7 @@
 import type { CardDocument } from './cardDocument'
 import { generateCardDocumentCode } from './codegen'
 import { computeArtifactHash, computeGenerationSourceHash, GENERATOR_VERSION } from './fingerprint'
+import { inspectCardArtifact, isArtifactOverwriteBlocked } from './artifactSafety'
 
 export interface CardGenerationFilePort {
   mkdir(path: string): Promise<boolean>
@@ -12,6 +13,7 @@ export interface CardGenerationFilePort {
 
 export type CardGenerationResult =
   | { status: 'generated'; path: string; document: CardDocument }
+  | { status: 'blocked'; path: string; reason: 'external-modification' | 'untracked-artifact' }
   | { status: 'failed'; reason: string }
 
 function joinPath(...parts: string[]): string {
@@ -33,6 +35,10 @@ export async function generateCardArtifact(
     files: CardGenerationFilePort
     saveDocument: (document: CardDocument) => Promise<boolean>
     namespace?: string
+    /** 覆盖外部/未跟踪产物前必须由调用方明确确认。 */
+    allowExternalOverwrite?: boolean
+    /** 确认前先备份或导出当前磁盘版本；返回 false 时保持原产物不变。 */
+    backupExternalArtifact?: (path: string, content: string) => Promise<boolean>
   },
 ): Promise<CardGenerationResult> {
   let code: string
@@ -45,6 +51,29 @@ export async function generateCardArtifact(
   const directory = joinPath(projectPath, 'scripts/Cards')
   const target = joinPath(directory, `${document.card.id}.cs`)
   const temp = tempPath(target, document.card.id)
+
+  // 生成前先检查活动 C#。缺少产物是正常首次生成；已有产物若外部变化
+  // 或没有同步指纹，必须先经过显式备份/导出确认，不能静默覆盖。
+  const existingArtifact = await deps.files.readFile(target)
+  if (existingArtifact !== null) {
+    const inspection = inspectCardArtifact(document, existingArtifact)
+    if (isArtifactOverwriteBlocked(inspection.status)) {
+      if (!deps.allowExternalOverwrite) {
+        return {
+          status: 'blocked',
+          path: target,
+          reason: inspection.status === 'externally-modified' ? 'external-modification' : 'untracked-artifact',
+        }
+      }
+      if (!deps.backupExternalArtifact) {
+        return { status: 'failed', reason: '覆盖外部 C# 前必须先备份或导出' }
+      }
+      if (!await deps.backupExternalArtifact(target, existingArtifact)) {
+        return { status: 'failed', reason: '外部 C# 备份失败，未覆盖原产物' }
+      }
+    }
+  }
+
   if (!await deps.files.mkdir(directory)) return { status: 'failed', reason: '无法创建 C# 输出目录' }
   if (!await deps.files.writeFile(temp, code)) {
     await deps.files.remove(temp).catch(() => false)

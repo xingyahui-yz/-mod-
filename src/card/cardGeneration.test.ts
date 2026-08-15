@@ -81,4 +81,55 @@ describe('generateCardArtifact', () => {
     })
     expect(documentFailure.status).toBe('failed')
   })
+
+  it('发现上次生成后的外部修改时阻止静默覆盖', async () => {
+    const files = new MemoryFiles()
+    const document = makeDocument()
+    const first = await generateCardArtifact('/project', document, {
+      files,
+      saveDocument: async () => true,
+    })
+    expect(first.status).toBe('generated')
+    files.files.set('/project/scripts/Cards/Fireball.cs', 'manual edit')
+
+    const second = await generateCardArtifact('/project', first.status === 'generated' ? first.document : document, {
+      files,
+      saveDocument: async () => true,
+    })
+    expect(second).toEqual({
+      status: 'blocked',
+      path: '/project/scripts/Cards/Fireball.cs',
+      reason: 'external-modification',
+    })
+    expect(files.files.get('/project/scripts/Cards/Fireball.cs')).toBe('manual edit')
+  })
+
+  it('外部版本备份成功后才允许明确重生成', async () => {
+    const files = new MemoryFiles()
+    const document = makeDocument()
+    files.files.set('/project/scripts/Cards/Fireball.cs', 'legacy or manual')
+    const backups: string[] = []
+    const result = await generateCardArtifact('/project', document, {
+      files,
+      allowExternalOverwrite: true,
+      backupExternalArtifact: async (_path, content) => { backups.push(content); return true },
+      saveDocument: async () => true,
+    })
+    expect(result.status).toBe('generated')
+    expect(backups).toEqual(['legacy or manual'])
+    expect(files.files.get('/project/scripts/Cards/Fireball.cs')).not.toBe('legacy or manual')
+  })
+
+  it('外部版本备份失败时保留活动产物且不写入新版本', async () => {
+    const files = new MemoryFiles()
+    files.files.set('/project/scripts/Cards/Fireball.cs', 'manual edit')
+    const result = await generateCardArtifact('/project', makeDocument(), {
+      files,
+      allowExternalOverwrite: true,
+      backupExternalArtifact: async () => false,
+      saveDocument: async () => true,
+    })
+    expect(result.status).toBe('failed')
+    expect(files.files.get('/project/scripts/Cards/Fireball.cs')).toBe('manual edit')
+  })
 })
