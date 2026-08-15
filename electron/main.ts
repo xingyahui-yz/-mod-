@@ -36,12 +36,14 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
   } else {
-    // 开发构建输出在 dist/index.html；electron-builder 会把 renderer
-    // index.html 放到 app.asar 根目录。两者都从实际存在的路径选择，避免
-    // 打包后错误地寻找 app.asar/dist/index.html。
-    const developmentIndex = join(__dirname, '../dist/index.html')
+    // renderer output lives outside electron-builder's `dist/` artifact folder,
+    // so it is included in app.asar for both local and packaged launches.
+    const rendererIndex = join(__dirname, '../dist-renderer/index.html')
+    const legacyIndex = join(__dirname, '../dist/index.html')
     const packagedIndex = join(__dirname, '../index.html')
-    mainWindow.loadFile(existsSync(developmentIndex) ? developmentIndex : packagedIndex)
+    const index = [rendererIndex, legacyIndex, packagedIndex].find(existsSync)
+    if (!index) throw new Error('无法找到 renderer index.html')
+    mainWindow.loadFile(index)
   }
 
   mainWindow.on('closed', () => {

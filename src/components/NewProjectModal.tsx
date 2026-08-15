@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { join } from 'path'
 import * as FileService from '../services/FileService'
 import { Modal } from './Modal'
 import { ModManifest } from '../types'
@@ -8,6 +7,18 @@ interface NewProjectModalProps {
   isOpen: boolean
   onClose: () => void
   onProjectCreated: (path: string) => void
+}
+
+// Renderer code must stay browser-safe: importing Node's `path` module would
+// make the packaged context-isolated window evaluate `require()` and fail
+// before React mounts. Project paths come from the native dialog, so preserve
+// whichever separator style that path already uses.
+function join(...parts: string[]): string {
+  const separator = parts[0]?.includes('\\') ? '\\' : '/'
+  return parts.reduce((result, part, index) => {
+    if (index === 0) return part.replace(/[\\/]+$/, '')
+    return `${result}${separator}${part.replace(/^[\\/]+|[\\/]+$/g, '')}`
+  }, '')
 }
 
 export function NewProjectModal({ isOpen, onClose, onProjectCreated }: NewProjectModalProps) {

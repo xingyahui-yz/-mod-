@@ -5,6 +5,12 @@ import renderer from 'vite-plugin-electron-renderer'
 import { resolve } from 'path'
 
 export default defineConfig({
+  // Keep renderer output outside electron-builder's artifact directory (`dist/`).
+  // Otherwise electron-builder excludes the Vite assets and packages the source
+  // root index.html, leaving the packaged renderer with an empty #root.
+  build: {
+    outDir: 'dist-renderer',
+  },
   plugins: [
     react(),
     electron([
