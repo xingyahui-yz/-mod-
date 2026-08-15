@@ -216,6 +216,19 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(useCardStore.getState().selectedCardIndex).toBe(2)
   })
 
+  it('新建 Card 先确认不可变 ID，再进入编辑器', () => {
+    useCardStore.getState().loadCards([seedCards[0]])
+    renderEditor()
+    fireEvent.click(screen.getByRole('button', { name: '+ 新建卡牌' }))
+    expect(screen.getByTestId('card-id-dialog')).toBeTruthy()
+    fireEvent.change(screen.getByTestId('new-card-id-input'), { target: { value: 'Fireball' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认创建' }))
+    expect(screen.getByText(/Card ID Fireball 已存在/)).toBeTruthy()
+    fireEvent.change(screen.getByTestId('new-card-id-input'), { target: { value: 'NewCard' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认创建' }))
+    expect(useCardStore.getState().selectedCardId).toBe('NewCard')
+  })
+
   it('Card 属性编辑与撤销/重做共享同一历史', () => {
     useCardStore.getState().loadCards(seedCards)
     renderEditor()

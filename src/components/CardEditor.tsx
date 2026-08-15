@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useCardStore } from '../stores/useCardStore'
-import { CardData } from '../types'
+import { CardData, createDefaultCard } from '../types'
 import { generateCardDocumentCode } from '../card/codegen'
-import { validateCard } from '../card/cardValidation'
+import { isValidCardId, validateCard } from '../card/cardValidation'
 import { getTypeColor } from '../utils/cardUtils'
 import { CardIOButtons } from './CardIOButtons'
 import { CardSearch } from './CardSearch'
@@ -25,8 +25,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     currentCard,
     currentDocument,
     selectedCardId,
-    addCard,
     updateCard,
+    addCardWithData,
     deleteCard,
     selectCard,
     loadCardDocuments,
@@ -51,6 +51,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [autosaveState, setAutosaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const persistedSnapshot = useRef<string | null>(null)
+  const [showCreateIdDialog, setShowCreateIdDialog] = useState(false)
+  const [newCardId, setNewCardId] = useState('NewCard')
 
   useEffect(() => {
     setGraph(currentDocument?.graph ?? null)
@@ -92,7 +94,10 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         setAutosaveState('error')
       }
     }
-    autosaveTimer.current = setTimeout(() => { void flush() }, 500)
+    autosaveTimer.current = setTimeout(() => {
+      autosaveTimer.current = null
+      void flush()
+    }, 500)
 
     return () => {
       if (autosaveTimer.current) {
@@ -195,6 +200,25 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
     deleteCard(cardId)
+  }
+
+  const openCreateCard = () => {
+    setNewCardId('NewCard')
+    setErrors([])
+    setShowCreateIdDialog(true)
+  }
+
+  const confirmCreateCard = () => {
+    if (!isValidCardId(newCardId)) {
+      setErrors(['Card ID 必须是以英文字母开头的 PascalCase ASCII 标识符'])
+      return
+    }
+    const created = addCardWithData({ ...createDefaultCard(), id: newCardId })
+    if (!created) {
+      setErrors([`Card ID ${newCardId} 已存在，请确认一个新的 ID`])
+      return
+    }
+    setShowCreateIdDialog(false)
   }
 
   const addTrigger = (event: string) => {
@@ -338,7 +362,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           {autosaveState === 'error' && <span className="error-text">自动保存失败</span>}
           <button onClick={undoCard} disabled={!canUndoCard} title="撤销 Card 编辑">↶ 撤销</button>
           <button onClick={redoCard} disabled={!canRedoCard} title="重做 Card 编辑">↷ 重做</button>
-          <button onClick={addCard}>+ 新建卡牌</button>
+          <button onClick={openCreateCard}>+ 新建卡牌</button>
         </div>
       </div>
 
@@ -348,7 +372,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           {cards.length === 0 ? (
             <div className="empty-list">
               <p>暂无卡牌</p>
-              <button onClick={addCard}>创建第一张卡牌</button>
+              <button onClick={openCreateCard}>创建第一张卡牌</button>
             </div>
           ) : (
             <>
@@ -578,6 +602,26 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         )}
       </div>
 
+      {showCreateIdDialog && (
+        <div className="card-id-dialog" role="dialog" aria-label="确认 Card ID" data-testid="card-id-dialog">
+          <div className="card-id-dialog-body">
+            <h3>确认 Card ID</h3>
+            <p>Card ID 创建后不可修改，并决定文档、类名和 C# 文件名。</p>
+            <input
+              value={newCardId}
+              onChange={(event) => setNewCardId(event.target.value)}
+              autoFocus
+              data-testid="new-card-id-input"
+              aria-label="Card ID"
+            />
+            <div className="card-id-dialog-actions">
+              <button onClick={confirmCreateCard}>确认创建</button>
+              <button onClick={() => setShowCreateIdDialog(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .card-editor {
           display: flex;
@@ -586,6 +630,39 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           background: var(--bg-secondary);
           border-radius: 8px;
           overflow: hidden;
+        }
+
+        .card-id-dialog {
+          position: fixed;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          background: rgba(0, 0, 0, 0.45);
+          z-index: 20;
+        }
+
+        .card-id-dialog-body {
+          width: min(420px, calc(100vw - 32px));
+          padding: 20px;
+          border-radius: 8px;
+          background: var(--bg-secondary);
+          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .card-id-dialog-body h3,
+        .card-id-dialog-body p {
+          margin-top: 0;
+        }
+
+        .card-id-dialog-body input {
+          width: 100%;
+        }
+
+        .card-id-dialog-actions {
+          display: flex;
+          gap: 8px;
+          justify-content: flex-end;
+          margin-top: 16px;
         }
 
         .editor-header {
