@@ -15,12 +15,13 @@ import * as FileService from '../services/FileService'
 import { installFileService } from '../services/FileService'
 import { CardData } from '../types'
 
-// 重置持久化 store（persist 中间件会写 localStorage）
+// 重置 Card store；Card 文档而非 localStorage 承担持久化
 beforeEach(() => {
   localStorage.clear()
   useCardStore.setState({
     cards: [],
     currentCard: null,
+    selectedCardId: null,
     selectedCardIndex: null
   })
 })

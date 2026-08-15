@@ -1,24 +1,24 @@
 /**
- * useCardStore 持久化测试
+ * useCardStore 身份与状态测试
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useCardStore } from './useCardStore'
 
 describe('useCardStore persist behavior', () => {
   beforeEach(() => {
-    // 清除store状态
     useCardStore.setState({
       cards: [],
       currentCard: null,
+      selectedCardId: null,
       selectedCardIndex: null
     })
-    localStorage.clear()
   })
 
   it('默认应该有空的卡牌数组', () => {
     const state = useCardStore.getState()
     expect(state.cards).toEqual([])
     expect(state.currentCard).toBeNull()
+    expect(state.selectedCardId).toBeNull()
     expect(state.selectedCardIndex).toBeNull()
   })
 
@@ -29,31 +29,21 @@ describe('useCardStore persist behavior', () => {
     const state = useCardStore.getState()
     expect(state.cards).toHaveLength(1)
     expect(state.currentCard).not.toBeNull()
+    expect(state.selectedCardId).toBe('NewCard')
     expect(state.selectedCardIndex).toBe(0)
   })
 
-  it('partialize应该只持久化cards', () => {
+  it('Card 数据不写入 localStorage，由项目文档负责持久化', () => {
     const { addCard } = useCardStore.getState()
     addCard()
-
-    // 检查localStorage
-    const stored = localStorage.getItem('mod-studio-cards')
-    expect(stored).toBeTruthy()
-
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      expect(parsed.state.cards).toBeDefined()
-      // UI状态不应持久化
-      expect(parsed.state.currentCard).toBeUndefined()
-      expect(parsed.state.selectedCardIndex).toBeUndefined()
-    }
+    expect(localStorage.getItem('mod-studio-cards')).toBeNull()
   })
 
   it('updateCard应该正确更新卡牌', () => {
     const { addCard, updateCard } = useCardStore.getState()
     addCard()
 
-    updateCard(0, { name: 'Updated', cost: 5 })
+    updateCard('NewCard', { name: 'Updated', cost: 5 })
 
     const state = useCardStore.getState()
     expect(state.cards[0].name).toBe('Updated')
@@ -63,7 +53,7 @@ describe('useCardStore persist behavior', () => {
   it('updateCard 不允许修改已创建卡牌的 ID', () => {
     const { addCardWithData, updateCard } = useCardStore.getState()
     addCardWithData({ id: 'StableId', name: 'Old', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] })
-    updateCard(0, { id: 'ChangedId', name: 'Renamed' })
+    updateCard('StableId', { id: 'ChangedId', name: 'Renamed' })
     expect(useCardStore.getState().cards[0]).toMatchObject({ id: 'StableId', name: 'Renamed' })
   })
 
@@ -72,13 +62,14 @@ describe('useCardStore persist behavior', () => {
 
     addCardWithData({ id: 'CardOne', name: 'Card 1', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] })
     addCardWithData({ id: 'CardTwo', name: 'Card 2', cost: 2, type: 'Skill', rarity: 'Common', description: '', keywords: [] })
-    selectCard(0)
+    selectCard('CardOne')
 
-    deleteCard(0)
+    deleteCard('CardOne')
 
     const state = useCardStore.getState()
     expect(state.cards).toHaveLength(1)
     expect(state.cards[0].name).toBe('Card 2')
+    expect(state.selectedCardId).toBeNull()
     expect(state.selectedCardIndex).toBeNull()
   })
 
@@ -101,10 +92,21 @@ describe('useCardStore persist behavior', () => {
       { id: 'B', name: 'B', cost: 2, type: 'Skill' as const, rarity: 'Rare' as const, description: '', keywords: [] }
     ]
 
-    loadCards(newCards)
+    expect(loadCards(newCards)).toBe(true)
 
     const state = useCardStore.getState()
     expect(state.cards).toEqual(newCards)
     expect(state.currentCard).toEqual(newCards[0])
+    expect(state.selectedCardId).toBe('A')
+  })
+
+  it('loadCards 拒绝大小写冲突的 Card ID，不替换现有状态', () => {
+    const { addCardWithData, loadCards } = useCardStore.getState()
+    addCardWithData({ id: 'Stable', name: 'Stable', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] })
+    expect(loadCards([
+      { id: 'Fireball', name: 'A', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] },
+      { id: 'fireball', name: 'B', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] },
+    ])).toBe(false)
+    expect(useCardStore.getState().cards.map(card => card.id)).toEqual(['Stable'])
   })
 })

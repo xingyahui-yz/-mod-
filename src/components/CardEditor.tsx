@@ -18,7 +18,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const {
     cards,
     currentCard,
-    selectedCardIndex,
+    selectedCardId,
     addCard,
     updateCard,
     deleteCard,
@@ -81,16 +81,16 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   // 处理卡牌属性变化
   const handleCardChange = (field: keyof CardData, value: string | number | string[]) => {
-    if (selectedCardIndex === null) return
-    updateCard(selectedCardIndex, { [field]: value })
+    if (selectedCardId === null) return
+    updateCard(selectedCardId, { [field]: value })
     setErrors([]) // 清除错误
   }
 
   // 处理关键词变化
   const handleKeywordsChange = (value: string) => {
-    if (selectedCardIndex === null) return
+    if (selectedCardId === null) return
     const keywords = value.split(',').map(k => k.trim()).filter(k => k)
-    updateCard(selectedCardIndex, { keywords })
+    updateCard(selectedCardId, { keywords })
   }
 
   // 预览生成的代码
@@ -178,11 +178,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 onSearchTermChange={setSearchTerm}
                 onTypeFilterChange={setTypeFilter}
               />
-              {filteredCards.map(({ card, originalIndex }) => (
+              {filteredCards.map(({ card }) => (
               <div
-                key={originalIndex}
-                className={`card-item ${selectedCardIndex === originalIndex ? 'selected' : ''}`}
-                onClick={() => selectCard(originalIndex)}
+                key={card.id}
+                className={`card-item ${selectedCardId === card.id ? 'selected' : ''}`}
+                onClick={() => selectCard(card.id)}
               >
                 <div className="card-mini-preview">
                   <span className="mini-cost">{card.cost}</span>
@@ -196,7 +196,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 <span className="card-name">{card.name || '未命名'}</span>
                 <button
                   className="delete-btn"
-                  onClick={(e) => { e.stopPropagation(); deleteCard(originalIndex); }}
+                  onClick={(e) => { e.stopPropagation(); deleteCard(card.id); }}
                 >
                   ×
                 </button>
