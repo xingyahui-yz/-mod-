@@ -9,7 +9,7 @@
  *   兼容: 旧的 `import * as FileService from '...'` 调用方式仍可用 —
  *   模块层把每个方法绑定到一个 lazy 创建的 default service.
  */
-import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocumentSaveResult } from '../card/cardRepository'
+import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocumentSaveResult, type CardDocumentMigrationSaveResult } from '../card/cardRepository'
 import type { CardDocument } from '../card/cardDocument'
 import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEntry, type CardTrashRestoreResult } from '../card/cardTrash'
 import { buildPreflightEntries, evaluateCardPreflight, type CardPreflightOptions, type CardPreflightReport } from '../card/cardPreflight'
@@ -63,6 +63,7 @@ export interface FileService {
   saveModManifest(projectPath: string, manifest: ModManifest): Promise<boolean>
   loadCardDocuments(projectPath: string): Promise<CardDocumentLoadEntry[]>
   saveCardDocument(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
+  migrateCardDocument(projectPath: string, fileName: string): Promise<CardDocumentMigrationSaveResult>
   deleteCardToTrash(projectPath: string, cardId: string): Promise<CardTrashDeleteResult>
   listCardTrash(projectPath: string): Promise<CardTrashEntry[]>
   restoreCardFromTrash(projectPath: string, trashId: string): Promise<CardTrashRestoreResult>
@@ -162,6 +163,8 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
     loadCardDocuments: (projectPath) => cardDocumentRepository.load(projectPath),
 
     saveCardDocument: (projectPath, document) => cardDocumentRepository.save(projectPath, document),
+
+    migrateCardDocument: (projectPath, fileName) => cardDocumentRepository.migrateAndSave(projectPath, fileName),
 
     deleteCardToTrash: (projectPath, cardId) => cardTrashRepository.delete(projectPath, cardId),
 
@@ -338,6 +341,9 @@ export const loadCardDocuments = (projectPath: string) =>
   getDefaultService().loadCardDocuments(projectPath)
 export const saveCardDocument = (projectPath: string, document: CardDocument) =>
   getDefaultService().saveCardDocument(projectPath, document)
+
+export const migrateCardDocument = (projectPath: string, fileName: string) =>
+  getDefaultService().migrateCardDocument(projectPath, fileName)
 
 export const deleteCardToTrash = (projectPath: string, cardId: string) =>
   getDefaultService().deleteCardToTrash(projectPath, cardId)

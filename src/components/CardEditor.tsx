@@ -163,6 +163,17 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     await loadExistingCards()
   }
 
+  const handleMigrateRecovery = async (fileName: string) => {
+    if (!projectPath) return
+    const result = await FileService.migrateCardDocument(projectPath, fileName)
+    if (result.status !== 'migrated') {
+      showLoadMessage('error', `迁移失败：${result.reason}`)
+      return
+    }
+    showLoadMessage('success', `已迁移 ${fileName}，原文备份为 ${result.backupPath}`)
+    await loadExistingCards()
+  }
+
   const handleBatchGenerate = async () => {
     if (!projectPath) return
     setSaving(true)
@@ -473,6 +484,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 <details key={entry.fileName} className="recovery-entry">
                   <summary>{entry.fileName} · {entry.result.status}</summary>
                   <pre>{entry.result.status === 'editable' ? '' : typeof entry.result.raw === 'string' ? entry.result.raw : JSON.stringify(entry.result.raw, null, 2)}</pre>
+                  {entry.result.status === 'migration-required' && (
+                    <button type="button" onClick={() => void handleMigrateRecovery(entry.fileName)}>备份并迁移到当前 schema</button>
+                  )}
                   <button type="button" onClick={() => exportRecoveryEntry(entry)}>导出原始 JSON</button>
                 </details>
               ))}
