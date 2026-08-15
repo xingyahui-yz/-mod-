@@ -3,6 +3,8 @@
  */
 import { describe, it, expect } from 'vitest'
 import { BaseLLMAdapter, LLMResponse } from './base'
+import { createEmptyGraph } from '../../../node-editor/graph'
+import type { CardDocument } from '../../../card/cardDocument'
 
 // 测试用MockAdapter
 class MockAdapter extends BaseLLMAdapter {
@@ -25,6 +27,21 @@ class MockAdapter extends BaseLLMAdapter {
         }
       ])
     }
+  }
+}
+
+class ProposalAdapter extends BaseLLMAdapter {
+  constructor(private readonly response: string) { super({ apiKey: 'test' }) }
+  getModelName(): string { return 'proposal-mock' }
+  async generate(): Promise<LLMResponse> { return { success: true, content: this.response } }
+}
+
+function proposalBase(): CardDocument {
+  return {
+    schemaVersion: 2,
+    card: { id: 'ProposalCard', name: 'Before', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] },
+    graph: createEmptyGraph('ProposalCard', 'card'),
+    generation: { lastGeneratedFingerprint: null },
   }
 }
 
@@ -97,6 +114,25 @@ describe('BaseLLMAdapter', () => {
       const result = await adapter.generateCards('描述', 'Power')
 
       expect(result.success).toBe(true)
+    })
+  })
+
+  describe('generateCardProposal', () => {
+    it('解析完整 CardDocument 并返回待确认 proposal', async () => {
+      const base = proposalBase()
+      const adapter = new ProposalAdapter(JSON.stringify({ card: { ...base.card, name: 'After' }, graph: base.graph }))
+      const result = await adapter.generateCardProposal(base, '修改名称')
+      expect(result.success).toBe(true)
+      expect(result.proposal?.document.card.name).toBe('After')
+    })
+
+    it('结构违规只返回 violations，不产生 proposal', async () => {
+      const base = proposalBase()
+      const adapter = new ProposalAdapter(JSON.stringify({ card: base.card }))
+      const result = await adapter.generateCardProposal(base, '坏响应')
+      expect(result.success).toBe(false)
+      expect(result.proposal).toBeUndefined()
+      expect(result.violations.length).toBeGreaterThan(0)
     })
   })
 })
