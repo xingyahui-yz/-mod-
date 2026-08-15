@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
-import { join, resolve, isAbsolute, existsSync } from 'path'
+import { join, resolve, isAbsolute } from 'path'
+import { existsSync } from 'fs'
 import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink } from 'fs/promises'
 import { spawn } from 'child_process'
 
@@ -35,7 +36,12 @@ function createWindow() {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
   } else {
-    mainWindow.loadFile(join(__dirname, '../dist/index.html'))
+    // 开发构建输出在 dist/index.html；electron-builder 会把 renderer
+    // index.html 放到 app.asar 根目录。两者都从实际存在的路径选择，避免
+    // 打包后错误地寻找 app.asar/dist/index.html。
+    const developmentIndex = join(__dirname, '../dist/index.html')
+    const packagedIndex = join(__dirname, '../index.html')
+    mainWindow.loadFile(existsSync(developmentIndex) ? developmentIndex : packagedIndex)
   }
 
   mainWindow.on('closed', () => {
