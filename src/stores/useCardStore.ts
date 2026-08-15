@@ -4,6 +4,7 @@ import { isValidCardId } from '../card/cardValidation'
 import type { CardDocument } from '../card/cardDocument'
 import { createEmptyGraph } from '../node-editor/graph'
 import { commitHistory, createHistory, redoHistory, undoHistory, type HistoryState } from '../history/history'
+import { applyCardProposal, type CardProposal } from '../card/cardAiProposal'
 
 interface CardStore {
   cards: CardData[]
@@ -19,6 +20,7 @@ interface CardStore {
   addCardWithData: (card: CardData) => void
   updateCard: (cardId: string, card: Partial<CardData>) => void
   updateGraph: (cardId: string, graph: CardDocument['graph']) => void
+  applyCardProposal: (proposal: CardProposal) => boolean
   deleteCard: (cardId: string) => void
   selectCard: (cardId: string | null) => void
   setCurrentCard: (card: CardData | null) => void
@@ -160,6 +162,33 @@ export const useCardStore = create<CardStore>()(
             canRedoCard: nextHistory ? nextHistory.future.length > 0 : false,
           }
         })
+      },
+
+      applyCardProposal: (proposal) => {
+        const state = get()
+        const current = state.documents.find(document => document.card.id === proposal.cardId)
+        if (!current) return false
+        const applied = applyCardProposal(current, proposal)
+        if (!applied.ok) return false
+        const nextDocument = {
+          ...applied.document,
+          generation: { lastGeneratedFingerprint: null },
+        }
+        const nextHistory = state.selectedCardId === proposal.cardId && state.cardHistory
+          ? commitHistory(state.cardHistory, nextDocument)
+          : state.cardHistory
+        const effectiveDocument = nextHistory?.present ?? nextDocument
+        const documents = state.documents.map(document => document.card.id === proposal.cardId ? effectiveDocument : document)
+        set({
+          documents,
+          cards: documents.map(document => document.card),
+          currentDocument: state.selectedCardId === proposal.cardId ? effectiveDocument : state.currentDocument,
+          currentCard: state.selectedCardId === proposal.cardId ? effectiveDocument.card : state.currentCard,
+          cardHistory: nextHistory,
+          canUndoCard: nextHistory ? nextHistory.past.length > 0 : false,
+          canRedoCard: nextHistory ? nextHistory.future.length > 0 : false,
+        })
+        return true
       },
 
       deleteCard: (cardId: string) => {

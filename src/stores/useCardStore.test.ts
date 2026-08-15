@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useCardStore } from './useCardStore'
 import { appendNode, createEmptyGraph } from '../node-editor/graph'
+import { createCardProposal } from '../card/cardAiProposal'
 
 describe('useCardStore persist behavior', () => {
   beforeEach(() => {
@@ -162,6 +163,29 @@ describe('useCardStore persist behavior', () => {
     updateGraph('GraphHistory', next)
     expect(useCardStore.getState().currentDocument?.graph.nodes).toHaveLength(1)
     undoCard()
+    expect(useCardStore.getState().currentDocument?.graph.nodes).toHaveLength(0)
+  })
+
+  it('确认 AI 提案作为一个历史事务应用，单次撤销恢复整张 Card', () => {
+    const base = {
+      schemaVersion: 2,
+      card: { id: 'ProposalCard', name: 'Before', cost: 1, type: 'Attack' as const, rarity: 'Common' as const, description: '', keywords: [] },
+      graph: createEmptyGraph('ProposalCard', 'card'),
+      generation: { lastGeneratedFingerprint: null },
+    }
+    const proposal = createCardProposal(base, {
+      card: { ...base.card, name: 'After' },
+      graph: appendNode(base.graph, 'trigger', { x: 0, y: 0 }, { event: 'onPlay' }).graph,
+    })
+    expect(proposal.status).toBe('ready')
+    if (proposal.status !== 'ready') return
+    const { loadCardDocuments, applyCardProposal, undoCard } = useCardStore.getState()
+    loadCardDocuments([base])
+    expect(applyCardProposal(proposal.proposal)).toBe(true)
+    expect(useCardStore.getState().currentDocument?.card.name).toBe('After')
+    expect(useCardStore.getState().currentDocument?.graph.nodes).toHaveLength(1)
+    undoCard()
+    expect(useCardStore.getState().currentDocument?.card.name).toBe('Before')
     expect(useCardStore.getState().currentDocument?.graph.nodes).toHaveLength(0)
   })
 })
