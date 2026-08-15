@@ -29,6 +29,14 @@ describe('CardDocument parser', () => {
     expect(parseCardDocument(document).status).toBe('invalid')
   })
 
+  it('要求 Card graph 的实体类型和实体 ID 与 Card 一致', () => {
+    const wrongId = makeDocument({ graph: { ...makeDocument().graph, entityId: 'OtherCard' } })
+    expect(parseCardDocument(wrongId)).toMatchObject({ status: 'invalid', reason: expect.stringMatching(/entityId/) })
+
+    const wrongEntity = makeDocument({ graph: { ...makeDocument().graph, entityType: 'relic' } })
+    expect(parseCardDocument(wrongEntity)).toMatchObject({ status: 'invalid', reason: expect.stringMatching(/entityType/) })
+  })
+
   it('未来 schema 进入只读恢复并保留原始字段', () => {
     const raw = { ...makeDocument(), schemaVersion: 99, futureField: { keep: true } }
     expect(parseCardDocument(raw)).toMatchObject({ status: 'read-only', reason: 'future-schema', raw })

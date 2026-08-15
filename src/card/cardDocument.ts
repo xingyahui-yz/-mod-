@@ -76,6 +76,13 @@ export function parseCardDocument(value: unknown): CardDocumentParseResult {
     return { status: 'migration-required', schemaVersion: value.schemaVersion, raw: value }
   }
   if (!isCardData(value.card)) return { status: 'invalid', reason: 'card 结构无效', raw: value }
+  if (!isRecord(value.graph)) return { status: 'invalid', reason: 'graph 结构无效', raw: value }
+  if (value.graph.entityType !== 'card') {
+    return { status: 'invalid', reason: 'graph.entityType 必须是 card', raw: value }
+  }
+  if (value.graph.entityId !== value.card.id) {
+    return { status: 'invalid', reason: 'graph.entityId 必须等于 card.id', raw: value }
+  }
   const unknownKinds = unknownKindsInGraph(value.graph)
   if (unknownKinds.length > 0) {
     return { status: 'read-only', reason: 'unknown-kind', raw: value, unknownKinds }
