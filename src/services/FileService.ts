@@ -14,6 +14,7 @@ import type { CardDocument } from '../card/cardDocument'
 import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEntry, type CardTrashRestoreResult } from '../card/cardTrash'
 import { buildPreflightEntries, evaluateCardPreflight, type CardPreflightOptions, type CardPreflightReport } from '../card/cardPreflight'
 import { generateCardArtifact as writeCardArtifact, type CardGenerationResult } from '../card/cardGeneration'
+import { generateCardBatch as runCardBatch, type BatchGenerationReport } from '../card/cardBatchGeneration'
 
 export interface FileEntry {
   name: string
@@ -68,6 +69,7 @@ export interface FileService {
   preflightCardProject(projectPath: string, options?: CardPreflightOptions): Promise<CardPreflightReport>
   backupCardArtifact(projectPath: string, cardId: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
   generateCardArtifact(projectPath: string, document: CardDocument, options?: { allowExternalOverwrite?: boolean }): Promise<CardGenerationResult>
+  generateCardBatch(projectPath: string): Promise<BatchGenerationReport>
   launchGame(
     gamePath: string,
     modPath: string
@@ -224,6 +226,38 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       })
     },
 
+    async generateCardBatch(projectPath) {
+      const loaded = await cardDocumentRepository.load(projectPath)
+      const inputs = loaded.map(entry => {
+        if (entry.result.status === 'editable') {
+          return { status: 'editable' as const, document: entry.result.document }
+        }
+        const raw = entry.result.raw
+        const rawCard = raw && typeof raw === 'object' && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>).card
+          : null
+        const cardId = rawCard && typeof rawCard === 'object' && !Array.isArray(rawCard) && typeof (rawCard as Record<string, unknown>).id === 'string'
+          ? (rawCard as Record<string, unknown>).id as string
+          : entry.fileName.replace(/\.json$/i, '')
+        return {
+          status: entry.result.status as 'read-only' | 'migration-required' | 'invalid',
+          cardId,
+          reason: entry.result.status === 'invalid' ? entry.result.reason : 'CardDocument 不是当前可编辑 schema',
+        }
+      })
+      return runCardBatch(projectPath, inputs, {
+        files: {
+          mkdir: path => api.mkdir(path),
+          writeFile: (path, content) => api.writeFile(path, content),
+          rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
+          remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
+          readFile: path => api.readFile(path),
+        },
+        saveDocument: async next => (await cardDocumentRepository.save(projectPath, next)).ok,
+        backupExternalArtifact: async (path, content) => api.writeFile(`${path}.external-${Date.now()}.bak`, content),
+      })
+    },
+
     // ============ 游戏启动 ============
     launchGame: (gamePath, modPath) => api.launchGame(gamePath, modPath),
   }
@@ -322,6 +356,9 @@ export const generateCardArtifact = (
   document: CardDocument,
   options?: { allowExternalOverwrite?: boolean },
 ) => getDefaultService().generateCardArtifact(projectPath, document, options)
+
+export const generateCardBatch = (projectPath: string) =>
+  getDefaultService().generateCardBatch(projectPath)
 
 export const backupCardArtifact = (projectPath: string, cardId: string) =>
   getDefaultService().backupCardArtifact(projectPath, cardId)

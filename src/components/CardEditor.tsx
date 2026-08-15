@@ -14,6 +14,9 @@ import { appendNode, connect, disconnect, moveNode, removeNode } from '../node-e
 import type { NodeGraph } from '../node-editor/types'
 import { effectsForEntity, triggersForEntity, EFFECT_KINDS } from '../shared/kinds'
 import { serializeCardDocument } from '../card/cardDocument'
+import type { CardDocumentLoadEntry } from '../card/cardRepository'
+import type { CardTrashEntry } from '../card/cardTrash'
+import type { BatchGenerationReport } from '../card/cardBatchGeneration'
 
 interface CardEditorProps {
   projectPath: string | null
@@ -53,6 +56,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const persistedSnapshot = useRef<string | null>(null)
   const [showCreateIdDialog, setShowCreateIdDialog] = useState(false)
   const [newCardId, setNewCardId] = useState('NewCard')
+  const [recoveryEntries, setRecoveryEntries] = useState<CardDocumentLoadEntry[]>([])
+  const [trashEntries, setTrashEntries] = useState<CardTrashEntry[]>([])
+  const [batchReport, setBatchReport] = useState<BatchGenerationReport | null>(null)
 
   useEffect(() => {
     setGraph(currentDocument?.graph ?? null)
@@ -121,6 +127,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     if (!projectPath) return
 
     setLoadingCards(true)
+    setRecoveryEntries([])
+    setTrashEntries([])
+    setBatchReport(null)
     // 项目切换先清空旧项目投影，避免加载失败时串出上一项目的 Card。
     loadCardDocuments([])
     try {
@@ -130,7 +139,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         .map(entry => entry.result.status === 'editable' ? entry.result.document : null)
         .filter((document): document is NonNullable<typeof document> => document !== null)
       const invalidEntries = entries.filter(entry => entry.result.status !== 'editable')
+      setRecoveryEntries(invalidEntries)
       loadCardDocuments(editableDocuments)
+      setTrashEntries(await FileService.listCardTrash(projectPath))
       if (invalidEntries.length > 0) {
         showLoadMessage('error', `${invalidEntries.length} 张 Card 无法编辑，已隔离并保留原文件`)
       }
@@ -139,6 +150,46 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       showLoadMessage('error', `加载卡牌失败: ${err instanceof Error ? err.message : String(err)}`)
     }
     setLoadingCards(false)
+  }
+
+  const handleRestoreCard = async (trashId: string) => {
+    if (!projectPath) return
+    const result = await FileService.restoreCardFromTrash(projectPath, trashId)
+    if (result.status !== 'restored') {
+      showLoadMessage('error', `恢复失败：${result.reason}`)
+      return
+    }
+    showLoadMessage('success', `已恢复 Card ${result.cardId}`)
+    await loadExistingCards()
+  }
+
+  const handleBatchGenerate = async () => {
+    if (!projectPath) return
+    setSaving(true)
+    setBatchReport(null)
+    try {
+      const report = await FileService.generateCardBatch(projectPath)
+      setBatchReport(report)
+      for (const item of report.items) {
+        if (item.status === 'generated') setGeneratedDocument(item.document)
+      }
+    } catch (error) {
+      showSaveMessage('error', `批量生成失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const exportRecoveryEntry = (entry: CardDocumentLoadEntry) => {
+    const rawValue = entry.result.status === 'editable' ? null : entry.result.raw
+    const raw = typeof rawValue === 'string' ? rawValue : JSON.stringify(rawValue, null, 2)
+    const blob = new Blob([raw ?? ''], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${entry.fileName}.recovery.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   // 过滤卡牌 - 单一useMemo，同时保留原始索引，避免每次渲染O(n²)的findIndex
@@ -362,6 +413,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           {autosaveState === 'error' && <span className="error-text">自动保存失败</span>}
           <button onClick={undoCard} disabled={!canUndoCard} title="撤销 Card 编辑">↶ 撤销</button>
           <button onClick={redoCard} disabled={!canRedoCard} title="重做 Card 编辑">↷ 重做</button>
+          <button onClick={() => void handleBatchGenerate()} disabled={saving || !projectPath || cards.length === 0} title="逐张生成当前项目中的 Card">
+            ⚡ 批量生成
+          </button>
           <button onClick={openCreateCard}>+ 新建卡牌</button>
         </div>
       </div>
@@ -410,6 +464,30 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 )
               )}
             </>
+          )}
+          {recoveryEntries.length > 0 && (
+            <div className="card-recovery-panel" data-testid="card-recovery-panel">
+              <h4>只读恢复</h4>
+              <p>{recoveryEntries.length} 个文件未进入编辑器，原文已保留。</p>
+              {recoveryEntries.map(entry => (
+                <details key={entry.fileName} className="recovery-entry">
+                  <summary>{entry.fileName} · {entry.result.status}</summary>
+                  <pre>{entry.result.status === 'editable' ? '' : typeof entry.result.raw === 'string' ? entry.result.raw : JSON.stringify(entry.result.raw, null, 2)}</pre>
+                  <button type="button" onClick={() => exportRecoveryEntry(entry)}>导出原始 JSON</button>
+                </details>
+              ))}
+            </div>
+          )}
+          {trashEntries.length > 0 && (
+            <div className="card-trash-panel" data-testid="card-trash-panel">
+              <h4>回收站</h4>
+              {trashEntries.map(entry => (
+                <div className="trash-entry" key={entry.trashId}>
+                  <span>{entry.result.status === 'editable' ? entry.result.document.card.id : entry.trashId}</span>
+                  <button type="button" onClick={() => void handleRestoreCard(entry.trashId)}>恢复</button>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -574,6 +652,19 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 </button>
               </div>
 
+              {batchReport && (
+                <div className="batch-report" data-testid="batch-report">
+                  批量生成：成功 {batchReport.counts.generated}，跳过 {batchReport.counts.skipped}，失败 {batchReport.counts.failed}
+                  {batchReport.items.some(item => item.status !== 'generated') && (
+                    <ul>
+                      {batchReport.items.filter(item => item.status !== 'generated').map(item => (
+                        <li key={item.cardId}>{item.cardId}：{item.reason}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               {saveMessage && <Toast message={saveMessage} />}
             </>
           ) : (
@@ -702,6 +793,60 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           border-right: 1px solid var(--border);
           overflow-y: auto;
           padding: 8px;
+        }
+
+        .card-recovery-panel,
+        .card-trash-panel {
+          margin-top: 16px;
+          padding: 10px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          font-size: 12px;
+        }
+
+        .card-recovery-panel h4,
+        .card-trash-panel h4 {
+          margin: 0 0 6px;
+          font-size: 12px;
+        }
+
+        .card-recovery-panel p {
+          color: var(--text-secondary);
+          margin: 0 0 8px;
+        }
+
+        .recovery-entry {
+          margin-top: 6px;
+        }
+
+        .recovery-entry pre {
+          max-height: 120px;
+          overflow: auto;
+          white-space: pre-wrap;
+          margin: 6px 0;
+          padding: 6px;
+          background: var(--bg-tertiary);
+        }
+
+        .trash-entry {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 6px;
+          margin-top: 6px;
+        }
+
+        .batch-report {
+          margin-top: 12px;
+          padding: 8px 10px;
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          font-size: 12px;
+        }
+
+        .batch-report ul {
+          margin: 6px 0 0;
+          padding-left: 18px;
         }
 
         .empty-list {
