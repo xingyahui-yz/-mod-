@@ -18,6 +18,7 @@ interface CardStore {
   addCard: () => void
   addCardWithData: (card: CardData) => void
   updateCard: (cardId: string, card: Partial<CardData>) => void
+  updateGraph: (cardId: string, graph: CardDocument['graph']) => void
   deleteCard: (cardId: string) => void
   selectCard: (cardId: string | null) => void
   setCurrentCard: (card: CardData | null) => void
@@ -128,6 +129,32 @@ export const useCardStore = create<CardStore>()(
             currentDocument: state.selectedCardId === cardId
               ? effectiveDocument
               : state.currentDocument,
+            cardHistory: nextHistory,
+            canUndoCard: nextHistory ? nextHistory.past.length > 0 : false,
+            canRedoCard: nextHistory ? nextHistory.future.length > 0 : false,
+          }
+        })
+      },
+
+      updateGraph: (cardId, graph) => {
+        set(state => {
+          const currentDocument = state.documents.find(document => document.card.id === cardId)
+          if (!currentDocument) return state
+          const nextDocument: CardDocument = {
+            ...currentDocument,
+            graph,
+            generation: { ...currentDocument.generation, lastGeneratedFingerprint: null },
+          }
+          const nextHistory = state.selectedCardId === cardId && state.cardHistory
+            ? commitHistory(state.cardHistory, nextDocument)
+            : state.cardHistory
+          const effectiveDocument = nextHistory?.present ?? nextDocument
+          const documents = state.documents.map(document => document.card.id === cardId ? effectiveDocument : document)
+          return {
+            documents,
+            cards: documents.map(document => document.card),
+            currentDocument: state.selectedCardId === cardId ? effectiveDocument : state.currentDocument,
+            currentCard: state.selectedCardId === cardId ? effectiveDocument.card : state.currentCard,
             cardHistory: nextHistory,
             canUndoCard: nextHistory ? nextHistory.past.length > 0 : false,
             canRedoCard: nextHistory ? nextHistory.future.length > 0 : false,

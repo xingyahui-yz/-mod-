@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useCardStore } from './useCardStore'
-import { createEmptyGraph } from '../node-editor/graph'
+import { appendNode, createEmptyGraph } from '../node-editor/graph'
 
 describe('useCardStore persist behavior', () => {
   beforeEach(() => {
@@ -147,5 +147,21 @@ describe('useCardStore persist behavior', () => {
     expect(useCardStore.getState().currentCard?.name).toBe('Before')
     redoCard()
     expect(useCardStore.getState().currentCard?.name).toBe('After')
+  })
+
+  it('NodeGraph 更新与 Card 属性共享同一历史快照', () => {
+    const document = {
+      schemaVersion: 2,
+      card: { id: 'GraphHistory', name: 'Graph', cost: 1, type: 'Attack' as const, rarity: 'Common' as const, description: '', keywords: [] },
+      graph: createEmptyGraph('GraphHistory', 'card'),
+      generation: { lastGeneratedFingerprint: null },
+    }
+    const { loadCardDocuments, updateGraph, undoCard } = useCardStore.getState()
+    loadCardDocuments([document])
+    const next = appendNode(document.graph, 'trigger', { x: 0, y: 0 }, { event: 'onPlay' }).graph
+    updateGraph('GraphHistory', next)
+    expect(useCardStore.getState().currentDocument?.graph.nodes).toHaveLength(1)
+    undoCard()
+    expect(useCardStore.getState().currentDocument?.graph.nodes).toHaveLength(0)
   })
 })

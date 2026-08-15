@@ -227,6 +227,15 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(screen.getByDisplayValue('新火球')).toBeTruthy()
   })
 
+  it('现有 CardEditor 原位显示 Card 行为图并写回同一 CardDocument', () => {
+    useCardStore.getState().loadCards(seedCards)
+    renderEditor()
+    expect(screen.getByTestId('card-node-editor')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '+ onPlay' }))
+    expect(screen.getByTestId('node-graph-canvas').querySelectorAll('[data-testid^="node-box-"]')).toHaveLength(1)
+    expect(useCardStore.getState().currentDocument?.graph.nodes[0].data.event).toBe('onPlay')
+  })
+
   it('搜索 + 类型过滤组合', () => {
     useCardStore.getState().loadCards(seedCards)
     renderEditor()

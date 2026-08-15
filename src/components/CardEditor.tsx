@@ -9,6 +9,10 @@ import { CardSearch } from './CardSearch'
 import { Toast } from './Toast'
 import { useTransientMessage } from '../hooks/useTransientMessage'
 import * as FileService from '../services/FileService'
+import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
+import { appendNode, connect, disconnect, moveNode, removeNode } from '../node-editor/graph'
+import type { NodeGraph } from '../node-editor/types'
+import { effectsForEntity, triggersForEntity, EFFECT_KINDS } from '../shared/kinds'
 
 interface CardEditorProps {
   projectPath: string | null
@@ -29,6 +33,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     redoCard,
     canUndoCard,
     canRedoCard,
+    updateGraph,
   } = useCardStore()
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
@@ -39,6 +44,13 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [loadingCards, setLoadingCards] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | CardData['type']>('all')
+  const [graph, setGraph] = useState<NodeGraph | null>(null)
+  const [graphError, setGraphError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setGraph(currentDocument?.graph ?? null)
+    setGraphError(null)
+  }, [currentDocument])
 
   // 当项目路径变化时，加载现有卡牌
   useEffect(() => {
@@ -104,6 +116,34 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     if (selectedCardId === null) return
     const keywords = value.split(',').map(k => k.trim()).filter(k => k)
     updateCard(selectedCardId, { keywords })
+  }
+
+  const applyGraph = (next: NodeGraph) => {
+    if (!selectedCardId) return
+    setGraph(next)
+    updateGraph(selectedCardId, next)
+  }
+
+  const addTrigger = (event: string) => {
+    if (!graph) return
+    applyGraph(appendNode(graph, 'trigger', { x: 50 + graph.nodes.length * 24, y: 50 }, { event }).graph)
+  }
+
+  const addEffect = (kind: string) => {
+    if (!graph) return
+    const definition = EFFECT_KINDS[kind]
+    applyGraph(appendNode(graph, 'effect', { x: 280 + graph.nodes.length * 24, y: 50 }, definition?.defaultData ?? { kind }).graph)
+  }
+
+  const handleConnect = (from: { nodeId: string; port: string }, to: { nodeId: string; port: string }) => {
+    if (!graph) return
+    const result = connect(graph, from, to)
+    if (!result.ok) {
+      setGraphError(`连线失败：${result.reason}`)
+      return
+    }
+    setGraphError(null)
+    applyGraph(result.graph)
   }
 
   // 预览生成的代码
@@ -330,6 +370,34 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                   {errors.map((err, i) => (
                     <div key={i} className="error-item">⚠️ {err}</div>
                   ))}
+                </div>
+              )}
+
+              {graph && (
+                <div className="card-node-editor" data-testid="card-node-editor">
+                  <div className="node-toolbar">
+                    <span>行为图</span>
+                    {triggersForEntity('card').map(event => (
+                      <button key={event} type="button" onClick={() => addTrigger(event)}>
+                        + {event}
+                      </button>
+                    ))}
+                    {effectsForEntity('card').map(kind => (
+                      <button key={kind} type="button" onClick={() => addEffect(kind)}>
+                        + {kind}
+                      </button>
+                    ))}
+                  </div>
+                  <NodeGraphCanvas
+                    graph={graph}
+                    onMoveNode={(nodeId, position) => applyGraph(moveNode(graph, nodeId, position))}
+                    onRemoveNode={(nodeId) => applyGraph(removeNode(graph, nodeId))}
+                    onDisconnect={(edgeId) => applyGraph(disconnect(graph, edgeId))}
+                    onConnect={handleConnect}
+                    width={720}
+                    height={360}
+                  />
+                  {graphError && <div className="error-box" data-testid="card-graph-error">⚠️ {graphError}</div>}
                 </div>
               )}
 
