@@ -99,26 +99,33 @@ function App() {
       {/* 主内容区 */}
       <main className="main">
         {/* 卡牌编辑器 */}
-        {activeTab === 'cards' && (
-          <div className="editor-area">
-            {projectPath ? (
-              <CardEditor projectPath={projectPath} />
-            ) : (
-              <div className="no-project">
-                <h2>请先打开或创建项目</h2>
-                <p>使用顶部的「新建项目」或「打开项目」按钮开始</p>
-                <div className="quick-actions">
-                  <button className="secondary-btn" onClick={() => setShowNewProject(true)}>
-                    📁 新建项目
-                  </button>
-                  <button onClick={openProject}>
-                    📂 打开项目
-                  </button>
-                </div>
+        {/*
+         * CardEditor 只保留一个实例，并在切换标签时保持挂载。
+         * AI 提案和其它跨标签编辑会更新同一份 CardDocument；如果这里卸载
+         * 编辑器，其自动保存 effect 也会被卸载，切回 Card 时会从磁盘读回旧稿。
+         */}
+        <div
+          className="editor-area"
+          style={{ display: activeTab === 'cards' ? undefined : 'none' }}
+          aria-hidden={activeTab !== 'cards'}
+        >
+          {projectPath ? (
+            <CardEditor projectPath={projectPath} />
+          ) : (
+            <div className="no-project">
+              <h2>请先打开或创建项目</h2>
+              <p>使用顶部的「新建项目」或「打开项目」按钮开始</p>
+              <div className="quick-actions">
+                <button className="secondary-btn" onClick={() => setShowNewProject(true)}>
+                  📁 新建项目
+                </button>
+                <button onClick={openProject}>
+                  📂 打开项目
+                </button>
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
 
         {/* 遗物编辑器（节点编辑器 v0.4 端到端） */}
         {activeTab === 'relics' && (
