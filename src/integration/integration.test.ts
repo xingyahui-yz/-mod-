@@ -3,7 +3,9 @@
  * 覆盖关键用户路径：保存→解析往返、Mustache 模板、HTTP 适配器、FileService、卡牌导入导出
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { generateCardCode } from '../utils/codeGenerator'
+import { generateCardDocumentCode } from '../card/codegen'
+import { appendNode, connect, createEmptyGraph } from '../node-editor/graph'
+import type { CardDocument } from '../card/cardDocument'
 import { parseCardFromCode } from '../utils/cardParser'
 import { validateCard } from '../card/cardValidation'
 import { exportCards, importCards } from '../utils/cardIO'
@@ -23,9 +25,23 @@ const sampleCard: CardData = {
   keywords: ['Fire', 'Damage']
 }
 
+function generatedDocument(card: CardData): CardDocument {
+  let graph = createEmptyGraph(card.id, 'card')
+  const trigger = appendNode(graph, 'trigger', { x: 0, y: 0 }, { event: 'onPlay' })
+  graph = trigger.graph
+  const effect = appendNode(graph, 'effect', { x: 100, y: 0 }, { kind: 'exhaustSelf' })
+  const linked = connect(effect.graph, { nodeId: trigger.node.id, port: 'out' }, { nodeId: effect.node.id, port: 'in' })
+  if (!linked.ok) throw new Error(linked.reason)
+  return { schemaVersion: 2, card, graph: linked.graph, generation: { lastGeneratedFingerprint: null } }
+}
+
+function generateCanonicalCode(card: CardData, namespace = 'MyMod.Cards'): string {
+  return generateCardDocumentCode(generatedDocument(card), namespace)
+}
+
 describe('1. 卡牌 → C#代码 → 卡牌 往返', () => {
   it('完整往返不丢失字段', () => {
-    const code = generateCardCode(sampleCard, 'MyMod.Cards')
+    const code = generateCanonicalCode(sampleCard, 'MyMod.Cards')
     const parsed = parseCardFromCode(code)
 
     expect(parsed).not.toBeNull()
@@ -38,7 +54,7 @@ describe('1. 卡牌 → C#代码 → 卡牌 往返', () => {
   })
 
   it('生成的代码包含 namespace、class、特性', () => {
-    const code = generateCardCode(sampleCard, 'MyMod.Cards')
+    const code = generateCanonicalCode(sampleCard, 'MyMod.Cards')
     expect(code).toContain('namespace MyMod.Cards')
     expect(code).toMatch(/class MyCard\b/)  // 中文名→空→回退 MyCard
     expect(code).toContain('Name = "火球术"')
@@ -50,14 +66,14 @@ describe('1. 卡牌 → C#代码 → 卡牌 往返', () => {
   })
 
   it('类名使用不可变 Card ID，而不是显示名称', () => {
-    expect(generateCardCode({ ...sampleCard, name: 'fire-ball' }, 'X').match(/class (\w+)/)![1])
+    expect(generateCanonicalCode({ ...sampleCard, name: 'fire-ball' }, 'X').match(/class (\w+)/)![1])
       .toBe('MyCard')
-    expect(generateCardCode({ ...sampleCard, name: 'defend' }, 'X').match(/class (\w+)/)![1])
+    expect(generateCanonicalCode({ ...sampleCard, name: 'defend' }, 'X').match(/class (\w+)/)![1])
       .toBe('MyCard')
   })
 
   it('空名称回退到 MyCard', () => {
-    const code = generateCardCode({ ...sampleCard, name: '' }, 'X')
+    const code = generateCanonicalCode({ ...sampleCard, name: '' }, 'X')
     expect(code).toContain('class MyCard')
   })
 })
@@ -237,7 +253,7 @@ describe('5. FileService 文件系统（依赖注入 — factory seam v0.8-2）'
   // 每个测试创建独立 service — 不再 setApi 改模块全局
 
   it('显式 legacy import 才扫描 scripts/Cards 目录下的 .cs 文件', async () => {
-    const mockCode = generateCardCode(sampleCard, 'MyMod.Cards')
+    const mockCode = generateCanonicalCode(sampleCard, 'MyMod.Cards')
     const mockApi: FileService.ElectronAPI = {
       openDirectory: vi.fn(),
       saveDirectory: vi.fn(),
@@ -264,47 +280,6 @@ describe('5. FileService 文件系统（依赖注入 — factory seam v0.8-2）'
     expect(mockApi.readDirectory).toHaveBeenCalledWith('/proj/scripts/Cards')
     expect(cards).toHaveLength(1) // 只 Fireball.cs 通过
     expect(cards[0].document?.card.name).toBe('火球术')
-  })
-
-  it('saveCardToProject 生成 PascalCase 文件名并写入', async () => {
-    const writeFile = vi.fn().mockResolvedValue(true)
-    const mkdir = vi.fn().mockResolvedValue(true)
-    const mockApi: FileService.ElectronAPI = {
-      openDirectory: vi.fn(), saveDirectory: vi.fn(),
-      readDirectory: vi.fn(), readFile: vi.fn(),
-      writeFile, mkdir,
-      copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
-      launchGame: vi.fn(), showInFolder: vi.fn()
-    }
-    const svc = createFileService({ api: mockApi })
-
-    // 用英文名确保 PascalCase 转换产出有意义类名
-    const englishCard: CardData = { ...sampleCard, id: 'Fireball', name: 'fireball' }
-    const result = await svc.saveCardToProject('/proj', englishCard)
-
-    expect(result.success).toBe(true)
-    expect(result.fileName).toBe('Fireball.cs')
-    expect(mkdir).toHaveBeenCalledWith('/proj/scripts/Cards')
-    expect(writeFile).toHaveBeenCalledOnce()
-    const [path, content] = writeFile.mock.calls[0]
-    expect(path).toBe('/proj/scripts/Cards/Fireball.cs')
-    expect(content).toContain('class Fireball')
-  })
-
-  it('中文名保存时回退到 MyCard.cs', async () => {
-    const writeFile = vi.fn().mockResolvedValue(true)
-    const mockApi: FileService.ElectronAPI = {
-      openDirectory: vi.fn(), saveDirectory: vi.fn(),
-      readDirectory: vi.fn(), readFile: vi.fn(),
-      writeFile, mkdir: vi.fn(),
-      copyDirectory: vi.fn(), getUserDataPath: vi.fn(),
-      launchGame: vi.fn(), showInFolder: vi.fn()
-    }
-    const svc = createFileService({ api: mockApi })
-
-    const result = await svc.saveCardToProject('/proj', sampleCard)  // '火球术'
-
-    expect(result.fileName).toBe('MyCard.cs')
   })
 
   it('loadModManifest 支持多种 manifest 文件名', async () => {

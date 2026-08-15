@@ -9,9 +9,6 @@
  *   兼容: 旧的 `import * as FileService from '...'` 调用方式仍可用 —
  *   模块层把每个方法绑定到一个 lazy 创建的 default service.
  */
-import { CardData } from '../types'
-import { generateCardCode } from '../utils/codeGenerator'
-import { toPascalCase } from '../utils/stringUtils'
 import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocumentSaveResult } from '../card/cardRepository'
 import type { CardDocument } from '../card/cardDocument'
 import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEntry, type CardTrashRestoreResult } from '../card/cardTrash'
@@ -71,11 +68,6 @@ export interface FileService {
   preflightCardProject(projectPath: string, options?: CardPreflightOptions): Promise<CardPreflightReport>
   backupCardArtifact(projectPath: string, cardId: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
   generateCardArtifact(projectPath: string, document: CardDocument, options?: { allowExternalOverwrite?: boolean }): Promise<CardGenerationResult>
-  saveCardToProject(
-    projectPath: string,
-    card: CardData,
-    namespace?: string
-  ): Promise<{ success: boolean; fileName?: string; error?: string }>
   launchGame(
     gamePath: string,
     modPath: string
@@ -232,28 +224,6 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       })
     },
 
-    async saveCardToProject(projectPath, card, namespace = 'MyMod.Cards') {
-      try {
-        const className =
-          toPascalCase(card.name.replace(/[^a-zA-Z0-9]/g, '')) || 'MyCard'
-        const fileName = `${className}.cs`
-        const filePath = `${projectPath}/${CARDS_DIR}/${fileName}`
-
-        await api.mkdir(`${projectPath}/${CARDS_DIR}`)
-
-        const code = generateCardCode(card, namespace)
-        const success = await api.writeFile(filePath, code)
-
-        if (success) {
-          return { success: true, fileName }
-        } else {
-          return { success: false, error: '写入文件失败' }
-        }
-      } catch (err) {
-        return { success: false, error: String(err) }
-      }
-    },
-
     // ============ 游戏启动 ============
     launchGame: (gamePath, modPath) => api.launchGame(gamePath, modPath),
   }
@@ -355,11 +325,5 @@ export const generateCardArtifact = (
 
 export const backupCardArtifact = (projectPath: string, cardId: string) =>
   getDefaultService().backupCardArtifact(projectPath, cardId)
-export const saveCardToProject = (
-  projectPath: string,
-  card: CardData,
-  namespace: string = 'MyMod.Cards'
-) =>
-  getDefaultService().saveCardToProject(projectPath, card, namespace)
 export const launchGame = (gamePath: string, modPath: string) =>
   getDefaultService().launchGame(gamePath, modPath)
