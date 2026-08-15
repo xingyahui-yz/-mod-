@@ -29,6 +29,7 @@ import {
 } from './graph'
 import { EntityType, NodeGraph, GraphNode, NodeType } from './types'
 import { triggersForEntity, effectsForEntity } from '../shared/kinds'
+import { commitHistory, createHistory, redoHistory, undoHistory, type HistoryState } from '../history/history'
 
 /** 历史上限：保留最近 100 个 present 之前的快照 */
 export const HISTORY_LIMIT = 100
@@ -50,11 +51,7 @@ if (import.meta.env.DEV && !(globalThis as any).__v07_history_limit_warned) {
  * - present: 当前展示的图（与 React state 对外暴露的 graph 同引用）
  * - future:  最近一步可重做 → 最远一步（undo 后产生，commit 时被清空）
  */
-export interface HistoryState {
-  past: NodeGraph[]
-  present: NodeGraph
-  future: NodeGraph[]
-}
+export type { HistoryState } from '../history/history'
 
 export interface UseNodeGraphReturn {
   graph: NodeGraph
@@ -104,22 +101,6 @@ function resolveHistoryLimit(options?: UseNodeGraphOptions): number {
  *   不产生虚假 updatedAt、不入栈）。
  * - 否则：旧 present 入 past（裁剪到 HISTORY_LIMIT），设新 present，清空 future。
  */
-function commit(
-  prev: HistoryState,
-  next: NodeGraph,
-  historyLimit: number = HISTORY_LIMIT
-): HistoryState {
-  if (next === prev.present) return prev
-  const basePast = prev.past.length >= historyLimit
-    ? prev.past.slice(prev.past.length - historyLimit + 1)
-    : prev.past
-  return {
-    past: [...basePast, prev.present],
-    present: next,
-    future: []
-  }
-}
-
 export function useNodeGraph(
   entityId: string,
   entityType: EntityType,
@@ -127,11 +108,9 @@ export function useNodeGraph(
   options?: UseNodeGraphOptions
 ): UseNodeGraphReturn {
   const [historyLimit] = useState(() => resolveHistoryLimit(options))
-  const [history, setHistory] = useState<HistoryState>(() => ({
-    past: [],
-    present: initial ?? createEmptyGraph(entityId, entityType),
-    future: []
-  }))
+  const [history, setHistory] = useState<HistoryState<NodeGraph>>(() =>
+    createHistory(initial ?? createEmptyGraph(entityId, entityType))
+  )
   // v0.8-3 (Candidate 3): connectError 入 hook. 成功 connect 自动清除,
   // entity 切换视为新上下文清除. 编辑器纯展示.
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -144,11 +123,7 @@ export function useNodeGraph(
     const identity = `${entityType}:${entityId}`
     if (identityRef.current === identity) return
     identityRef.current = identity
-    setHistory({
-      past: [],
-      present: createEmptyGraph(entityId, entityType),
-      future: []
-    })
+    setHistory(createHistory(createEmptyGraph(entityId, entityType)))
     // entity 切换视为新上下文, 清掉遗留 connectError
     setConnectError(null)
   }, [entityId, entityType])
@@ -158,7 +133,7 @@ export function useNodeGraph(
       // v0.5.1: 用 graph.ts 公开纯函数（buildNode + addNodeToGraph + touchGraph）
       // 同步返回新节点；setState updater 用 prev，保证同一 render 多次 add 不丢
       const node = buildNode(type, position, data)
-      setHistory(prev => commit(prev, touchGraph(addNodeToGraph(prev.present, node)), historyLimit))
+      setHistory(prev => commitHistory(prev, touchGraph(addNodeToGraph(prev.present, node)), historyLimit))
       return node
     },
     [historyLimit]
@@ -166,11 +141,11 @@ export function useNodeGraph(
 
   const removeNodeFn = useCallback((nodeId: string) => {
     // graph.ts 在节点不存在时短路返回原图 → commit 自动 no-op（不入栈）
-    setHistory(prev => commit(prev, removeNode(prev.present, nodeId), historyLimit))
+    setHistory(prev => commitHistory(prev, removeNode(prev.present, nodeId), historyLimit))
   }, [historyLimit])
 
   const moveNodeFn = useCallback((nodeId: string, position: { x: number; y: number }) => {
-    setHistory(prev => commit(prev, moveNode(prev.present, nodeId, position), historyLimit))
+    setHistory(prev => commitHistory(prev, moveNode(prev.present, nodeId, position), historyLimit))
   }, [historyLimit])
 
   const connectFn = useCallback(
@@ -188,7 +163,7 @@ export function useNodeGraph(
           if (r.ok) {
             outcome = { ok: true }
             setConnectError(null)  // 成功 connect 自动清除
-            return commit(prev, r.graph, historyLimit)
+            return commitHistory(prev, r.graph, historyLimit)
           }
           outcome = r
           setConnectError(`连线失败：${r.reason}`)  // 失败设置可读错误
@@ -201,7 +176,7 @@ export function useNodeGraph(
   )
 
   const disconnectFn = useCallback((edgeId: string) => {
-    setHistory(prev => commit(prev, disconnect(prev.present, edgeId), historyLimit))
+    setHistory(prev => commitHistory(prev, disconnect(prev.present, edgeId), historyLimit))
   }, [historyLimit])
 
   const exportJson = useCallback(() => serialize(history.present), [history.present])
@@ -213,7 +188,7 @@ export function useNodeGraph(
         if (restored === prev.present) return prev
         // deserialize 每次都会产生新引用；同内容导入仍视为 no-op，避免虚假历史。
         if (JSON.stringify(restored) === JSON.stringify(prev.present)) return prev
-        return commit(prev, restored, historyLimit)
+        return commitHistory(prev, restored, historyLimit)
       })
       return { ok: true }
     } catch (err) {
@@ -225,27 +200,11 @@ export function useNodeGraph(
   // - 自身不入栈（直接 setHistory，不走 commit）
   // - past / future 空时为 no-op（返回 prev，引用不变 → React 不重渲染）
   const undo = useCallback(() => {
-    setHistory(prev => {
-      if (prev.past.length === 0) return prev
-      const last = prev.past[prev.past.length - 1]
-      return {
-        past: prev.past.slice(0, -1),
-        present: last,
-        future: [prev.present, ...prev.future]
-      }
-    })
+    setHistory(undoHistory)
   }, [])
 
   const redo = useCallback(() => {
-    setHistory(prev => {
-      if (prev.future.length === 0) return prev
-      const next = prev.future[0]
-      return {
-        past: [...prev.past, prev.present],
-        present: next,
-        future: prev.future.slice(1)
-      }
-    })
+    setHistory(redoHistory)
   }, [])
 
   const clearConnectError = useCallback(() => {
