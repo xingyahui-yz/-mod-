@@ -7,6 +7,8 @@ interface Window {
     readDirectory: (dirPath: string) => Promise<import('./types').FileEntry[]>
     readFile: (filePath: string) => Promise<string | null>
     writeFile: (filePath: string, content: string) => Promise<boolean>
+    rename: (from: string, to: string) => Promise<boolean>
+    remove: (filePath: string) => Promise<boolean>
     stat: (filePath: string) => Promise<import('./types').FileStat | null>
     mkdir: (dirPath: string) => Promise<boolean>
     copyDirectory: (src: string, dest: string) => Promise<boolean>

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join, resolve, isAbsolute, existsSync } from 'path'
-import { readdir, stat, readFile, writeFile, mkdir, cp } from 'fs/promises'
+import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink } from 'fs/promises'
 import { spawn } from 'child_process'
 
 // 保持窗口全局引用，防止被垃圾回收
@@ -134,6 +134,35 @@ ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string)
     return true
   } catch (error) {
     console.error('Error writing file:', error)
+    return false
+  }
+})
+
+// 原子替换：临时文件写完后由 repository 调用 rename 覆盖目标文件
+ipcMain.handle('fs:rename', async (_event, from: string, to: string) => {
+  if (!isPathSafe(from) || !isPathSafe(to)) {
+    console.error('Invalid path for rename:', { from, to })
+    return false
+  }
+  try {
+    await rename(from, to)
+    return true
+  } catch (error) {
+    console.error('Error renaming file:', error)
+    return false
+  }
+})
+
+ipcMain.handle('fs:remove', async (_event, filePath: string) => {
+  if (!isPathSafe(filePath)) {
+    console.error('Invalid path for remove:', filePath)
+    return false
+  }
+  try {
+    await unlink(filePath)
+    return true
+  } catch (error) {
+    console.error('Error removing file:', error)
     return false
   }
 })

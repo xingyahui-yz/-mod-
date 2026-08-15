@@ -36,6 +36,9 @@ export interface ElectronAPI {
   readDirectory: (dirPath: string) => Promise<FileEntry[]>
   readFile: (filePath: string) => Promise<string | null>
   writeFile: (filePath: string, content: string) => Promise<boolean>
+  /** 原子替换所需的最小文件原语（旧测试/适配器可暂不提供）。 */
+  rename?: (from: string, to: string) => Promise<boolean>
+  remove?: (filePath: string) => Promise<boolean>
   mkdir: (dirPath: string) => Promise<boolean>
   copyDirectory: (src: string, dest: string) => Promise<boolean>
   getUserDataPath: () => Promise<string>
@@ -50,6 +53,8 @@ export interface FileService {
   getProjectFiles(dirPath: string): Promise<FileEntry[]>
   readFile(filePath: string): Promise<string | null>
   writeFile(filePath: string, content: string): Promise<boolean>
+  renameFile(from: string, to: string): Promise<boolean>
+  removeFile(filePath: string): Promise<boolean>
   createDirectory(dirPath: string): Promise<boolean>
   showInFolder(filePath: string): Promise<boolean>
   loadModManifest(projectPath: string): Promise<ModManifest | null>
@@ -100,6 +105,10 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
     readFile: (filePath) => api.readFile(filePath),
 
     writeFile: (filePath, content) => api.writeFile(filePath, content),
+
+    renameFile: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
+
+    removeFile: (filePath) => api.remove ? api.remove(filePath) : Promise.resolve(false),
 
     createDirectory: (dirPath) => api.mkdir(dirPath),
 
@@ -196,6 +205,8 @@ const noOpApi: ElectronAPI = {
   async readDirectory() { return [] },
   async readFile() { return null },
   async writeFile() { return false },
+  async rename() { return false },
+  async remove() { return false },
   async mkdir() { return false },
   async copyDirectory() { return false },
   async getUserDataPath() { return '' },
@@ -245,6 +256,10 @@ export const readFile = (filePath: string) =>
   getDefaultService().readFile(filePath)
 export const writeFile = (filePath: string, content: string) =>
   getDefaultService().writeFile(filePath, content)
+export const renameFile = (from: string, to: string) =>
+  getDefaultService().renameFile(from, to)
+export const removeFile = (filePath: string) =>
+  getDefaultService().removeFile(filePath)
 export const createDirectory = (dirPath: string) =>
   getDefaultService().createDirectory(dirPath)
 export const showInFolder = (filePath: string) =>

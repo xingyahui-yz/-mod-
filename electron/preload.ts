@@ -35,6 +35,13 @@ const electronAPI = {
   writeFile: (filePath: string, content: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:writeFile', filePath, content),
 
+  // CardDocument repository 的原子替换/临时文件清理
+  rename: (from: string, to: string): Promise<boolean> =>
+    ipcRenderer.invoke('fs:rename', from, to),
+
+  remove: (filePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('fs:remove', filePath),
+
   // 获取文件状态
   stat: (filePath: string): Promise<FileStat | null> =>
     ipcRenderer.invoke('fs:stat', filePath),
