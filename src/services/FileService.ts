@@ -14,6 +14,8 @@ import { generateCardCode } from '../utils/codeGenerator'
 import { toPascalCase } from '../utils/stringUtils'
 import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocumentSaveResult } from '../card/cardRepository'
 import type { CardDocument } from '../card/cardDocument'
+import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEntry, type CardTrashRestoreResult } from '../card/cardTrash'
+import { buildPreflightEntries, evaluateCardPreflight, type CardPreflightOptions, type CardPreflightReport } from '../card/cardPreflight'
 
 export interface FileEntry {
   name: string
@@ -62,6 +64,10 @@ export interface FileService {
   saveModManifest(projectPath: string, manifest: ModManifest): Promise<boolean>
   loadCardDocuments(projectPath: string): Promise<CardDocumentLoadEntry[]>
   saveCardDocument(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
+  deleteCardToTrash(projectPath: string, cardId: string): Promise<CardTrashDeleteResult>
+  listCardTrash(projectPath: string): Promise<CardTrashEntry[]>
+  restoreCardFromTrash(projectPath: string, trashId: string): Promise<CardTrashRestoreResult>
+  preflightCardProject(projectPath: string, options?: CardPreflightOptions): Promise<CardPreflightReport>
   saveCardToProject(
     projectPath: string,
     card: CardData,
@@ -89,6 +95,15 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       readFile: path => api.readFile(path),
       mkdir: path => api.mkdir(path),
       writeFile: (path, content) => api.writeFile(path, content),
+      rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
+      remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
+    },
+  })
+  const cardTrashRepository = createCardTrashRepository({
+    files: {
+      readDirectory: path => api.readDirectory(path),
+      readFile: path => api.readFile(path),
+      mkdir: path => api.mkdir(path),
       rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
       remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
     },
@@ -150,6 +165,42 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
     loadCardDocuments: (projectPath) => cardDocumentRepository.load(projectPath),
 
     saveCardDocument: (projectPath, document) => cardDocumentRepository.save(projectPath, document),
+
+    deleteCardToTrash: (projectPath, cardId) => cardTrashRepository.delete(projectPath, cardId),
+
+    listCardTrash: (projectPath) => cardTrashRepository.list(projectPath),
+
+    restoreCardFromTrash: (projectPath, trashId) => cardTrashRepository.restore(projectPath, trashId),
+
+    async preflightCardProject(projectPath, options = {}) {
+      const loaded = await cardDocumentRepository.load(projectPath)
+      const artifacts = new Map<string, string | null>()
+      const knownIds = new Set<string>()
+      for (const entry of loaded) {
+        const cardId = entry.result.status === 'editable'
+          ? entry.result.document.card.id
+          : entry.result.raw && typeof entry.result.raw === 'object' && !Array.isArray(entry.result.raw)
+            ? (() => {
+                const card = (entry.result.raw as Record<string, unknown>).card
+                return card && typeof card === 'object' && !Array.isArray(card) && typeof (card as Record<string, unknown>).id === 'string'
+                  ? (card as Record<string, unknown>).id as string
+                  : entry.fileName.replace(/\.json$/i, '')
+              })()
+            : entry.fileName.replace(/\.json$/i, '')
+        knownIds.add(cardId.toLowerCase())
+        artifacts.set(cardId, await api.readFile(`${projectPath}/${CARDS_DIR}/${cardId}.cs`))
+      }
+      const artifactEntries = await api.readDirectory(`${projectPath}/${CARDS_DIR}`).catch(() => [] as FileEntry[])
+      const entries = buildPreflightEntries(loaded, artifacts)
+      for (const artifactEntry of artifactEntries) {
+        if (artifactEntry.isDirectory || !artifactEntry.name.toLowerCase().endsWith('.cs')) continue
+        const cardId = artifactEntry.name.replace(/\.cs$/i, '')
+        if (!knownIds.has(cardId.toLowerCase())) {
+          entries.push({ cardId, loadStatus: 'untracked-artifact', artifact: await api.readFile(artifactEntry.path || `${projectPath}/${CARDS_DIR}/${artifactEntry.name}`) })
+        }
+      }
+      return evaluateCardPreflight(entries, options)
+    },
 
     async saveCardToProject(projectPath, card, namespace = 'MyMod.Cards') {
       try {
@@ -253,6 +304,18 @@ export const loadCardDocuments = (projectPath: string) =>
   getDefaultService().loadCardDocuments(projectPath)
 export const saveCardDocument = (projectPath: string, document: CardDocument) =>
   getDefaultService().saveCardDocument(projectPath, document)
+
+export const deleteCardToTrash = (projectPath: string, cardId: string) =>
+  getDefaultService().deleteCardToTrash(projectPath, cardId)
+
+export const listCardTrash = (projectPath: string) =>
+  getDefaultService().listCardTrash(projectPath)
+
+export const restoreCardFromTrash = (projectPath: string, trashId: string) =>
+  getDefaultService().restoreCardFromTrash(projectPath, trashId)
+
+export const preflightCardProject = (projectPath: string, options?: CardPreflightOptions) =>
+  getDefaultService().preflightCardProject(projectPath, options)
 export const saveCardToProject = (
   projectPath: string,
   card: CardData,

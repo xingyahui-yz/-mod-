@@ -25,9 +25,20 @@ export function GameLauncher({ gamePath, projectPath, onOpenSettings }: GameLaun
     }
 
     setLaunching(true)
-    showMessage('info', '🔄 正在启动游戏...')
+    showMessage('info', '🔎 正在执行 Card 产物预检...')
 
     try {
+      const preflight = await FileService.preflightCardProject(projectPath)
+      if (!preflight.ok) {
+        const summary = preflight.blocking
+          .map(item => `${item.cardId}: ${item.reason}`)
+          .join('；')
+        showMessage('error', `❌ 测试预检未通过：${summary}`)
+        setLaunching(false)
+        return
+      }
+
+      showMessage('info', '🔄 正在启动游戏...')
       const result = await FileService.launchGame(gamePath, projectPath)
 
       if (result.success) {
