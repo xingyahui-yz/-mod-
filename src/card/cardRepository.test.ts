@@ -25,6 +25,7 @@ class MemoryFiles implements CardDocumentFilePort {
   directories = new Set<string>()
   renameCalls: Array<{ from: string; to: string }> = []
   failRename = false
+  failWrite = false
 
   async readDirectory(path: string) {
     const prefix = `${path}/`
@@ -48,6 +49,7 @@ class MemoryFiles implements CardDocumentFilePort {
   }
 
   async writeFile(path: string, content: string) {
+    if (this.failWrite) return false
     this.files.set(path, content)
     return true
   }
@@ -105,5 +107,31 @@ describe('CardDocumentRepository', () => {
     expect(result.ok).toBe(false)
     expect(files.files.get(target)).toBe(original)
     expect([...files.files.keys()].some(path => path.includes('.tmp-'))).toBe(false)
+  })
+
+  it('已知旧 schema 写回前先备份原文，再原子保存迁移结果', async () => {
+    const files = new MemoryFiles()
+    const target = '/project/.modstudio/cards/Fireball.json'
+    const legacy = { ...makeDocument(), schemaVersion: 1 }
+    delete (legacy as Partial<CardDocument>).generation
+    const original = JSON.stringify(legacy)
+    files.files.set(target, original)
+
+    const result = await createCardDocumentRepository({ files }).migrateAndSave('/project', 'Fireball.json')
+    expect(result.status).toBe('migrated')
+    expect(files.files.get(`${target}.v1.bak`)).toBe(original)
+    expect(JSON.parse(files.files.get(target)!).schemaVersion).toBe(2)
+  })
+
+  it('备份失败时不写回原 CardDocument', async () => {
+    const files = new MemoryFiles()
+    const target = '/project/.modstudio/cards/Fireball.json'
+    const original = JSON.stringify({ ...makeDocument(), schemaVersion: 1 })
+    files.files.set(target, original)
+    files.failWrite = true
+
+    const result = await createCardDocumentRepository({ files }).migrateAndSave('/project', 'Fireball.json')
+    expect(result.status).toBe('failed')
+    expect(files.files.get(target)).toBe(original)
   })
 })

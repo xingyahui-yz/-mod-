@@ -1,10 +1,11 @@
 import {
   parseCardDocument,
-  parseCardDocumentJson,
   serializeCardDocument,
   type CardDocument,
   type CardDocumentParseResult,
 } from './cardDocument'
+import { migrateCardDocument } from './cardMigrations'
+import { parseCardDocumentJson } from './cardDocument'
 import { isValidCardId } from './cardValidation'
 import type { FileService } from '../services/FileService'
 
@@ -34,9 +35,15 @@ export type CardDocumentSaveResult =
   | { ok: true; path: string }
   | { ok: false; error: string }
 
+export type CardDocumentMigrationSaveResult =
+  | { status: 'migrated'; path: string; backupPath: string }
+  | { status: 'read-only' | 'invalid'; reason: string }
+  | { status: 'failed'; reason: string }
+
 export interface CardDocumentRepository {
   load(projectPath: string): Promise<CardDocumentLoadEntry[]>
   save(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
+  migrateAndSave(projectPath: string, fileName: string): Promise<CardDocumentMigrationSaveResult>
 }
 
 /** 将现有 FileService 接到 repository，不改变旧的 C# load/save 方法。 */
@@ -70,6 +77,19 @@ function temporaryPath(target: string, id: string): string {
 
 export function createCardDocumentRepository(deps: { files: CardDocumentFilePort }): CardDocumentRepository {
   const { files } = deps
+
+  const atomicWrite = async (target: string, content: string, id: string): Promise<boolean> => {
+    const temp = temporaryPath(target, id)
+    if (!await files.writeFile(temp, content)) {
+      await files.remove(temp).catch(() => false)
+      return false
+    }
+    if (!await files.rename(temp, target)) {
+      await files.remove(temp).catch(() => false)
+      return false
+    }
+    return true
+  }
 
   return {
     async load(projectPath) {
@@ -106,23 +126,44 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
 
       const cardsPath = joinPath(projectPath, CARDS_DIR)
       const target = joinPath(cardsPath, `${document.card.id}.json`)
-      const temp = temporaryPath(target, document.card.id)
       if (!await files.mkdir(cardsPath)) {
         return { ok: false, error: '无法创建 CardDocument 目录' }
       }
 
-      const cleanup = async () => {
-        await files.remove(temp).catch(() => false)
-      }
-      if (!await files.writeFile(temp, serializeCardDocument(document))) {
-        await cleanup()
-        return { ok: false, error: '无法写入临时 CardDocument' }
-      }
-      if (!await files.rename(temp, target)) {
-        await cleanup()
+      if (!await atomicWrite(target, serializeCardDocument(document), document.card.id)) {
         return { ok: false, error: '无法原子替换 CardDocument' }
       }
       return { ok: true, path: target }
+    },
+
+    async migrateAndSave(projectPath, fileName) {
+      const cardsPath = joinPath(projectPath, CARDS_DIR)
+      const target = joinPath(cardsPath, fileName)
+      const raw = await files.readFile(target).catch(() => null)
+      if (raw === null) return { status: 'failed', reason: '无法读取待迁移 CardDocument' }
+
+      let input: unknown
+      try {
+        input = JSON.parse(raw)
+      } catch {
+        return { status: 'invalid', reason: 'JSON 损坏，未写回原文件' }
+      }
+      const migration = migrateCardDocument(input)
+      if (migration.status === 'read-only') return { status: 'read-only', reason: migration.reason }
+      if (migration.status === 'invalid') return { status: 'invalid', reason: migration.reason }
+      if (migration.status === 'current') return { status: 'invalid', reason: 'CardDocument 已是当前 schema' }
+
+      if (!isValidCardId(migration.document.card.id) || `${migration.document.card.id}.json` !== fileName) {
+        return { status: 'invalid', reason: '迁移后的 Card ID 与文件名不一致，未写回原文件' }
+      }
+      const backupPath = `${target}.v${migration.fromVersion}.bak`
+      if (!await files.writeFile(backupPath, raw)) {
+        return { status: 'failed', reason: '无法备份原 CardDocument，未写回原文件' }
+      }
+      if (!await atomicWrite(target, serializeCardDocument(migration.document), migration.document.card.id)) {
+        return { status: 'failed', reason: '备份已创建，但无法原子写回迁移结果' }
+      }
+      return { status: 'migrated', path: target, backupPath }
     },
   }
 }
