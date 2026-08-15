@@ -216,6 +216,17 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(useCardStore.getState().selectedCardIndex).toBe(2)
   })
 
+  it('Card 属性编辑与撤销/重做共享同一历史', () => {
+    useCardStore.getState().loadCards(seedCards)
+    renderEditor()
+    fireEvent.change(screen.getByDisplayValue('火球'), { target: { value: '新火球' } })
+    expect(screen.getByDisplayValue('新火球')).toBeTruthy()
+    fireEvent.click(screen.getByTitle('撤销 Card 编辑'))
+    expect(screen.getByDisplayValue('火球')).toBeTruthy()
+    fireEvent.click(screen.getByTitle('重做 Card 编辑'))
+    expect(screen.getByDisplayValue('新火球')).toBeTruthy()
+  })
+
   it('搜索 + 类型过滤组合', () => {
     useCardStore.getState().loadCards(seedCards)
     renderEditor()

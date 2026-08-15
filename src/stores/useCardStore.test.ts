@@ -130,4 +130,22 @@ describe('useCardStore persist behavior', () => {
     expect(state.currentDocument?.generation.lastGeneratedFingerprint).toBeNull()
     expect(state.documents[0].graph).toBe(graph)
   })
+
+  it('Card 属性更新支持隔离的 undo/redo，generation 不进入历史', () => {
+    const document = {
+      schemaVersion: 2,
+      card: { id: 'HistoryCard', name: 'Before', cost: 1, type: 'Attack' as const, rarity: 'Common' as const, description: '', keywords: [] },
+      graph: createEmptyGraph('HistoryCard', 'card'),
+      generation: { lastGeneratedFingerprint: { sourceHash: 's', generatorVersion: 'g', artifactHash: 'a' } },
+    }
+    const { loadCardDocuments, updateCard, undoCard, redoCard } = useCardStore.getState()
+    loadCardDocuments([document])
+    updateCard('HistoryCard', { name: 'After' })
+    expect(useCardStore.getState().canUndoCard).toBe(true)
+    expect(useCardStore.getState().currentDocument?.generation.lastGeneratedFingerprint).toBeNull()
+    undoCard()
+    expect(useCardStore.getState().currentCard?.name).toBe('Before')
+    redoCard()
+    expect(useCardStore.getState().currentCard?.name).toBe('After')
+  })
 })

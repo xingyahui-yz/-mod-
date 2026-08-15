@@ -24,7 +24,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     updateCard,
     deleteCard,
     selectCard,
-    loadCardDocuments
+    loadCardDocuments,
+    undoCard,
+    redoCard,
+    canUndoCard,
+    canRedoCard,
   } = useCardStore()
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
@@ -164,6 +168,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         <div className="header-actions">
           {loadingCards && <span className="loading-text">加载中...</span>}
           <CardIOButtons />
+          <button onClick={undoCard} disabled={!canUndoCard} title="撤销 Card 编辑">↶ 撤销</button>
+          <button onClick={redoCard} disabled={!canRedoCard} title="重做 Card 编辑">↷ 重做</button>
           <button onClick={addCard}>+ 新建卡牌</button>
         </div>
       </div>

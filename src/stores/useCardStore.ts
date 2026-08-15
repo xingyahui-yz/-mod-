@@ -3,12 +3,14 @@ import { CardData } from '../types'
 import { isValidCardId } from '../card/cardValidation'
 import type { CardDocument } from '../card/cardDocument'
 import { createEmptyGraph } from '../node-editor/graph'
+import { commitHistory, createHistory, redoHistory, undoHistory, type HistoryState } from '../history/history'
 
 interface CardStore {
   cards: CardData[]
   documents: CardDocument[]
   currentCard: CardData | null
   currentDocument: CardDocument | null
+  cardHistory: HistoryState<CardDocument> | null
   selectedCardId: string | null
   /** 仅供列表显示映射，不作为 Card 身份。 */
   selectedCardIndex: number | null
@@ -21,6 +23,10 @@ interface CardStore {
   setCurrentCard: (card: CardData | null) => void
   loadCards: (cards: CardData[]) => boolean
   loadCardDocuments: (documents: CardDocument[]) => boolean
+  undoCard: () => void
+  redoCard: () => void
+  canUndoCard: boolean
+  canRedoCard: boolean
   clearCards: () => void
 }
 
@@ -43,12 +49,22 @@ function documentForCard(card: CardData): CardDocument {
   }
 }
 
+function historyDocument(document: CardDocument): CardDocument {
+  return {
+    ...document,
+    generation: { lastGeneratedFingerprint: null },
+  }
+}
+
 export const useCardStore = create<CardStore>()(
   (set, get) => ({
       cards: [],
       documents: [],
       currentCard: null,
       currentDocument: null,
+      cardHistory: null,
+      canUndoCard: false,
+      canRedoCard: false,
       selectedCardId: null,
       selectedCardIndex: null,
 
@@ -60,6 +76,9 @@ export const useCardStore = create<CardStore>()(
           documents: [...state.documents, document],
           currentCard: newCard,
           currentDocument: document,
+          cardHistory: createHistory(historyDocument(document)),
+          canUndoCard: false,
+          canRedoCard: false,
           selectedCardId: newCard.id,
           selectedCardIndex: state.cards.length
         }))
@@ -72,6 +91,9 @@ export const useCardStore = create<CardStore>()(
           documents: [...state.documents, document],
           currentCard: card,
           currentDocument: document,
+          cardHistory: createHistory(historyDocument(document)),
+          canUndoCard: false,
+          canRedoCard: false,
           selectedCardId: card.id,
           selectedCardIndex: state.cards.length
         }))
@@ -79,29 +101,36 @@ export const useCardStore = create<CardStore>()(
 
       updateCard: (cardId: string, card: Partial<CardData>) => {
         set(state => {
-          const newCards = [...state.cards]
-          const index = newCards.findIndex(item => item.id === cardId)
+          const index = state.cards.findIndex(item => item.id === cardId)
           if (index === -1) return state
           const { id: _ignoredId, ...mutableFields } = card
-          newCards[index] = { ...newCards[index], ...mutableFields }
+          const currentDocument = state.documents.find(document => document.card.id === cardId)
+          if (!currentDocument) return state
+          const nextDocument: CardDocument = {
+            ...currentDocument,
+            card: { ...currentDocument.card, ...mutableFields },
+            generation: { ...currentDocument.generation, lastGeneratedFingerprint: null },
+          }
+          const nextHistory = state.selectedCardId === cardId && state.cardHistory
+            ? commitHistory(state.cardHistory, nextDocument)
+            : state.cardHistory
+          const effectiveDocument = nextHistory?.present ?? nextDocument
           const newDocuments = state.documents.map(document =>
-            document.card.id === cardId
-              ? {
-                ...document,
-                card: newCards[index],
-                generation: { ...document.generation, lastGeneratedFingerprint: null },
-              }
-              : document
+            document.card.id === cardId ? effectiveDocument : document
           )
+          const newCards = newDocuments.map(document => document.card)
           return {
             cards: newCards,
             documents: newDocuments,
             currentCard: state.selectedCardId === cardId
-              ? newCards[index]
+              ? effectiveDocument.card
               : state.currentCard,
             currentDocument: state.selectedCardId === cardId
-              ? newDocuments.find(document => document.card.id === cardId) ?? state.currentDocument
-              : state.currentDocument
+              ? effectiveDocument
+              : state.currentDocument,
+            cardHistory: nextHistory,
+            canUndoCard: nextHistory ? nextHistory.past.length > 0 : false,
+            canRedoCard: nextHistory ? nextHistory.future.length > 0 : false,
           }
         })
       },
@@ -115,6 +144,9 @@ export const useCardStore = create<CardStore>()(
             documents: state.documents.filter(document => document.card.id !== cardId),
             currentCard: state.selectedCardId === cardId ? null : state.currentCard,
             currentDocument: state.selectedCardId === cardId ? null : state.currentDocument,
+            cardHistory: state.selectedCardId === cardId ? null : state.cardHistory,
+            canUndoCard: state.selectedCardId === cardId ? false : state.canUndoCard,
+            canRedoCard: state.selectedCardId === cardId ? false : state.canRedoCard,
             selectedCardId: state.selectedCardId === cardId ? null : state.selectedCardId,
             selectedCardIndex: state.selectedCardId === cardId
               ? null
@@ -131,6 +163,12 @@ export const useCardStore = create<CardStore>()(
           selectedCardIndex: index === -1 ? null : index,
           currentCard: index === -1 ? null : cards[index],
           currentDocument: index === -1 ? null : get().documents.find(document => document.card.id === cards[index].id) ?? null,
+          cardHistory: index === -1 ? null : (() => {
+            const document = get().documents.find(item => item.card.id === cards[index].id)
+            return document ? createHistory(historyDocument(document)) : null
+          })(),
+          canUndoCard: false,
+          canRedoCard: false,
         })
       },
 
@@ -139,23 +177,28 @@ export const useCardStore = create<CardStore>()(
         if (card) {
           const index = get().cards.findIndex(c => c.id === card.id)
           if (index !== -1) {
-            set({ selectedCardId: card.id, selectedCardIndex: index, currentDocument: get().documents[index] ?? null })
+            const document = get().documents.find(item => item.card.id === card.id) ?? null
+            set({ selectedCardId: card.id, selectedCardIndex: index, currentDocument: document, cardHistory: document ? createHistory(historyDocument(document)) : null, canUndoCard: false, canRedoCard: false })
           } else {
-            set({ selectedCardId: null, selectedCardIndex: null, currentDocument: null })
+            set({ selectedCardId: null, selectedCardIndex: null, currentDocument: null, cardHistory: null, canUndoCard: false, canRedoCard: false })
           }
         } else {
-          set({ selectedCardId: null, selectedCardIndex: null })
+          set({ selectedCardId: null, selectedCardIndex: null, currentDocument: null, cardHistory: null, canUndoCard: false, canRedoCard: false })
         }
       },
 
       loadCards: (cards: CardData[]) => {
         const ids = cards.map(card => card.id.toLowerCase())
         if (cards.some(card => !isValidCardId(card.id)) || new Set(ids).size !== ids.length) return false
+        const documents = cards.map(documentForCard)
         set({
           cards,
-          documents: cards.map(documentForCard),
+          documents,
           currentCard: cards.length > 0 ? cards[0] : null,
-          currentDocument: cards.length > 0 ? documentForCard(cards[0]) : null,
+          currentDocument: documents.length > 0 ? documents[0] : null,
+          cardHistory: documents.length > 0 ? createHistory(historyDocument(documents[0])) : null,
+          canUndoCard: false,
+          canRedoCard: false,
           selectedCardId: cards.length > 0 ? cards[0].id : null,
           selectedCardIndex: cards.length > 0 ? 0 : null
         })
@@ -170,11 +213,34 @@ export const useCardStore = create<CardStore>()(
           documents,
           cards,
           currentDocument: documents.length > 0 ? documents[0] : null,
+          cardHistory: documents.length > 0 ? createHistory(historyDocument(documents[0])) : null,
+          canUndoCard: false,
+          canRedoCard: false,
           currentCard: cards.length > 0 ? cards[0] : null,
           selectedCardId: cards.length > 0 ? cards[0].id : null,
           selectedCardIndex: cards.length > 0 ? 0 : null,
         })
         return true
+      },
+
+      undoCard: () => {
+        set(state => {
+          if (!state.cardHistory) return state
+          const history = undoHistory(state.cardHistory)
+          if (history === state.cardHistory) return state
+          const documents = state.documents.map(document => document.card.id === history.present.card.id ? history.present : document)
+          return { cardHistory: history, documents, cards: documents.map(document => document.card), currentDocument: history.present, currentCard: history.present.card, canUndoCard: history.past.length > 0, canRedoCard: history.future.length > 0 }
+        })
+      },
+
+      redoCard: () => {
+        set(state => {
+          if (!state.cardHistory) return state
+          const history = redoHistory(state.cardHistory)
+          if (history === state.cardHistory) return state
+          const documents = state.documents.map(document => document.card.id === history.present.card.id ? history.present : document)
+          return { cardHistory: history, documents, cards: documents.map(document => document.card), currentDocument: history.present, currentCard: history.present.card, canUndoCard: history.past.length > 0, canRedoCard: history.future.length > 0 }
+        })
       },
 
       clearCards: () => {
@@ -183,6 +249,9 @@ export const useCardStore = create<CardStore>()(
           documents: [],
           currentCard: null,
           currentDocument: null,
+          cardHistory: null,
+          canUndoCard: false,
+          canRedoCard: false,
           selectedCardId: null,
           selectedCardIndex: null
         })
