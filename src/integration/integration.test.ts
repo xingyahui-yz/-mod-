@@ -11,6 +11,7 @@ import { HTTPAdapter, PROVIDER_CONFIGS } from '../services/llm/adapters/httpAdap
 import * as FileService from '../services/FileService'
 import { createFileService } from '../services/FileService'
 import { CardData } from '../types'
+import { importLegacyCards } from '../card/legacyCardImport'
 
 const sampleCard: CardData = {
   id: 'MyCard',
@@ -235,7 +236,7 @@ describe('4. HTTP LLM 适配器', () => {
 describe('5. FileService 文件系统（依赖注入 — factory seam v0.8-2）', () => {
   // 每个测试创建独立 service — 不再 setApi 改模块全局
 
-  it('loadCardsFromProject 扫描 scripts/Cards 目录下的 .cs 文件', async () => {
+  it('显式 legacy import 才扫描 scripts/Cards 目录下的 .cs 文件', async () => {
     const mockCode = generateCardCode(sampleCard, 'MyMod.Cards')
     const mockApi: FileService.ElectronAPI = {
       openDirectory: vi.fn(),
@@ -253,13 +254,16 @@ describe('5. FileService 文件系统（依赖注入 — factory seam v0.8-2）'
       launchGame: vi.fn(),
       showInFolder: vi.fn()
     }
-    const svc = createFileService({ api: mockApi })
-
-    const cards = await svc.loadCardsFromProject('/proj')
+    const cards = await importLegacyCards('/proj', {
+      files: {
+        readDirectory: mockApi.readDirectory,
+        readFile: mockApi.readFile,
+      },
+    })
 
     expect(mockApi.readDirectory).toHaveBeenCalledWith('/proj/scripts/Cards')
     expect(cards).toHaveLength(1) // 只 Fireball.cs 通过
-    expect(cards[0].name).toBe('火球术')
+    expect(cards[0].document?.card.name).toBe('火球术')
   })
 
   it('saveCardToProject 生成 PascalCase 文件名并写入', async () => {

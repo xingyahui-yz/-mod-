@@ -18,12 +18,13 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const {
     cards,
     currentCard,
+    currentDocument,
     selectedCardId,
     addCard,
     updateCard,
     deleteCard,
     selectCard,
-    loadCards
+    loadCardDocuments
   } = useCardStore()
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
@@ -47,10 +48,18 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     if (!projectPath) return
 
     setLoadingCards(true)
+    // 项目切换先清空旧项目投影，避免加载失败时串出上一项目的 Card。
+    loadCardDocuments([])
     try {
-      const existingCards = await FileService.loadCardsFromProject(projectPath)
-      if (existingCards.length > 0) {
-        loadCards(existingCards)
+      const entries = await FileService.loadCardDocuments(projectPath)
+      const editableDocuments = entries
+        .filter(entry => entry.result.status === 'editable')
+        .map(entry => entry.result.status === 'editable' ? entry.result.document : null)
+        .filter((document): document is NonNullable<typeof document> => document !== null)
+      const invalidEntries = entries.filter(entry => entry.result.status !== 'editable')
+      loadCardDocuments(editableDocuments)
+      if (invalidEntries.length > 0) {
+        showLoadMessage('error', `${invalidEntries.length} 张 Card 无法编辑，已隔离并保留原文件`)
       }
     } catch (err) {
       console.error('Failed to load existing cards:', err)
@@ -110,7 +119,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   // 保存卡牌到项目
   const handleSave = async () => {
-    if (!projectPath || !currentCard) return
+    if (!projectPath || !currentCard || !currentDocument) return
 
     const validationErrors = validateCard(currentCard)
     if (validationErrors.length > 0) {
@@ -122,11 +131,10 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     setErrors([])
 
     try {
-      const result = await FileService.saveCardToProject(projectPath, currentCard, 'MyMod.Cards')
+      const result = await FileService.saveCardDocument(projectPath, currentDocument)
 
-      if (result.success) {
-        showSaveMessage('success', `已保存到 ${result.fileName}`)
-        setGeneratedCode(generateCardCode(currentCard, 'MyMod.Cards'))
+      if (result.ok) {
+        showSaveMessage('success', `已保存到 ${result.path}`)
       } else {
         setErrors([result.error || '保存失败，请检查目录权限'])
       }

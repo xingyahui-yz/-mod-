@@ -97,8 +97,12 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
       let entries: CardDocumentFileEntry[]
       try {
         entries = await files.readDirectory(cardsPath)
-      } catch {
-        return []
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('ENOENT') || message.includes('not found') || message.includes('不存在')) {
+          return []
+        }
+        throw error
       }
 
       const cardEntries = entries

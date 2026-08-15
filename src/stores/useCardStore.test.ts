@@ -3,12 +3,15 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { useCardStore } from './useCardStore'
+import { createEmptyGraph } from '../node-editor/graph'
 
 describe('useCardStore persist behavior', () => {
   beforeEach(() => {
     useCardStore.setState({
       cards: [],
+      documents: [],
       currentCard: null,
+      currentDocument: null,
       selectedCardId: null,
       selectedCardIndex: null
     })
@@ -108,5 +111,23 @@ describe('useCardStore persist behavior', () => {
       { id: 'fireball', name: 'B', cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] },
     ])).toBe(false)
     expect(useCardStore.getState().cards.map(card => card.id)).toEqual(['Stable'])
+  })
+
+  it('按 CardDocument 加载与更新时保留同一文档的行为图', () => {
+    const graph = createEmptyGraph('GraphCard', 'card')
+    const document = {
+      schemaVersion: 2,
+      card: { id: 'GraphCard', name: 'Graph Card', cost: 1, type: 'Attack' as const, rarity: 'Common' as const, description: '', keywords: [] },
+      graph,
+      generation: { lastGeneratedFingerprint: null },
+    }
+    const { loadCardDocuments, updateCard } = useCardStore.getState()
+    expect(loadCardDocuments([document])).toBe(true)
+    updateCard('GraphCard', { name: 'Renamed' })
+    const state = useCardStore.getState()
+    expect(state.currentDocument?.card.name).toBe('Renamed')
+    expect(state.currentDocument?.graph).toBe(graph)
+    expect(state.currentDocument?.generation.lastGeneratedFingerprint).toBeNull()
+    expect(state.documents[0].graph).toBe(graph)
   })
 })

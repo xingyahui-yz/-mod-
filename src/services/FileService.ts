@@ -10,9 +10,10 @@
  *   模块层把每个方法绑定到一个 lazy 创建的 default service.
  */
 import { CardData } from '../types'
-import { parseCardFromCode } from '../utils/cardParser'
 import { generateCardCode } from '../utils/codeGenerator'
 import { toPascalCase } from '../utils/stringUtils'
+import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocumentSaveResult } from '../card/cardRepository'
+import type { CardDocument } from '../card/cardDocument'
 
 export interface FileEntry {
   name: string
@@ -59,7 +60,8 @@ export interface FileService {
   showInFolder(filePath: string): Promise<boolean>
   loadModManifest(projectPath: string): Promise<ModManifest | null>
   saveModManifest(projectPath: string, manifest: ModManifest): Promise<boolean>
-  loadCardsFromProject(projectPath: string): Promise<CardData[]>
+  loadCardDocuments(projectPath: string): Promise<CardDocumentLoadEntry[]>
+  saveCardDocument(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
   saveCardToProject(
     projectPath: string,
     card: CardData,
@@ -77,10 +79,20 @@ const CARDS_DIR = 'scripts/Cards'
 /**
  * 工厂: 创建一个 FileService, 闭包捕获 api. 测试用:
  *   const svc = createFileService({ api: myMockApi })
- *   await svc.loadCardsFromProject('/proj')
+ *   await svc.loadCardDocuments('/proj')
  */
 export function createFileService(deps: { api: ElectronAPI }): FileService {
   const { api } = deps
+  const cardDocumentRepository = createCardDocumentRepository({
+    files: {
+      readDirectory: path => api.readDirectory(path),
+      readFile: path => api.readFile(path),
+      mkdir: path => api.mkdir(path),
+      writeFile: (path, content) => api.writeFile(path, content),
+      rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
+      remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
+    },
+  })
 
   return {
     // ============ 项目操作 ============
@@ -135,40 +147,9 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       return api.writeFile(manifestPath, JSON.stringify(manifest, null, 2))
     },
 
-    // ============ 卡牌操作 ============
-    async loadCardsFromProject(projectPath) {
-      const cardsDir = `${projectPath}/${CARDS_DIR}`
-      const cards: CardData[] = []
+    loadCardDocuments: (projectPath) => cardDocumentRepository.load(projectPath),
 
-      let entries: FileEntry[]
-      try {
-        entries = await api.readDirectory(cardsDir)
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        if (
-          message.includes('ENOENT') ||
-          message.includes('not found') ||
-          message.includes('不存在')
-        ) {
-          return []
-        }
-        throw err
-      }
-
-      for (const entry of entries) {
-        if (!entry.isDirectory && entry.name.endsWith('.cs')) {
-          const content = await api.readFile(entry.path)
-          if (content) {
-            const card = parseCardFromCode(content)
-            if (card) {
-              cards.push(card)
-            }
-          }
-        }
-      }
-
-      return cards
-    },
+    saveCardDocument: (projectPath, document) => cardDocumentRepository.save(projectPath, document),
 
     async saveCardToProject(projectPath, card, namespace = 'MyMod.Cards') {
       try {
@@ -268,8 +249,10 @@ export const loadModManifest = (projectPath: string) =>
   getDefaultService().loadModManifest(projectPath)
 export const saveModManifest = (projectPath: string, manifest: ModManifest) =>
   getDefaultService().saveModManifest(projectPath, manifest)
-export const loadCardsFromProject = (projectPath: string) =>
-  getDefaultService().loadCardsFromProject(projectPath)
+export const loadCardDocuments = (projectPath: string) =>
+  getDefaultService().loadCardDocuments(projectPath)
+export const saveCardDocument = (projectPath: string, document: CardDocument) =>
+  getDefaultService().saveCardDocument(projectPath, document)
 export const saveCardToProject = (
   projectPath: string,
   card: CardData,
