@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useCardStore } from '../stores/useCardStore'
 import { CardData } from '../types'
-import { generateCardCode } from '../utils/codeGenerator'
+import { generateCardDocumentCode } from '../card/codegen'
 import { validateCard } from '../card/cardValidation'
 import { getTypeColor } from '../utils/cardUtils'
 import { CardIOButtons } from './CardIOButtons'
@@ -156,9 +156,14 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
 
-    const code = generateCardCode(currentCard, 'MyMod.Cards')
-    setGeneratedCode(code)
-    setErrors([])
+    try {
+      if (!currentDocument) throw new Error('CardDocument 尚未加载')
+      const code = generateCardDocumentCode(currentDocument, 'MyMod.Cards')
+      setGeneratedCode(code)
+      setErrors([])
+    } catch (error) {
+      setErrors([error instanceof Error ? error.message : String(error)])
+    }
   }
 
   // 保存卡牌到项目

@@ -14,10 +14,12 @@
  */
 import Mustache from 'mustache'
 import { NodeGraph } from '../node-editor/types'
-import { EFFECT_KINDS } from '../shared/kinds'
+import { EFFECT_KINDS, TRIGGER_KINDS } from '../shared/kinds'
 import { CardData } from '../types'
 import cardTemplate from './card.mustache?raw'
 import { toPascalCase } from '../utils/stringUtils'
+import type { CardDocument } from './cardDocument'
+import { validateCardGraph } from './cardSemantics'
 
 interface TriggerMethod {
   methodName: string
@@ -114,4 +116,60 @@ export function generateCardCode(
     triggerMethods,
   }
   return Mustache.render(cardTemplate, view)
+}
+
+function collectLinearStatements(graph: NodeGraph, triggerId: string): string[] {
+  const statements: string[] = []
+  let nodeId = triggerId
+  while (true) {
+    const edge = graph.edges.find(candidate => candidate.from.nodeId === nodeId)
+    if (!edge) break
+    const node = graph.nodes.find(candidate => candidate.id === edge.to.nodeId)
+    if (!node) throw new Error(`生成失败：边指向不存在节点 ${edge.to.nodeId}`)
+    if (node.type !== 'effect') throw new Error(`生成失败：Card v0.9 只允许线性 effect 链 (${node.id})`)
+    const kind = String(node.data.kind ?? '')
+    const definition = EFFECT_KINDS[kind]
+    if (!definition) throw new Error(`生成失败：effect kind '${kind}' 未注册`)
+    const statement = definition.emitStatement(node.data)
+    if (!statement) throw new Error(`生成失败：effect kind '${kind}' 暂不支持代码生成`)
+    statements.push(statement)
+    nodeId = node.id
+  }
+  return statements
+}
+
+/** v0.9 正式入口：只接受通过 CardDocument + Card 语义校验的文档。 */
+export function generateCardDocumentCode(
+  document: CardDocument,
+  namespace: string = 'MyMod.Cards',
+): string {
+  const validation = validateCardGraph(document.graph, document.card.id)
+  if (!validation.ok) {
+    throw new Error(validation.issues.map(issue => issue.message).join('；'))
+  }
+
+  const triggerMethods: TriggerMethod[] = document.graph.nodes
+    .filter(node => node.type === 'trigger')
+    .map(node => {
+      const event = String(node.data.event)
+      const definition = TRIGGER_KINDS[event]
+      if (!definition) throw new Error(`生成失败：trigger '${event}' 未注册`)
+      return {
+        methodName: definition.methodName,
+        statements: collectLinearStatements(document.graph, node.id),
+      }
+    })
+
+  const className = toPascalCase(document.card.id).replace(/[^a-zA-Z0-9]/g, '') || 'MyCard'
+  return Mustache.render(cardTemplate, {
+    namespace,
+    className,
+    name: escapeCSharpString(document.card.name),
+    cost: document.card.cost,
+    type: document.card.type,
+    rarity: document.card.rarity,
+    description: escapeCSharpString(document.card.description),
+    keywords: document.card.keywords.filter(k => k.trim() !== '').map(k => escapeCSharpString(k)),
+    triggerMethods,
+  })
 }
