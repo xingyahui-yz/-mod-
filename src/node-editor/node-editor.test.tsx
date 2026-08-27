@@ -161,6 +161,56 @@ describe('NodeGraphCanvas 渲染', () => {
   })
 })
 
+describe('NodeGraphCanvas 拖动事务', () => {
+  const graphWithNode = () => ({
+    ...createEmptyGraph('r-1', 'relic'),
+    nodes: [{ id: 'n1', type: 'effect' as const, position: { x: 0, y: 0 }, data: {} }],
+  })
+
+  const installSvgCoordinates = (canvas: SVGSVGElement) => {
+    Object.defineProperty(canvas, 'createSVGPoint', {
+      value: () => ({
+        x: 0,
+        y: 0,
+        matrixTransform() { return { x: this.x, y: this.y } },
+      }),
+    })
+    Object.defineProperty(canvas, 'getScreenCTM', {
+      value: () => ({ inverse: () => ({}) }),
+    })
+  }
+
+  it('拖动开始、移动和结束使用同一个 nodeId', () => {
+    const onMoveStart = vi.fn()
+    const onMoveNode = vi.fn()
+    const onMoveEnd = vi.fn()
+    const { container } = render(
+      <NodeGraphCanvas graph={graphWithNode()} onMoveNode={onMoveNode} onMoveStart={onMoveStart} onMoveEnd={onMoveEnd} onRemoveNode={() => {}} />
+    )
+    const node = container.querySelector('[data-testid="node-box-n1"]')!
+    const canvas = screen.getByTestId('node-graph-canvas') as unknown as SVGSVGElement
+    installSvgCoordinates(canvas)
+    fireEvent.mouseDown(node, { clientX: 0, clientY: 0 })
+    fireEvent.mouseMove(canvas, { clientX: 25, clientY: 30 })
+    fireEvent.mouseUp(canvas)
+    expect(onMoveStart).toHaveBeenCalledWith('n1')
+    expect(onMoveNode).toHaveBeenCalledWith('n1', { x: 25, y: 30 })
+    expect(onMoveEnd).toHaveBeenCalledWith('n1')
+  })
+
+  it('Escape 取消正在进行的拖动', () => {
+    const onMoveCancel = vi.fn()
+    const { container } = render(
+      <NodeGraphCanvas graph={graphWithNode()} onMoveNode={() => {}} onMoveCancel={onMoveCancel} onRemoveNode={() => {}} />
+    )
+    const canvas = screen.getByTestId('node-graph-canvas') as unknown as SVGSVGElement
+    installSvgCoordinates(canvas)
+    fireEvent.mouseDown(container.querySelector('[data-testid="node-box-n1"]')!, { clientX: 0, clientY: 0 })
+    fireEvent.keyDown(canvas, { key: 'Escape' })
+    expect(onMoveCancel).toHaveBeenCalledWith('n1')
+  })
+})
+
 describe('NodeGraphCanvas 删除', () => {
   it('点击 × 触发 onRemoveNode', () => {
     const graph = createEmptyGraph('r-1', 'relic')

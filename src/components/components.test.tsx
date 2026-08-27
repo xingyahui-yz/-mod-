@@ -10,7 +10,8 @@ import { Modal } from './Modal'
 import { CardSearch } from './CardSearch'
 import { Toast } from './Toast'
 import { CardEditor } from './CardEditor'
-import { useCardStore } from '../stores/useCardStore'
+import { cardCatalogActions, getCardCatalogView } from '../card/cardCatalog'
+import { createEmptyGraph } from '../node-editor/graph'
 import * as FileService from '../services/FileService'
 import { installFileService } from '../services/FileService'
 import { CardData } from '../types'
@@ -18,13 +19,15 @@ import { CardData } from '../types'
 // 重置 Card store；Card 文档而非 localStorage 承担持久化
 beforeEach(() => {
   localStorage.clear()
-  useCardStore.setState({
-    cards: [],
-    currentCard: null,
-    selectedCardId: null,
-    selectedCardIndex: null
-  })
+  cardCatalogActions.clear()
 })
+
+const loadCards = (cards: CardData[]) => cardCatalogActions.loadDocuments(cards.map(card => ({
+  schemaVersion: 2,
+  card,
+  graph: createEmptyGraph(card.id, 'card'),
+  generation: { lastGeneratedFingerprint: null },
+})))
 
 describe('Modal 无障碍', () => {
   it('渲染 role="dialog" / aria-modal / aria-labelledby', () => {
@@ -175,7 +178,7 @@ describe('CardEditor 过滤 + 原始索引', () => {
   const renderEditor = () => render(<CardEditor projectPath={null} />)
 
   it('按类型过滤 + 在过滤结果中删除使用正确的原始索引', () => {
-    useCardStore.getState().loadCards(seedCards)
+    loadCards(seedCards)
     const { container } = renderEditor()
     const list = cardList(container)
 
@@ -201,7 +204,7 @@ describe('CardEditor 过滤 + 原始索引', () => {
   })
 
   it('在过滤结果中选择卡牌选中正确的原始索引', () => {
-    useCardStore.getState().loadCards(seedCards)
+    loadCards(seedCards)
     const { container } = renderEditor()
 
     // 按名称搜索「寒冰」
@@ -213,11 +216,11 @@ describe('CardEditor 过滤 + 原始索引', () => {
     // 选中「寒冰」→ 编辑面板应显示寒冰(原始索引2)
     fireEvent.click(cardList(container).getByText('寒冰'))
     expect((screen.getByDisplayValue('寒冰') as HTMLInputElement).value).toBe('寒冰')
-    expect(useCardStore.getState().selectedCardIndex).toBe(2)
+    expect(getCardCatalogView().selectedCardIndex).toBe(2)
   })
 
   it('新建 Card 先确认不可变 ID，再进入编辑器', () => {
-    useCardStore.getState().loadCards([seedCards[0]])
+    loadCards([seedCards[0]])
     renderEditor()
     fireEvent.click(screen.getByRole('button', { name: '+ 新建卡牌' }))
     expect(screen.getByTestId('card-id-dialog')).toBeTruthy()
@@ -226,11 +229,11 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(screen.getByText(/Card ID Fireball 已存在/)).toBeTruthy()
     fireEvent.change(screen.getByTestId('new-card-id-input'), { target: { value: 'NewCard' } })
     fireEvent.click(screen.getByRole('button', { name: '确认创建' }))
-    expect(useCardStore.getState().selectedCardId).toBe('NewCard')
+    expect(getCardCatalogView().selectedCardId).toBe('NewCard')
   })
 
   it('Card 属性编辑与撤销/重做共享同一历史', () => {
-    useCardStore.getState().loadCards(seedCards)
+    loadCards(seedCards)
     renderEditor()
     fireEvent.change(screen.getByDisplayValue('火球'), { target: { value: '新火球' } })
     expect(screen.getByDisplayValue('新火球')).toBeTruthy()
@@ -241,16 +244,16 @@ describe('CardEditor 过滤 + 原始索引', () => {
   })
 
   it('现有 CardEditor 原位显示 Card 行为图并写回同一 CardDocument', () => {
-    useCardStore.getState().loadCards(seedCards)
+    loadCards(seedCards)
     renderEditor()
     expect(screen.getByTestId('card-node-editor')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '+ onPlay' }))
     expect(screen.getByTestId('node-graph-canvas').querySelectorAll('[data-testid^="node-box-"]')).toHaveLength(1)
-    expect(useCardStore.getState().currentDocument?.graph.nodes[0].data.event).toBe('onPlay')
+    expect(getCardCatalogView().currentDocument?.graph.nodes[0].data.event).toBe('onPlay')
   })
 
   it('搜索 + 类型过滤组合', () => {
-    useCardStore.getState().loadCards(seedCards)
+    loadCards(seedCards)
     renderEditor()
 
     fireEvent.change(screen.getByPlaceholderText('搜索卡牌名称、描述或关键词...'), {

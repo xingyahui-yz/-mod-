@@ -2,13 +2,13 @@
  * 卡牌导入导出按钮
  */
 import { useRef } from 'react'
-import { useCardStore } from '../stores/useCardStore'
+import { cardCatalogActions, useCardCatalog } from '../card/cardCatalog'
 import { exportCards, importCards, generateExportFilename } from '../utils/cardIO'
 import { useTransientMessage } from '../hooks/useTransientMessage'
 import { Toast } from './Toast'
 
 export function CardIOButtons() {
-  const { cards, addCardWithData } = useCardStore()
+  const cards = useCardCatalog(view => view.cards)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { message, showMessage } = useTransientMessage()
 
@@ -18,7 +18,7 @@ export function CardIOButtons() {
       return
     }
 
-    const json = exportCards(cards)
+    const json = exportCards([...cards])
     const filename = generateExportFilename()
 
     const blob = new Blob([json], { type: 'application/json' })
@@ -48,7 +48,7 @@ export function CardIOButtons() {
       const result = importCards(text)
 
       if (result.success && result.cards.length > 0) {
-        result.cards.forEach(card => addCardWithData(card))
+        result.cards.forEach(card => cardCatalogActions.createCard(card))
         showMessage('success', `已导入 ${result.cards.length} 张卡牌`)
       } else {
         showMessage('error', result.error || '导入失败')

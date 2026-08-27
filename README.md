@@ -63,8 +63,9 @@ mod-studio/
 │   │   ├── RelicEditor.tsx       # UI（表单 + 节点图 + 预览）
 │   │   ├── relic.mustache        # C# 模板
 │   │   └── kinds/codegen/RelicEditor .test.*
+│   ├── card/                     # CardDocument、CardCatalog、校验、生成与持久化
 │   ├── types/index.ts            # 全局类型入口
-│   ├── stores/                   # Zustand：useCardStore / useProjectStore / useAIStore / useTaskStore
+│   ├── stores/                   # Zustand：useAIStore / useTaskStore
 │   ├── services/                 # FileService + llm/adapters/
 │   ├── utils/                    # cardUtils / cardParser / codeGenerator / stringUtils / theme
 │   ├── templates/                # card.mustache

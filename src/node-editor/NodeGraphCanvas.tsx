@@ -20,6 +20,9 @@ export interface PortRef {
 interface NodeGraphCanvasProps {
   graph: NodeGraph
   onMoveNode: (nodeId: string, position: { x: number; y: number }) => void
+  onMoveStart?: (nodeId: string) => void
+  onMoveEnd?: (nodeId: string) => void
+  onMoveCancel?: (nodeId: string) => void
   onRemoveNode: (nodeId: string) => void
   onDisconnect?: (edgeId: string) => void
   /** 从 output 端口连到 input 端口 */
@@ -38,6 +41,9 @@ const TYPE_COLORS: Record<string, string> = {
 export function NodeGraphCanvas({
   graph,
   onMoveNode,
+  onMoveStart,
+  onMoveEnd,
+  onMoveCancel,
   onRemoveNode,
   onDisconnect,
   onConnect,
@@ -68,6 +74,7 @@ export function NodeGraphCanvas({
       offsetX: svgPt.x - node.position.x,
       offsetY: svgPt.y - node.position.y
     })
+    onMoveStart?.(node.id)
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -80,6 +87,14 @@ export function NodeGraphCanvas({
   }
 
   const handleMouseUp = () => {
+    if (dragging) onMoveEnd?.(dragging.nodeId)
+    setDragging(null)
+  }
+
+  const handleKeyDown = (event: React.KeyboardEvent<SVGSVGElement>) => {
+    if (event.key !== 'Escape' || !dragging) return
+    event.preventDefault()
+    onMoveCancel?.(dragging.nodeId)
     setDragging(null)
   }
 
@@ -113,6 +128,7 @@ export function NodeGraphCanvas({
   return (
     <svg
       ref={svgRef}
+      onKeyDown={handleKeyDown}
       className="node-graph-canvas"
       width={width}
       height={height}

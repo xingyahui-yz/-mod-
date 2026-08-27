@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { useCardStore } from '../stores/useCardStore'
+import { cardCatalogActions, getCardCatalogView, useCardCatalog } from '../card/cardCatalog'
 import { CardData, createDefaultCard } from '../types'
 import { generateCardDocumentCode } from '../card/codegen'
 import { isValidCardId, validateCard } from '../card/cardValidation'
@@ -14,6 +14,7 @@ import { appendNode, connect, disconnect, moveNode, removeNode } from '../node-e
 import type { NodeGraph } from '../node-editor/types'
 import { effectsForEntity, triggersForEntity, EFFECT_KINDS } from '../shared/kinds'
 import { serializeCardDocument } from '../card/cardDocument'
+import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocumentLoadEntry } from '../card/cardRepository'
 import type { CardTrashEntry } from '../card/cardTrash'
 import type { BatchGenerationReport } from '../card/cardBatchGeneration'
@@ -23,23 +24,12 @@ interface CardEditorProps {
 }
 
 export function CardEditor({ projectPath }: CardEditorProps) {
-  const {
-    cards,
-    currentCard,
-    currentDocument,
-    selectedCardId,
-    updateCard,
-    addCardWithData,
-    deleteCard,
-    selectCard,
-    loadCardDocuments,
-    undoCard,
-    redoCard,
-    canUndoCard,
-    canRedoCard,
-    updateGraph,
-    setGeneratedDocument,
-  } = useCardStore()
+  const cards = useCardCatalog(view => view.cards)
+  const currentCard = useCardCatalog(view => view.currentCard)
+  const currentDocument = useCardCatalog(view => view.currentDocument)
+  const selectedCardId = useCardCatalog(view => view.selectedCardId)
+  const canUndo = useCardCatalog(view => view.canUndo)
+  const canRedo = useCardCatalog(view => view.canRedo)
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
   const [saving, setSaving] = useState(false)
@@ -49,7 +39,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [loadingCards, setLoadingCards] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | CardData['type']>('all')
-  const [graph, setGraph] = useState<NodeGraph | null>(null)
+  const graph: NodeGraph | null = currentDocument?.graph ?? null
   const [graphError, setGraphError] = useState<string | null>(null)
   const [autosaveState, setAutosaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -60,10 +50,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [trashEntries, setTrashEntries] = useState<CardTrashEntry[]>([])
   const [batchReport, setBatchReport] = useState<BatchGenerationReport | null>(null)
 
-  useEffect(() => {
-    setGraph(currentDocument?.graph ?? null)
-    setGraphError(null)
-  }, [currentDocument])
+  useEffect(() => setGraphError(null), [selectedCardId])
 
   // Card 属性与行为图共享同一份防抖草稿自动保存；generation 指纹随编辑
   // 失效但不会在这里生成 C#。effect cleanup 会在切换 Card/项目或卸载前
@@ -131,7 +118,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     setTrashEntries([])
     setBatchReport(null)
     // 项目切换先清空旧项目投影，避免加载失败时串出上一项目的 Card。
-    loadCardDocuments([])
+    cardCatalogActions.clear()
     try {
       const entries = await FileService.loadCardDocuments(projectPath)
       const editableDocuments = entries
@@ -140,7 +127,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         .filter((document): document is NonNullable<typeof document> => document !== null)
       const invalidEntries = entries.filter(entry => entry.result.status !== 'editable')
       setRecoveryEntries(invalidEntries)
-      loadCardDocuments(editableDocuments)
+      cardCatalogActions.loadDocuments(editableDocuments)
       setTrashEntries(await FileService.listCardTrash(projectPath))
       if (invalidEntries.length > 0) {
         showLoadMessage('error', `${invalidEntries.length} 张 Card 无法编辑，已隔离并保留原文件`)
@@ -182,7 +169,14 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       const report = await FileService.generateCardBatch(projectPath)
       setBatchReport(report)
       for (const item of report.items) {
-        if (item.status === 'generated') setGeneratedDocument(item.document)
+        if (item.status === 'generated' && item.document.generation.lastGeneratedFingerprint) {
+          const current = getCardCatalogView().documents.find(document => document.card.id === item.document.card.id)
+          if (current) cardCatalogActions.recordGeneration({
+            cardId: current.card.id,
+            baseRevision: cardDocumentRevision(item.document),
+            fingerprint: item.document.generation.lastGeneratedFingerprint,
+          })
+        }
       }
     } catch (error) {
       showSaveMessage('error', `批量生成失败：${error instanceof Error ? error.message : String(error)}`)
@@ -226,7 +220,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   // 处理卡牌属性变化
   const handleCardChange = (field: keyof CardData, value: string | number | string[]) => {
     if (selectedCardId === null) return
-    updateCard(selectedCardId, { [field]: value })
+    const mergeKey = field === 'name' || field === 'description' ? `card.${field}` : undefined
+    cardCatalogActions.patchCurrentCard({ [field]: value }, mergeKey ? { mergeKey } : undefined)
     setErrors([]) // 清除错误
   }
 
@@ -234,21 +229,20 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const handleKeywordsChange = (value: string) => {
     if (selectedCardId === null) return
     const keywords = value.split(',').map(k => k.trim()).filter(k => k)
-    updateCard(selectedCardId, { keywords })
+    cardCatalogActions.patchCurrentCard({ keywords }, { mergeKey: 'card.keywords' })
   }
 
-  const applyGraph = (next: NodeGraph) => {
+  const applyGraph = (next: NodeGraph, transactionKey?: string) => {
     if (!selectedCardId) return
-    setGraph(next)
-    updateGraph(selectedCardId, next)
+    cardCatalogActions.replaceCurrentGraph(next, transactionKey ? { transactionKey } : undefined)
   }
 
   const handleDeleteCard = async (cardId: string) => {
     if (!projectPath) {
-      deleteCard(cardId)
+      cardCatalogActions.removeCard(cardId)
       return
     }
-    const document = useCardStore.getState().documents.find(item => item.card.id === cardId)
+    const document = getCardCatalogView().documents.find(item => item.card.id === cardId)
     if (!document) return
     // 删除前先 flush 权威 CardDocument，再把文档和活动 C# 一起移入回收站。
     const saved = await FileService.saveCardDocument(projectPath, document)
@@ -261,7 +255,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       showLoadMessage('error', `删除失败：${removed.reason}`)
       return
     }
-    deleteCard(cardId)
+    cardCatalogActions.removeCard(cardId)
   }
 
   const openCreateCard = () => {
@@ -275,8 +269,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       setErrors(['Card ID 必须是以英文字母开头的 PascalCase ASCII 标识符'])
       return
     }
-    const created = addCardWithData({ ...createDefaultCard(), id: newCardId })
-    if (!created) {
+    const created = cardCatalogActions.createCard({ ...createDefaultCard(), id: newCardId })
+    if (!created.ok) {
       setErrors([`Card ID ${newCardId} 已存在，请确认一个新的 ID`])
       return
     }
@@ -354,7 +348,12 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         }
       }
       if (result.status === 'generated') {
-        setGeneratedDocument(result.document)
+        const fingerprint = result.document.generation.lastGeneratedFingerprint
+        if (fingerprint) cardCatalogActions.recordGeneration({
+          cardId: result.document.card.id,
+          baseRevision: cardDocumentRevision(currentDocument),
+          fingerprint,
+        })
         setGeneratedCode(generateCardDocumentCode(result.document, 'MyMod.Cards'))
         showSaveMessage('success', `已生成 C#：${result.path}`)
       } else if (result.status === 'blocked') {
@@ -422,8 +421,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           {autosaveState === 'saving' && <span className="loading-text">自动保存中...</span>}
           {autosaveState === 'saved' && <span className="loading-text">草稿已保存</span>}
           {autosaveState === 'error' && <span className="error-text">自动保存失败</span>}
-          <button onClick={undoCard} disabled={!canUndoCard} title="撤销 Card 编辑">↶ 撤销</button>
-          <button onClick={redoCard} disabled={!canRedoCard} title="重做 Card 编辑">↷ 重做</button>
+          <button onClick={cardCatalogActions.undo} disabled={!canUndo} title="撤销 Card 编辑">↶ 撤销</button>
+          <button onClick={cardCatalogActions.redo} disabled={!canRedo} title="重做 Card 编辑">↷ 重做</button>
           <button onClick={() => void handleBatchGenerate()} disabled={saving || !projectPath || cards.length === 0} title="逐张生成当前项目中的 Card">
             ⚡ 批量生成
           </button>
@@ -453,7 +452,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
               <div
                 key={card.id}
                 className={`card-item ${selectedCardId === card.id ? 'selected' : ''}`}
-                onClick={() => selectCard(card.id)}
+                onClick={() => cardCatalogActions.selectCard(card.id)}
               >
                 <div className="card-mini-preview">
                   <span className="mini-cost">{card.cost}</span>
@@ -542,6 +541,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                     type="text"
                     value={currentCard.name}
                     onChange={(e) => handleCardChange('name', e.target.value)}
+                    onBlur={() => cardCatalogActions.finishEdit('card.name')}
                     placeholder="例如：火球术"
                   />
                 </div>
@@ -592,6 +592,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                   <textarea
                     value={currentCard.description}
                     onChange={(e) => handleCardChange('description', e.target.value)}
+                    onBlur={() => cardCatalogActions.finishEdit('card.description')}
                     placeholder="例如：造成6点伤害。"
                     rows={3}
                   />
@@ -603,6 +604,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                     type="text"
                     value={currentCard.keywords.join(', ')}
                     onChange={(e) => handleKeywordsChange(e.target.value)}
+                    onBlur={() => cardCatalogActions.finishEdit('card.keywords')}
                     placeholder="例如：Fire, Damage"
                   />
                 </div>
@@ -634,7 +636,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                   </div>
                   <NodeGraphCanvas
                     graph={graph}
-                    onMoveNode={(nodeId, position) => applyGraph(moveNode(graph, nodeId, position))}
+                    onMoveNode={(nodeId, position) => applyGraph(moveNode(graph, nodeId, position), `node-drag:${nodeId}`)}
+                    onMoveEnd={(nodeId) => cardCatalogActions.finishEdit(`node-drag:${nodeId}`)}
+                    onMoveCancel={(nodeId) => cardCatalogActions.cancelEdit(`node-drag:${nodeId}`)}
                     onRemoveNode={(nodeId) => applyGraph(removeNode(graph, nodeId))}
                     onDisconnect={(edgeId) => applyGraph(disconnect(graph, edgeId))}
                     onConnect={handleConnect}

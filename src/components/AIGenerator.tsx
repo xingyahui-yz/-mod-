@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAIStore } from '../stores/useAIStore'
-import { useCardStore } from '../stores/useCardStore'
+import { cardCatalogActions, useCardCatalog } from '../card/cardCatalog'
 import { LLM_PROVIDERS, LLMProvider } from '../services/llm/adapters'
 import { CardData } from '../types'
 import { getTypeColor } from '../utils/cardUtils'
@@ -30,7 +30,7 @@ export function AIGenerator({ onClose }: AIGeneratorProps) {
     clearError
   } = useAIStore()
 
-  const { addCardWithData, currentDocument, applyCardProposal } = useCardStore()
+  const currentDocument = useCardCatalog(view => view.currentDocument)
 
   const [description, setDescription] = useState('')
   const [preferredType, setPreferredType] = useState<CardData['type'] | undefined>(undefined)
@@ -50,7 +50,7 @@ export function AIGenerator({ onClose }: AIGeneratorProps) {
 
   const handleApplyProposal = () => {
     if (!proposal) return
-    if (applyCardProposal(proposal)) {
+    if (cardCatalogActions.applyProposal(proposal).ok) {
       clearProposal()
     }
   }
@@ -67,7 +67,7 @@ export function AIGenerator({ onClose }: AIGeneratorProps) {
       }
       nextCard = { ...card, id: confirmed }
     }
-    if (!addCardWithData(nextCard)) return
+    if (!cardCatalogActions.createCard(nextCard).ok) return
     if (onClose) onClose()
   }
 
