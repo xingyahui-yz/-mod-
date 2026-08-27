@@ -1,32 +1,36 @@
 # Slay the Spire 2 Mod Studio
 
-一款简洁的杀戮尖塔2 (STS2, Godot 4 + C#, RitsuLib 框架) Mod 开发工具。
-> 内置**可视化节点编辑器** + **Relic 端到端编辑** + **多模型 AI 辅助生成** + **一键游戏测试**
+一款面向《杀戮尖塔 2》（STS2，Godot 4 + C# + RitsuLib）的桌面 Mod 开发工具。
+
+> 当前主线已完成 **Card 端到端编辑与生成安全闭环**，并提供可视化节点编辑器、多模型 AI 提案和一键游戏测试。v0.10 将继续完善项目级 Card AI 多轮对话。
 
 ## ✨ 功能特性
 
 ### 编辑能力
 
-- 🃏 **卡牌编辑器** — 表单填写，实时预览，自动生成 C# 代码
+- 🃏 **Card 端到端编辑器** — 基础属性与行为图使用同一份 Card 文档；草稿自动保存，C# 由用户显式生成
+- ↩️ **逐 Card 撤销/重做** — 每张 Card 独立历史；连续文本输入与节点拖动按编辑事务合并
+- 🛡️ **生成安全** — schema 迁移、只读隔离、语义校验、生成指纹、外部修改保护、批量生成报告与测试预检
 - 🔮 **Relic（遗物）编辑器** — v0.4 端到端：表单 + 可视化节点图 + C# 模板代码生成
 - 🧩 **可视化节点编辑器** — SVG 画布 + 贝塞尔边 + 端口 click-to-connect；纯函数数据层（`buildNode` / `addNodeToGraph` / `touchGraph` / `getPortXY`）
 
 ### 架构亮点
 
-- **Relic 模块化**（v0.5.2）— `src/relic/` 单模块，`kinds.ts` 作**单一真相源**（trigger/effect 全 registry），codegen 与 RelicEditor 都从它读
-- **8 类实体通用语言**（[CONTEXT.md](./CONTEXT.md) E1-E8）+ 4 个 ADR（自研节点编辑器 / AI JSON Schema / 本地项目结构 / 多 mod 模式）
-- **多分支工作流**（v0.5.2 起）— `feature/<name>` 分支 → 中间多次 push → `git merge --no-ff` main
+- **CardCatalog 深模块** — `CardDocument` 是 Card 内存状态的唯一权威；列表、当前 Card、索引及历史能力均由 selector 派生
+- **Card 生命周期分层** — 文档仓库、回收站、生成、产物安全和测试预检保持独立领域边界
+- **Relic 模块化** — `src/relic/` 内的 kind registry 是 trigger/effect 的单一真相源
+- **8 类实体通用语言** — 领域词汇和当前进度见 [CONTEXT.md](./CONTEXT.md)，架构决策见 7 份 [ADR](./docs/adr/)
 
 ### 工具与体验
 
-- 🤖 **AI 智能生成** — 支持 MiniMax、通义千问、文心一言、ChatGLM 等多模型
+- 🤖 **AI Card 提案** — 支持 MiniMax、通义千问、文心一言、ChatGLM；完整候选先预览，确认后以一个可撤销事务应用
 - 📚 **新手教程** — 8 步交互式教程，零基础也能上手
 - 📋 **任务系统** — 完整的任务引导，从创建到测试
 - 🚀 **一键测试** — 自动启动游戏加载你的 Mod
 - 🎨 **主题切换** — 支持暗/亮主题
 - 🛡️ **错误边界** — 友好的错误处理
-- 💾 **数据持久化** — 配置、卡牌、Relic 数据自动保存
-- ✅ **单元测试** — **240 个测试**覆盖核心逻辑（v0.5.2）
+- 💾 **本地项目源数据** — `.modstudio/cards/` 保存权威 Card 文档，`scripts/Cards/` 只保存可重新生成的 C# 产物
+- ✅ **自动化验证** — 当前完整测试套件 **367 项**，另有 TypeScript、Vite 构建与 Electron 手工 smoke gate
 
 ## 🛠️ 技术栈
 
@@ -50,22 +54,22 @@ mod-studio/
 │   │   ├── AIGenerator.tsx       # AI 生成器
 │   │   ├── GameLauncher.tsx      # 游戏启动
 │   │   ├── Modal.tsx / Toast.tsx / Tutorial.tsx / ...
-│   ├── node-editor/              # 🆕 自研可视化节点编辑器（v0.1-v0.5.1）
+│   ├── node-editor/              # 自研可视化节点编辑器
 │   │   ├── graph.ts              # 纯函数数据层（appendNode / connect / hasCycle / ...）
 │   │   ├── types.ts              # NodeGraph / Node / Edge / Port 类型
 │   │   ├── useNodeGraph.ts       # React state wrapper
 │   │   ├── NodeGraphCanvas.tsx   # SVG 画布 + 端口坐标走 getPortXY
 │   │   └── graph.test.ts / node-editor.test.tsx
-│   ├── relic/                    # 🆕 Relic 实体模块（v0.5.2 模块化）
+│   ├── relic/                    # Relic 实体模块
 │   │   ├── kinds.ts              # 单一真相源：TRIGGER_KINDS + EFFECT_KINDS + SUPPORTED_*
 │   │   ├── codegen.ts            # generateRelicCode / collectStatements 纯函数
 │   │   ├── RelicData.ts          # 类型 + 表单 schema（5 字段）
 │   │   ├── RelicEditor.tsx       # UI（表单 + 节点图 + 预览）
 │   │   ├── relic.mustache        # C# 模板
 │   │   └── kinds/codegen/RelicEditor .test.*
-│   ├── card/                     # CardDocument、CardCatalog、校验、生成与持久化
+│   ├── card/                     # CardDocument / CardCatalog / 校验 / 生成 / 仓库 / 回收站
 │   ├── types/index.ts            # 全局类型入口
-│   ├── stores/                   # Zustand：useAIStore / useTaskStore
+│   ├── stores/                   # AI、任务等 UI 状态
 │   ├── services/                 # FileService + llm/adapters/
 │   ├── utils/                    # cardUtils / cardParser / codeGenerator / stringUtils / theme
 │   ├── templates/                # card.mustache
@@ -74,15 +78,11 @@ mod-studio/
 │   ├── App.tsx                   # 主应用
 │   └── main.tsx                  # 入口
 ├── docs/
-│   ├── adr/                      # 🆕 架构决策记录
-│   │   ├── 0001-node-editor-self-built.md
-│   │   ├── 0002-ai-structured-output.md
-│   │   ├── 0003-local-project-structure.md
-│   │   └── 0004-multi-mod-mode.md
-│   ├── handoff-2026-08-03.md
-│   └── repo-analysis-2026-08-04.md
-├── CONTEXT.md                    # 🆕 领域模型 + 通用语言 + 8 类实体（E1-E8）
-├── vitest.config.ts              # jsdom 环境（⚠️ 见下方环境提示）
+│   ├── adr/                      # ADR-0001 至 ADR-0007
+│   ├── v0.9-card-node-editor-implementation-plan.md
+│   └── v0.9-release-gate.md
+├── CONTEXT.md                    # 领域模型、通用语言、架构索引与项目进度
+├── vitest.config.ts              # Vitest + jsdom
 └── package.json
 ```
 
@@ -92,28 +92,29 @@ mod-studio/
 # 安装依赖
 npm install
 
-# 开发模式（Electron + Vite，镜像走国内）
-ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run dev
+# 开发模式
+npm run dev
 
 # 构建（tsc + vite + electron-builder）
 npm run build
 
-# 运行测试（240 个）
+# 运行完整测试套件
 npm test
 
 # 监听模式运行测试
 npm run test:watch
 ```
 
-> ⚠️ **环境提示（v0.5.3 候选）**：当前 `vitest` + `jsdom` 未列入 `devDependencies`，靠 `npx vitest` 临时下载 + 父目录 node_modules 解析。新人 clone 后需在父目录装 `jsdom`，或等 v0.5.3 修复。
+首次安装 Electron 较慢时，可按所在网络环境配置 Electron 下载镜像后再运行 `npm install`。
 
 ## 📖 使用说明
 
 ### 1. 创建项目
 点击「新建项目」按钮，填写项目名称、Mod ID、作者等信息。
 
-### 2. 编辑卡牌（v0.4 端到端）
-切换到「🃏 卡牌编辑器」标签，点击「新建卡牌」开始创建。表单填写 → 自动生成 C# 代码。
+### 2. 编辑 Card
+
+切换到 Card 编辑器并创建 Card。基础属性和行为图会自动保存为项目源文档；完成语义校验后，使用“生成”显式更新 C#。撤销/重做只影响当前 Card，切换 Card 不会丢失各自历史。
 
 ### 3. 编辑 Relic（v0.4 + v0.5.x 节点图）
 切换到「🔮 Relic 编辑器」标签：
@@ -122,15 +123,18 @@ npm run test:watch
 3. 实时预览生成的 C# 代码
 4. 保存到项目
 
-### 4. AI 智能生成
-切换到「✨ AI 生成」标签，配置 API 密钥（支持 MiniMax、通义千问、文心一言、ChatGLM），输入自然语言描述，AI 会生成多个卡牌选项。
+### 4. AI Card 提案
+
+当前版本在 AI 标签中配置 provider 和 API Key，输入自然语言要求后预览完整 Card 候选；只有确认才会应用到项目，且不会自动生成 C#。
+
+v0.10 已通过 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md) 确定升级方向：使用项目级右侧对话抽屉进行多轮对话，一轮可提出零到多张 Card，并逐 Card 预览、接受、拒绝和判断过期。该能力尚未实现。
 
 ### 5. 测试游戏
 切换到「🎮 游戏测试」标签，设置游戏路径，点击启动游戏测试。
 
 ## 🤖 AI 模型配置
 
-1. 打开 AI 生成标签
+1. 打开 AI 标签
 2. 选择模型提供商
 3. 输入 API 密钥
 4. 开始生成卡牌
@@ -145,33 +149,28 @@ npm run test:watch
 
 | 版本 | 状态 | 内容 |
 |---|---|---|
-| v0.1-v0.5 | ✅ 已发布 | 数据模型 → React hook → 画布 → 边渲染 → 端口连线 |
-| v0.5.1 | ✅ 已发布 | graph 数据层去重（5 个公开纯函数 API） |
-| v0.5.2 | ✅ 已发布 | Relic 模块化（`src/relic/` + kinds registry） |
-| **v0.5.3** | 📋 候选 | vitest + jsdom 加进 `devDependencies`（新人 clone 即跑测试） |
-| **Strong #2** | 📋 候选 | `connect` 强制 DAG（调 `hasCycle`）+ `useNodeGraph.entityId` drift bug |
-| v0.6 | 📋 计划 | 撤销/重做 |
-| v0.7 | 📋 计划 | 持久化到 `.modstudio/Relics/{id}.json` + 从文件加载 |
-| v0.8 | 📋 计划 | AI JSON Schema 落地（ADR-0002）— `buildNode` 已支持 AI 路径 |
-| v0.9 | 📋 计划 | 扩展到其他 7 类实体（每类建自己的 `kinds.ts`，复用 kind registry 模式） |
+| v0.1-v0.8 | ✅ 已完成 | 节点编辑器、Relic 模块、项目文件服务、AI 结构化输出与架构加深 |
+| v0.9 | ✅ 已完成 | Card 单一文档模型、行为图、自动保存、显式生成、迁移/恢复、回收站、批量生成、测试预检与 Electron release gate |
+| CardCatalog | ✅ 已完成 | Card 文档唯一权威、逐 Card 历史、文本/拖动事务合并与 revision-safe AI/生成操作 |
+| **v0.10** | 🧭 已决策 | 项目级 Card AI 多轮对话、右侧抽屉、逐 Card 原子提案、混合摘要、版本化 JSON 历史与归档 |
+| 后续 | 📋 计划 | Relic 接入 Card 同等级项目生命周期，再扩展 Character / Potion / Event / Enemy / Buff / UI |
+| v1.0+ | 📋 计划 | Steam Workshop 发布流程 |
 
 详细架构决策见 [CONTEXT.md](./CONTEXT.md) 与 [docs/adr/](./docs/adr/)。
 
 ## 🤝 贡献
 
-v0.5.2 起使用**多分支工作流**：
+建议使用短生命周期功能分支：
 
 ```bash
-git checkout -b feature/<name>     # 从 main 创建分支
-# 开发多个 commit，每个 commit 后 git push origin feature/<name>
+git checkout -b feature/<name>
+# 小步提交，并在提交前运行测试与构建
 git checkout main
-git merge --no-ff feature/<name> -m "Merge branch 'feature/<name>' (vX.Y.Z <功能>)"
+git merge --no-ff feature/<name>
 git push origin main
 ```
 
-> ⚠️ **不要 `git add -A`** —— 可能误把无关 untracked 文件（如 `docs/` 报告）一起 commit。
-
-提交信息建议格式：`<type>(<scope>): vX.Y.Z <内容> — <细节>`，例：`refactor(relic): v0.5.2 模块化 part 1/3 — 搬位置 + 改 import`
+提交前请只暂存本次变更，并保留现有用户工作区中的无关修改。
 
 ## 📚 学习资源
 
