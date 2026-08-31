@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": { "title": "项目 AI 对话存储与归档生命周期", "locale": "zh-CN", "quality_profile": "showcase", "viewBox": [900, 820] },
+  "lanes": [
+    { "id": "main", "label": "活动对话与容量治理" },
+    { "id": "terminal", "label": "归档与恢复结果" }
+  ],
+  "states": [
+    { "id": "empty", "type": "start", "label": "尚未建立", "sublabel": "仅打开抽屉不写文件", "lane": "main", "col": 0 },
+    { "id": "active", "type": "active", "label": "活动对话文档", "sublabel": "首次发送时原子创建", "lane": "main", "col": 1 },
+    { "id": "soft", "type": "waiting", "label": "软警告", "sublabel": ">10 MB 或 >5,000 消息", "lane": "main", "col": 2 },
+    { "id": "hard", "type": "failure", "label": "硬限制", "sublabel": ">50 MB 或 >20,000 消息", "lane": "main", "col": 3 },
+    { "id": "archiveCheck", "type": "decision", "label": "归档写入并读回校验", "lane": "main", "col": 4 },
+    { "id": "quarantine", "type": "failure", "label": "对话隔离", "sublabel": "损坏或未来 schema", "lane": "terminal", "col": 0 },
+    { "id": "migrate", "type": "active", "label": "已知 schema 迁移", "sublabel": "备份后逐版本升级", "lane": "terminal", "col": 1 },
+    { "id": "archived", "type": "success", "label": "只读归档", "sublabel": "旧 pending 提案失效", "lane": "terminal", "col": 2 }
+  ],
+  "transitions": [
+    { "id": "g1", "from": "empty", "to": "active", "route": "straight" },
+    { "id": "g2", "from": "active", "to": "soft", "route": "straight" },
+    { "id": "g3", "from": "soft", "to": "hard", "route": "straight" },
+    { "id": "g5", "from": "hard", "to": "archiveCheck", "route": "straight" },
+    { "id": "g6", "from": "archiveCheck", "to": "archived", "route": "drop" },
+    { "id": "g9", "from": "active", "to": "quarantine", "route": "drop" },
+    { "id": "g10", "from": "quarantine", "to": "migrate", "route": "straight" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "硬限制与归档", "items": ["允许已发送轮次完成", "用户可主动归档；归档失败保持原活动对话", "归档校验成功后重置，等待新对话"] },
+    { "dot": "cyan", "title": "SQLite 触发", "items": ["软阈值 p95 超过 500ms", "跨归档查询、并发写入或频繁触达硬上限"] }
+  ]
+}

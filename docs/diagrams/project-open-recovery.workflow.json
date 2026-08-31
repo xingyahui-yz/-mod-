@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": { "title": "项目打开与 Card 恢复流程", "locale": "zh-CN", "quality_profile": "showcase", "viewBox": [900, 760] },
+  "lanes": [
+    { "id": "userLane", "label": "用户" },
+    { "id": "projectLane", "label": "项目生命周期" },
+    { "id": "repoLane", "label": "CardRepository" },
+    { "id": "recoveryLane", "label": "迁移与隔离", "variant": "exception" }
+  ],
+  "mainPath": ["open", "flush", "scan", "classify", "loadEditable", "catalogReady"],
+  "nodes": [
+    { "id": "open", "lane": "userLane", "col": 0, "type": "external", "label": "打开或切换项目" },
+    { "id": "flush", "lane": "projectLane", "col": 1, "type": "backend", "label": "flush 旧项目草稿", "sublabel": "运行 AI 时先完成或取消", "width": 140 },
+    { "id": "scan", "lane": "repoLane", "col": 2, "type": "database", "label": "扫描 Card 文档", "width": 105 },
+    { "id": "classify", "lane": "repoLane", "col": 3, "type": "security", "label": "逐 Card 分类" },
+    { "id": "loadEditable", "lane": "projectLane", "col": 4, "type": "backend", "label": "装载可编辑 Card", "width": 100 },
+    { "id": "catalogReady", "lane": "projectLane", "col": 5, "type": "frontend", "label": "目录就绪", "width": 88 },
+    { "id": "migrate", "lane": "recoveryLane", "col": 3, "type": "backend", "label": "已知 schema 迁移", "sublabel": "备份后逐版本升级", "width": 115 },
+    { "id": "readonly", "lane": "recoveryLane", "col": 5, "type": "security", "label": "只读隔离", "sublabel": "未来 schema / kind", "width": 88 }
+  ],
+  "edges": [
+    { "id": "p1", "from": "open", "to": "flush", "role": "main" },
+    { "id": "p2", "from": "flush", "to": "scan", "role": "main" },
+    { "id": "p3", "from": "scan", "to": "classify", "role": "main" },
+    { "id": "p4", "from": "classify", "to": "loadEditable", "role": "main" },
+    { "id": "p5", "from": "loadEditable", "to": "catalogReady", "role": "main" },
+    { "id": "p6", "from": "classify", "to": "migrate", "role": "branch", "route": "drop" },
+    { "id": "p8", "from": "classify", "to": "readonly", "role": "error", "route": "drop" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "迁移与隔离", "items": ["迁移成功后进入可编辑装载", "单张 Card 故障不阻止其余 Card", "未知数据保留原文而非丢弃"] },
+    { "dot": "cyan", "title": "正常路径", "items": ["只读取 CardDocument", "旧 C# 导入是独立的用户显式流程"] }
+  ]
+}

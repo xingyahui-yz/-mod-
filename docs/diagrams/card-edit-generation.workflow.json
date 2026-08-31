@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": { "title": "Card 编辑、保存与生成流程", "locale": "zh-CN", "quality_profile": "showcase", "viewBox": [900, 760] },
+  "lanes": [
+    { "id": "author", "label": "用户" },
+    { "id": "editor", "label": "CardEditor / CardCatalog" },
+    { "id": "storage", "label": "项目源数据与生成服务" },
+    { "id": "failure", "label": "异常与恢复", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "editPhase", "label": "编辑", "fromCol": 0, "toCol": 1 },
+    { "id": "savePhase", "label": "保存", "fromCol": 2, "toCol": 3 },
+    { "id": "generatePhase", "label": "生成", "fromCol": 4, "toCol": 5 }
+  ],
+  "mainPath": ["edit", "commit", "autosave", "requestGenerate", "validate", "writeArtifact", "markSynced"],
+  "nodes": [
+    { "id": "edit", "lane": "author", "col": 0, "type": "external", "label": "编辑 Card", "width": 80 },
+    { "id": "commit", "lane": "editor", "col": 1, "type": "backend", "label": "提交 Card 编辑事务", "sublabel": "文本 / 拖动 / 离散操作", "width": 150 },
+    { "id": "autosave", "lane": "storage", "col": 2, "type": "database", "label": "自动保存 CardDocument", "sublabel": ".modstudio/cards/<id>.json", "width": 160 },
+    { "id": "requestGenerate", "lane": "author", "col": 3, "type": "external", "label": "用户点击显式生成", "width": 130 },
+    { "id": "validate", "lane": "editor", "col": 4, "type": "security", "label": "生成语义预检", "width": 110 },
+    { "id": "writeArtifact", "lane": "storage", "col": 5, "type": "backend", "label": "原子写入 C#", "sublabel": "备份并读回校验", "width": 105 },
+    { "id": "markSynced", "lane": "editor", "col": 5, "type": "database", "label": "记录生成指纹", "sublabel": "三类哈希", "width": 100 },
+    { "id": "invalid", "lane": "failure", "col": 4, "type": "security", "label": "校验失败", "sublabel": "保留草稿和旧 C#" },
+    { "id": "writeFailed", "lane": "failure", "col": 5, "type": "security", "label": "写入或读回失败", "sublabel": "Card 保持未同步" }
+  ],
+  "edges": [
+    { "id": "w1", "from": "edit", "to": "commit", "role": "main", "label": "形成一步历史" },
+    { "id": "w2", "from": "commit", "to": "autosave", "role": "main", "label": "结构安全草稿", "route": "drop" },
+    { "id": "w3", "from": "autosave", "to": "requestGenerate", "role": "main" },
+    { "id": "w4", "from": "requestGenerate", "to": "validate", "role": "main", "label": "先 flush 草稿", "route": "drop" },
+    { "id": "w5", "from": "validate", "to": "writeArtifact", "role": "main" },
+    { "id": "w6", "from": "writeArtifact", "to": "markSynced", "role": "main", "label": "读回一致" },
+    { "id": "w7", "from": "validate", "to": "invalid", "role": "error", "route": "drop" },
+    { "id": "w8", "from": "writeArtifact", "to": "writeFailed", "role": "error", "label": "I/O 或备份失败", "route": "drop" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "数据安全", "items": ["草稿保存失败不回滚内存编辑", "生成失败不覆盖上一次有效 C#", "定位或修复问题后由用户手动重试"] },
+    { "dot": "violet", "title": "历史语义", "items": ["保存与生成不进入 undo/redo", "普通编辑、undo、redo 都使生成指纹失效"] }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": { "title": "项目级 AI 对话单轮时序", "locale": "zh-CN", "quality_profile": "showcase", "column_fit": "spread", "viewBox": [1320, 900] },
+  "participants": [
+    { "id": "author", "type": "external", "label": "用户" },
+    { "id": "drawer", "type": "frontend", "label": "对话抽屉" },
+    { "id": "controller", "type": "backend", "label": "ProjectConversation" },
+    { "id": "catalog", "type": "backend", "label": "CardCatalog" },
+    { "id": "validator", "type": "security", "label": "响应校验器" },
+    { "id": "repository", "type": "database", "label": "ConversationRepository" },
+    { "id": "provider", "type": "cloud", "label": "LLM Provider" }
+  ],
+  "segments": [
+    { "from": 160, "to": 360, "label": "准备与提交" },
+    { "from": 361, "to": 610, "label": "模型执行" },
+    { "from": 611, "to": 810, "label": "原子完成" }
+  ],
+  "messages": [
+    { "id": "s1", "from": "author", "to": "drawer", "y": 190, "label": "输入消息并显式附加 Card" },
+    { "id": "s2", "from": "drawer", "to": "controller", "y": 255, "label": "send(text, attachments)" },
+    { "id": "s3", "from": "controller", "to": "catalog", "y": 320, "label": "读取当前目录摘要与附件 revision" },
+    { "id": "s4", "from": "controller", "to": "repository", "y": 385, "label": "原子保存用户消息 + running attempt", "variant": "security" },
+    { "id": "s5", "from": "repository", "to": "controller", "y": 450, "label": "保存成功后才允许调用模型", "variant": "return" },
+    { "id": "s6", "from": "controller", "to": "provider", "y": 515, "label": "发送 token 预算内结构化请求" },
+    { "id": "s7", "from": "provider", "to": "controller", "y": 590, "label": "返回 v1 响应信封", "variant": "return" },
+    { "id": "s8", "from": "controller", "to": "validator", "y": 655, "label": "严格校验 text / quickReplies / proposals" },
+    { "id": "s9", "from": "validator", "to": "repository", "y": 720, "label": "原子保存完整助手响应", "variant": "security" },
+    { "id": "s10", "from": "repository", "to": "controller", "y": 775, "label": "提交成功", "variant": "return" },
+    { "id": "s11", "from": "controller", "to": "drawer", "y": 800, "label": "此时才展示正文、快捷回复与提案", "variant": "emphasis" }
+  ],
+  "activations": [
+    { "participant": "controller", "from": 250, "to": 835, "type": "backend" },
+    { "participant": "repository", "from": 375, "to": 455, "type": "database" },
+    { "participant": "provider", "from": 505, "to": 600, "type": "cloud" },
+    { "participant": "validator", "from": 645, "to": 725, "type": "security" },
+    { "participant": "repository", "from": 710, "to": 780, "type": "database" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "失败语义", "items": ["取消通过 AbortSignal 中止，迟到响应丢弃", "最终保存失败时回复不可见，也不延迟补写"] },
+    { "dot": "emerald", "title": "审计语义", "items": ["失败、超时、取消、中断均保留 attempt", "重试读取最新项目基线"] }
+  ]
+}

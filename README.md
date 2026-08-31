@@ -86,6 +86,21 @@ mod-studio/
 └── package.json
 ```
 
+## 🗺️ 项目流程图
+
+以下中文图表均为 Archify 生成的独立交互式 HTML，支持明暗主题、搜索、缩放、关系追踪和导出。GitHub 页面不能直接运行仓库内 HTML 时，请下载后用浏览器打开；同目录保留 JSON 规格与验证收据。
+
+| 图表 | 类型 | 说明 |
+|---|---|---|
+| [Mod Studio 项目架构](./docs/diagrams/project-architecture.architecture.html) | Architecture | React、CardCatalog、Card 领域服务、项目源数据、LLM 与游戏之间的模块关系 |
+| [Card 编辑、保存与生成流程](./docs/diagrams/card-edit-generation.workflow.html) | Workflow | 编辑事务、草稿自动保存、显式生成、校验、产物写入与失败保护 |
+| [项目打开与 Card 恢复流程](./docs/diagrams/project-open-recovery.workflow.html) | Workflow | 项目切换、CardDocument 扫描、迁移、只读隔离与目录装载 |
+| [项目级 AI 对话单轮时序](./docs/diagrams/ai-conversation-turn.sequence.html) | Sequence | 发送前持久化、模型调用、响应校验、最终原子提交与可见时点 |
+| [AI Card 提案生命周期](./docs/diagrams/ai-proposal-lifecycle.lifecycle.html) | Lifecycle | pending、accepted、reverted、stale、rejected 与 superseded 状态 |
+| [AI 对话存储与归档生命周期](./docs/diagrams/conversation-governance.lifecycle.html) | Lifecycle | 首次创建、软/硬阈值、原子归档、隔离与 schema 迁移 |
+
+可编辑规格位于 [`docs/diagrams/`](./docs/diagrams/)，所有规格均通过 Archify showcase 质量验证。
+
 ## 🚀 开发
 
 ```bash
@@ -152,11 +167,11 @@ v0.10 已通过 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md) 确�
 | v0.1-v0.8 | ✅ 已完成 | 节点编辑器、Relic 模块、项目文件服务、AI 结构化输出与架构加深 |
 | v0.9 | ✅ 已完成 | Card 单一文档模型、行为图、自动保存、显式生成、迁移/恢复、回收站、批量生成、测试预检与 Electron release gate |
 | CardCatalog | ✅ 已完成 | Card 文档唯一权威、逐 Card 历史、文本/拖动事务合并与 revision-safe AI/生成操作 |
-| **v0.10** | 🧭 已决策 | 项目级 Card AI 多轮对话、右侧抽屉、逐 Card 原子提案、混合摘要、版本化 JSON 历史与归档 |
+| **v0.10** | 🛠️ 待实施 | 项目级 Card AI 多轮对话；按 walking skeleton → Card 提案 → 上下文智能 → 历史治理四个切片交付 |
 | 后续 | 📋 计划 | Relic 接入 Card 同等级项目生命周期，再扩展 Character / Potion / Event / Enemy / Buff / UI |
 | v1.0+ | 📋 计划 | Steam Workshop 发布流程 |
 
-详细架构决策见 [CONTEXT.md](./CONTEXT.md) 与 [docs/adr/](./docs/adr/)。
+详细架构决策见 [CONTEXT.md](./CONTEXT.md) 与 [docs/adr/](./docs/adr/)；v0.10 的分支、提交序列和验收门槛见 [实施计划](./docs/v0.10-project-card-ai-conversation-implementation-plan.md)。
 
 ## 🤝 贡献
 
