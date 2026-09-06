@@ -44,9 +44,11 @@ export function parseConversationResponse(input: unknown): ConversationResponseP
     if (typeof reply.id !== 'string' || !reply.id.trim() || typeof reply.label !== 'string' || !reply.label.trim()) {
       return { ok: false, error: 'quick reply 的 id 和 label 不能为空' }
     }
-    if (ids.has(reply.id)) return { ok: false, error: 'quick reply ID 必须唯一' }
-    ids.add(reply.id)
-    quickReplies.push({ id: reply.id, label: reply.label })
+    const id = reply.id.trim()
+    const label = reply.label.trim()
+    if (ids.has(id)) return { ok: false, error: 'quick reply ID 必须唯一' }
+    ids.add(id)
+    quickReplies.push({ id, label })
   }
   if (!Array.isArray(value.proposals) || value.proposals.length !== 0) {
     return { ok: false, error: '当前版本尚不接受 Card 提案' }

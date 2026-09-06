@@ -5,7 +5,9 @@ interface Window {
     openDirectory: () => Promise<string | null>
     saveDirectory: () => Promise<string | null>
     readDirectory: (dirPath: string) => Promise<import('./types').FileEntry[]>
+    readDirectoryResult: (dirPath: string) => Promise<import('./services/FileService').FileReadResult<import('./types').FileEntry[]>>
     readFile: (filePath: string) => Promise<string | null>
+    readFileResult: (filePath: string) => Promise<import('./services/FileService').FileReadResult<string>>
     writeFile: (filePath: string, content: string) => Promise<boolean>
     rename: (from: string, to: string) => Promise<boolean>
     remove: (filePath: string) => Promise<boolean>

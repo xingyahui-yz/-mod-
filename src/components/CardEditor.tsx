@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { cardCatalogActions, getCardCatalogView, useCardCatalog } from '../card/cardCatalog'
 import { CardData, createDefaultCard } from '../types'
 import { generateCardDocumentCode } from '../card/codegen'
@@ -44,11 +44,35 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [autosaveState, setAutosaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const persistedSnapshot = useRef<string | null>(null)
+  const activeProjectRef = useRef<string | null>(projectPath)
+  const loadedProjectRef = useRef<string | null>(null)
+  const loadGenerationRef = useRef(0)
   const [showCreateIdDialog, setShowCreateIdDialog] = useState(false)
   const [newCardId, setNewCardId] = useState('NewCard')
   const [recoveryEntries, setRecoveryEntries] = useState<CardDocumentLoadEntry[]>([])
   const [trashEntries, setTrashEntries] = useState<CardTrashEntry[]>([])
   const [batchReport, setBatchReport] = useState<BatchGenerationReport | null>(null)
+
+  // 在 passive autosave cleanup 之前切换项目 token；cleanup 仍持有旧 root，
+  // 因此可以安全 flush A，但新 effect 绝不会把 A 文档绑定到 B。
+  useLayoutEffect(() => {
+    if (activeProjectRef.current === projectPath) return
+    activeProjectRef.current = projectPath
+    loadedProjectRef.current = null
+    persistedSnapshot.current = null
+    loadGenerationRef.current += 1
+    setSaving(false)
+    setLoadingCards(false)
+    setErrors([])
+    setGeneratedCode('')
+    setRecoveryEntries([])
+    setTrashEntries([])
+    setBatchReport(null)
+    setShowCreateIdDialog(false)
+  }, [projectPath])
+
+  const isActiveCatalogProject = (projectRoot: string) =>
+    activeProjectRef.current === projectRoot && getCardCatalogView().sourceProjectRoot === projectRoot
 
   useEffect(() => setGraphError(null), [selectedCardId])
 
@@ -60,7 +84,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       clearTimeout(autosaveTimer.current)
       autosaveTimer.current = null
     }
-    if (!projectPath || !currentDocument) {
+    if (!projectPath || !currentDocument || loadedProjectRef.current !== projectPath ||
+      getCardCatalogView().sourceProjectRoot !== projectPath) {
       persistedSnapshot.current = null
       setAutosaveState('idle')
       return
@@ -80,6 +105,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     const flush = async () => {
       setAutosaveState('saving')
       const result = await FileService.saveCardDocument(projectToSave, documentToSave)
+      if (activeProjectRef.current !== projectToSave || loadedProjectRef.current !== projectToSave) return
       if (result.ok) {
         persistedSnapshot.current = snapshot
         setAutosaveState('saved')
@@ -105,13 +131,20 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   // 当项目路径变化时，加载现有卡牌
   useEffect(() => {
     if (projectPath) {
-      loadExistingCards()
+      void loadExistingCards(projectPath)
+    } else if (loadedProjectRef.current !== null || getCardCatalogView().sourceProjectRoot !== null) {
+      loadedProjectRef.current = null
+      cardCatalogActions.clear()
     }
   }, [projectPath])
 
   // 加载项目中现有的卡牌
-  const loadExistingCards = async () => {
-    if (!projectPath) return
+  const loadExistingCards = async (projectToLoad: string | null = projectPath) => {
+    // 旧项目中的恢复/迁移等异步回调可能在切换后才抵达。任何 UI 或
+    // Catalog 变更之前先核对 root，避免它使新项目的加载失效或清空投影。
+    if (!projectToLoad || activeProjectRef.current !== projectToLoad) return
+    const loadGeneration = ++loadGenerationRef.current
+    loadedProjectRef.current = null
 
     setLoadingCards(true)
     setRecoveryEntries([])
@@ -120,53 +153,67 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     // 项目切换先清空旧项目投影，避免加载失败时串出上一项目的 Card。
     cardCatalogActions.clear()
     try {
-      const entries = await FileService.loadCardDocuments(projectPath)
+      const entries = await FileService.loadCardDocuments(projectToLoad)
+      if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return
       const editableDocuments = entries
         .filter(entry => entry.result.status === 'editable')
         .map(entry => entry.result.status === 'editable' ? entry.result.document : null)
         .filter((document): document is NonNullable<typeof document> => document !== null)
       const invalidEntries = entries.filter(entry => entry.result.status !== 'editable')
       setRecoveryEntries(invalidEntries)
-      cardCatalogActions.loadDocuments(editableDocuments)
-      setTrashEntries(await FileService.listCardTrash(projectPath))
+      cardCatalogActions.loadDocuments(editableDocuments, projectToLoad)
+      loadedProjectRef.current = projectToLoad
+      const nextTrashEntries = await FileService.listCardTrash(projectToLoad)
+      if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return
+      setTrashEntries(nextTrashEntries)
       if (invalidEntries.length > 0) {
         showLoadMessage('error', `${invalidEntries.length} 张 Card 无法编辑，已隔离并保留原文件`)
       }
     } catch (err) {
+      if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return
       console.error('Failed to load existing cards:', err)
       showLoadMessage('error', `加载卡牌失败: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      if (loadGeneration === loadGenerationRef.current && activeProjectRef.current === projectToLoad) {
+        setLoadingCards(false)
+      }
     }
-    setLoadingCards(false)
   }
 
   const handleRestoreCard = async (trashId: string) => {
     if (!projectPath) return
-    const result = await FileService.restoreCardFromTrash(projectPath, trashId)
+    const operationProject = projectPath
+    const result = await FileService.restoreCardFromTrash(operationProject, trashId)
+    if (!isActiveCatalogProject(operationProject)) return
     if (result.status !== 'restored') {
       showLoadMessage('error', `恢复失败：${result.reason}`)
       return
     }
     showLoadMessage('success', `已恢复 Card ${result.cardId}`)
-    await loadExistingCards()
+    await loadExistingCards(operationProject)
   }
 
   const handleMigrateRecovery = async (fileName: string) => {
     if (!projectPath) return
-    const result = await FileService.migrateCardDocument(projectPath, fileName)
+    const operationProject = projectPath
+    const result = await FileService.migrateCardDocument(operationProject, fileName)
+    if (!isActiveCatalogProject(operationProject)) return
     if (result.status !== 'migrated') {
       showLoadMessage('error', `迁移失败：${result.reason}`)
       return
     }
     showLoadMessage('success', `已迁移 ${fileName}，原文备份为 ${result.backupPath}`)
-    await loadExistingCards()
+    await loadExistingCards(operationProject)
   }
 
   const handleBatchGenerate = async () => {
-    if (!projectPath) return
+    if (!projectPath || !isActiveCatalogProject(projectPath)) return
+    const operationProject = projectPath
     setSaving(true)
     setBatchReport(null)
     try {
-      const report = await FileService.generateCardBatch(projectPath)
+      const report = await FileService.generateCardBatch(operationProject)
+      if (!isActiveCatalogProject(operationProject)) return
       setBatchReport(report)
       for (const item of report.items) {
         if (item.status === 'generated' && item.document.generation.lastGeneratedFingerprint) {
@@ -179,9 +226,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         }
       }
     } catch (error) {
-      showSaveMessage('error', `批量生成失败：${error instanceof Error ? error.message : String(error)}`)
+      if (isActiveCatalogProject(operationProject)) {
+        showSaveMessage('error', `批量生成失败：${error instanceof Error ? error.message : String(error)}`)
+      }
     } finally {
-      setSaving(false)
+      if (isActiveCatalogProject(operationProject)) setSaving(false)
     }
   }
 
@@ -242,15 +291,19 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       cardCatalogActions.removeCard(cardId)
       return
     }
+    const operationProject = projectPath
+    if (!isActiveCatalogProject(operationProject)) return
     const document = getCardCatalogView().documents.find(item => item.card.id === cardId)
     if (!document) return
     // 删除前先 flush 权威 CardDocument，再把文档和活动 C# 一起移入回收站。
-    const saved = await FileService.saveCardDocument(projectPath, document)
+    const saved = await FileService.saveCardDocument(operationProject, document)
+    if (!isActiveCatalogProject(operationProject)) return
     if (!saved.ok) {
       showLoadMessage('error', `删除失败：${saved.error}`)
       return
     }
-    const removed = await FileService.deleteCardToTrash(projectPath, cardId)
+    const removed = await FileService.deleteCardToTrash(operationProject, cardId)
+    if (!isActiveCatalogProject(operationProject)) return
     if (removed.status !== 'deleted') {
       showLoadMessage('error', `删除失败：${removed.reason}`)
       return
@@ -320,7 +373,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   }
 
   const handleGenerateArtifact = async () => {
-    if (!projectPath || !currentCard || !currentDocument) return
+    if (!projectPath || !currentCard || !currentDocument || !isActiveCatalogProject(projectPath)) return
+    const operationProject = projectPath
+    const documentToGenerate = currentDocument
     const validationErrors = validateCard(currentCard)
     if (validationErrors.length > 0) {
       setErrors(validationErrors)
@@ -330,28 +385,32 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     setErrors([])
     try {
       // 先保存源数据，再显式生成 C#；自动保存不会触发此路径。
-      const saved = await FileService.saveCardDocument(projectPath, currentDocument)
+      const saved = await FileService.saveCardDocument(operationProject, documentToGenerate)
+      if (!isActiveCatalogProject(operationProject)) return
       if (!saved.ok) {
         setErrors([saved.error])
         return
       }
-      let result = await FileService.generateCardArtifact(projectPath, currentDocument)
+      let result = await FileService.generateCardArtifact(operationProject, documentToGenerate)
+      if (!isActiveCatalogProject(operationProject)) return
       if (result.status === 'blocked') {
         const confirmed = typeof window !== 'undefined' && window.confirm('检测到外部 C# 修改。是否先备份外部版本并重新生成？')
         if (confirmed) {
-          const backup = await FileService.backupCardArtifact(projectPath, currentDocument.card.id)
+          const backup = await FileService.backupCardArtifact(operationProject, documentToGenerate.card.id)
+          if (!isActiveCatalogProject(operationProject)) return
           if (!backup.ok) {
             setErrors([backup.error])
             return
           }
-          result = await FileService.generateCardArtifact(projectPath, currentDocument, { allowExternalOverwrite: true })
+          result = await FileService.generateCardArtifact(operationProject, documentToGenerate, { allowExternalOverwrite: true })
+          if (!isActiveCatalogProject(operationProject)) return
         }
       }
       if (result.status === 'generated') {
         const fingerprint = result.document.generation.lastGeneratedFingerprint
         if (fingerprint) cardCatalogActions.recordGeneration({
           cardId: result.document.card.id,
-          baseRevision: cardDocumentRevision(currentDocument),
+          baseRevision: cardDocumentRevision(documentToGenerate),
           fingerprint,
         })
         setGeneratedCode(generateCardDocumentCode(result.document, 'MyMod.Cards'))
@@ -362,15 +421,19 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         setErrors([result.reason])
       }
     } catch (error) {
-      setErrors([error instanceof Error ? error.message : String(error)])
+      if (isActiveCatalogProject(operationProject)) {
+        setErrors([error instanceof Error ? error.message : String(error)])
+      }
     } finally {
-      setSaving(false)
+      if (isActiveCatalogProject(operationProject)) setSaving(false)
     }
   }
 
   // 保存卡牌到项目
   const handleSave = async () => {
-    if (!projectPath || !currentCard || !currentDocument) return
+    if (!projectPath || !currentCard || !currentDocument || !isActiveCatalogProject(projectPath)) return
+    const operationProject = projectPath
+    const documentToSave = currentDocument
 
     const validationErrors = validateCard(currentCard)
     if (validationErrors.length > 0) {
@@ -382,20 +445,22 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     setErrors([])
 
     try {
-      const result = await FileService.saveCardDocument(projectPath, currentDocument)
+      const result = await FileService.saveCardDocument(operationProject, documentToSave)
+
+      if (!isActiveCatalogProject(operationProject)) return
 
       if (result.ok) {
-        persistedSnapshot.current = serializeCardDocument(currentDocument)
+        persistedSnapshot.current = serializeCardDocument(documentToSave)
         setAutosaveState('saved')
         showSaveMessage('success', `已保存到 ${result.path}`)
       } else {
         setErrors([result.error || '保存失败，请检查目录权限'])
       }
     } catch (err) {
-      setErrors([`保存失败: ${err}`])
+      if (isActiveCatalogProject(operationProject)) setErrors([`保存失败: ${err}`])
     }
 
-    setSaving(false)
+    if (isActiveCatalogProject(operationProject)) setSaving(false)
   }
 
   // 生成描述预览

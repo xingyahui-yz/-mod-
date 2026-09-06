@@ -2,7 +2,7 @@
  * HTTP LLM适配器
  * 统一的适配器，支持多个LLM提供商
  */
-import { BaseLLMAdapter, LLMResponse, LLMConfig } from './base'
+import { BaseLLMAdapter, LLMResponse, LLMConfig, sanitizeProviderError, type LLMAdapterDiagnostics, type LLMErrorType, type LLMRequestOptions } from './base'
 
 export interface ProviderConfig {
   name: string
@@ -37,20 +37,33 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
 
 export class HTTPAdapter extends BaseLLMAdapter {
   private providerConfig: ProviderConfig
+  private readonly providerId: string
+  private lastRequestId: string | undefined
 
   constructor(provider: string, config: LLMConfig) {
     super(config)
-    this.providerConfig = PROVIDER_CONFIGS[provider] || PROVIDER_CONFIGS.minimax
+    this.providerId = PROVIDER_CONFIGS[provider] ? provider : 'minimax'
+    this.providerConfig = PROVIDER_CONFIGS[this.providerId]
   }
 
   getModelName(): string {
     return this.providerConfig.name
   }
 
-  async generate(prompt: string): Promise<LLMResponse> {
+  diagnostics(): LLMAdapterDiagnostics {
+    return {
+      provider: this.providerId,
+      model: this.providerConfig.model,
+      ...(this.lastRequestId ? { requestId: this.lastRequestId } : {}),
+    }
+  }
+
+  async generate(prompt: string, options: LLMRequestOptions = {}): Promise<LLMResponse> {
     const url = `${this.providerConfig.baseUrl}/chat/completions`
+    const abort = createAbortScope(options.signal, options.timeoutMs ?? 30000)
 
     try {
+      if (abort.signal.aborted) return abortFailure(abort.errorType())
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.config.apiKey}`,
@@ -73,18 +86,23 @@ export class HTTPAdapter extends BaseLLMAdapter {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30000) // 30秒超时
+        signal: abort.signal,
       })
+      if (abort.signal.aborted) return abortFailure(abort.errorType())
+      this.lastRequestId = readRequestId(response)
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
+        if (abort.signal.aborted) return abortFailure(abort.errorType())
         return {
           success: false,
-          error: errorData.error?.message || `API错误: ${response.status}`
+          error: sanitizeProviderError(errorData.error?.message || `API错误: ${response.status}`, [this.config.apiKey]),
+          errorType: 'provider',
         }
       }
 
       const data = await response.json()
+      if (abort.signal.aborted) return abortFailure(abort.errorType())
 
       if (data.choices && data.choices[0]?.message?.content) {
         return {
@@ -95,19 +113,65 @@ export class HTTPAdapter extends BaseLLMAdapter {
 
       return {
         success: false,
-        error: '无效的响应格式'
+        error: '无效的响应格式',
+        errorType: 'provider',
       }
     } catch (err) {
-      if (err instanceof Error && err.name === 'TimeoutError') {
-        return {
-          success: false,
-          error: '请求超时，请检查网络连接'
-        }
-      }
+      if (abort.errorType()) return abortFailure(abort.errorType())
       return {
         success: false,
-        error: `请求失败: ${err}`
+        error: sanitizeProviderError(`请求失败: ${err}`, [this.config.apiKey]),
+        errorType: 'provider',
       }
+    } finally {
+      abort.dispose()
     }
   }
+}
+
+function readRequestId(response: Response): string | undefined {
+  const requestId = response.headers?.get('x-request-id') ?? response.headers?.get('request-id')
+  return requestId ? sanitizeProviderError(requestId) : undefined
+}
+
+interface AbortScope {
+  signal: AbortSignal
+  errorType(): Exclude<LLMErrorType, 'provider'> | null
+  dispose(): void
+}
+
+function createAbortScope(externalSignal: AbortSignal | undefined, timeoutMs: number): AbortScope {
+  const controller = new AbortController()
+  let kind: Exclude<LLMErrorType, 'provider'> | null = null
+  const cancel = () => {
+    if (controller.signal.aborted) return
+    kind = 'cancelled'
+    controller.abort()
+  }
+
+  if (externalSignal?.aborted) cancel()
+  else externalSignal?.addEventListener('abort', cancel, { once: true })
+
+  const delay = Number.isFinite(timeoutMs) ? Math.max(0, timeoutMs) : 30000
+  const timeout = setTimeout(() => {
+    if (controller.signal.aborted) return
+    kind = 'timeout'
+    controller.abort()
+  }, delay)
+
+  return {
+    signal: controller.signal,
+    errorType: () => kind,
+    dispose: () => {
+      clearTimeout(timeout)
+      externalSignal?.removeEventListener('abort', cancel)
+    },
+  }
+}
+
+function abortFailure(errorType: Exclude<LLMErrorType, 'provider'> | null): LLMResponse {
+  if (errorType === 'timeout') {
+    return { success: false, error: '请求超时，请检查网络连接', errorType }
+  }
+  return { success: false, error: '请求已取消', errorType: 'cancelled' }
 }

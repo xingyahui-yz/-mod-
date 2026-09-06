@@ -4,6 +4,12 @@ import { existsSync } from 'fs'
 import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink } from 'fs/promises'
 import { spawn } from 'child_process'
 
+type FileReadErrorCode = 'invalid-path' | 'permission-denied' | 'io'
+type FileReadResult<T> =
+  | { status: 'found'; value: T }
+  | { status: 'missing' }
+  | { status: 'error'; code: FileReadErrorCode; error: string }
+
 // 保持窗口全局引用，防止被垃圾回收
 let mainWindow: BrowserWindow | null = null
 
@@ -73,6 +79,43 @@ function isDirPathSafe(dirPath: string): boolean {
   return isPathSafe(dirPath)
 }
 
+function readError(error: unknown): FileReadResult<never> {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : ''
+  if (code === 'ENOENT') return { status: 'missing' }
+  if (code === 'EACCES' || code === 'EPERM') {
+    return { status: 'error', code: 'permission-denied', error: '没有权限读取该路径' }
+  }
+  return { status: 'error', code: 'io', error: '读取文件系统失败' }
+}
+
+async function readDirectoryResult(dirPath: string): Promise<FileReadResult<Array<{ name: string; isDirectory: boolean; path: string }>>> {
+  if (!isDirPathSafe(dirPath)) return { status: 'error', code: 'invalid-path', error: '无效的目录路径' }
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true })
+    return {
+      status: 'found',
+      value: entries.map(entry => ({
+        name: entry.name,
+        isDirectory: entry.isDirectory(),
+        path: join(dirPath, entry.name),
+      })),
+    }
+  } catch (error) {
+    return readError(error)
+  }
+}
+
+async function readTextFileResult(filePath: string): Promise<FileReadResult<string>> {
+  if (!isPathSafe(filePath)) return { status: 'error', code: 'invalid-path', error: '无效的文件路径' }
+  try {
+    return { status: 'found', value: await readFile(filePath, 'utf-8') }
+  } catch (error) {
+    return readError(error)
+  }
+}
+
 // ============ IPC 处理器 ============
 
 // 打开文件夹选择对话框
@@ -95,37 +138,21 @@ ipcMain.handle('dialog:saveDirectory', async () => {
 
 // 读取目录内容
 ipcMain.handle('fs:readDirectory', async (_event, dirPath: string) => {
-  if (!isDirPathSafe(dirPath)) {
-    console.error('Invalid directory path:', dirPath)
-    return []
-  }
-  try {
-    const entries = await readdir(dirPath, { withFileTypes: true })
-    return entries.map(entry => ({
-      name: entry.name,
-      isDirectory: entry.isDirectory(),
-      path: join(dirPath, entry.name)
-    }))
-  } catch (error) {
-    console.error('Error reading directory:', error)
-    return []
-  }
+  const result = await readDirectoryResult(dirPath)
+  if (result.status === 'error') console.error('Error reading directory:', result.code)
+  return result.status === 'found' ? result.value : []
 })
+
+ipcMain.handle('fs:readDirectoryResult', async (_event, dirPath: string) => readDirectoryResult(dirPath))
 
 // 读取文件内容
 ipcMain.handle('fs:readFile', async (_event, filePath: string) => {
-  if (!isPathSafe(filePath)) {
-    console.error('Invalid file path:', filePath)
-    return null
-  }
-  try {
-    const content = await readFile(filePath, 'utf-8')
-    return content
-  } catch (error) {
-    console.error('Error reading file:', error)
-    return null
-  }
+  const result = await readTextFileResult(filePath)
+  if (result.status === 'error') console.error('Error reading file:', result.code)
+  return result.status === 'found' ? result.value : null
 })
+
+ipcMain.handle('fs:readFileResult', async (_event, filePath: string) => readTextFileResult(filePath))
 
 // 写入文件
 ipcMain.handle('fs:writeFile', async (_event, filePath: string, content: string) => {

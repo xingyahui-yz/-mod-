@@ -15,12 +15,19 @@ import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEn
 import { buildPreflightEntries, evaluateCardPreflight, type CardPreflightOptions, type CardPreflightReport } from '../card/cardPreflight'
 import { generateCardArtifact as writeCardArtifact, type CardGenerationResult } from '../card/cardGeneration'
 import { generateCardBatch as runCardBatch, type BatchGenerationReport } from '../card/cardBatchGeneration'
+import type { ConversationFilePort } from '../ai-conversation/conversationRepository'
 
 export interface FileEntry {
   name: string
   isDirectory: boolean
   path: string
 }
+
+export type FileReadErrorCode = 'invalid-path' | 'permission-denied' | 'io'
+export type FileReadResult<T> =
+  | { status: 'found'; value: T }
+  | { status: 'missing' }
+  | { status: 'error'; code: FileReadErrorCode; error: string }
 
 export interface ModManifest {
   id: string
@@ -36,7 +43,9 @@ export interface ElectronAPI {
   openDirectory: () => Promise<string | null>
   saveDirectory: () => Promise<string | null>
   readDirectory: (dirPath: string) => Promise<FileEntry[]>
+  readDirectoryResult?: (dirPath: string) => Promise<FileReadResult<FileEntry[]>>
   readFile: (filePath: string) => Promise<string | null>
+  readFileResult?: (filePath: string) => Promise<FileReadResult<string>>
   writeFile: (filePath: string, content: string) => Promise<boolean>
   /** 原子替换所需的最小文件原语（旧测试/适配器可暂不提供）。 */
   rename?: (from: string, to: string) => Promise<boolean>
@@ -52,8 +61,12 @@ export interface ElectronAPI {
 export interface FileService {
   openProjectDirectory(): Promise<string | null>
   selectSaveDirectory(): Promise<string | null>
+  /** 未排序的底层目录读取；供需要保留文件系统语义的 repository 使用。 */
+  readDirectory(dirPath: string): Promise<FileEntry[]>
+  readDirectoryResult(dirPath: string): Promise<FileReadResult<FileEntry[]>>
   getProjectFiles(dirPath: string): Promise<FileEntry[]>
   readFile(filePath: string): Promise<string | null>
+  readFileResult(filePath: string): Promise<FileReadResult<string>>
   writeFile(filePath: string, content: string): Promise<boolean>
   renameFile(from: string, to: string): Promise<boolean>
   removeFile(filePath: string): Promise<boolean>
@@ -117,8 +130,14 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       return api.saveDirectory()
     },
 
+    readDirectory: (dirPath) => api.readDirectory(dirPath),
+
+    readDirectoryResult: (dirPath) => api.readDirectoryResult
+      ? api.readDirectoryResult(dirPath)
+      : Promise.resolve({ status: 'error', code: 'io', error: 'typed readDirectory IPC 不可用' }),
+
     async getProjectFiles(dirPath) {
-      const entries = await api.readDirectory(dirPath)
+      const entries = [...await api.readDirectory(dirPath)]
       entries.sort((a, b) => {
         if (a.isDirectory && !b.isDirectory) return -1
         if (!a.isDirectory && b.isDirectory) return 1
@@ -128,6 +147,10 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
     },
 
     readFile: (filePath) => api.readFile(filePath),
+
+    readFileResult: (filePath) => api.readFileResult
+      ? api.readFileResult(filePath)
+      : Promise.resolve({ status: 'error', code: 'io', error: 'typed readFile IPC 不可用' }),
 
     writeFile: (filePath, content) => api.writeFile(filePath, content),
 
@@ -310,6 +333,38 @@ function getDefaultService(): FileService {
   return _service
 }
 
+/**
+ * 对话 repository 使用的最小文件端口。
+ *
+ * 保留 Electron/FileService 的布线细节在本模块内，避免对话领域模块依赖
+ * `renameFile` / `createDirectory` 等历史命名。readDirectory 用于发现隔离文档，
+ * 其余方法用于活动文档的原子保存与恢复。
+ */
+export function createConversationFilePort(
+  service: Pick<FileService, 'readDirectoryResult' | 'readFileResult' | 'writeFile' | 'renameFile' | 'removeFile' | 'createDirectory'> = getDefaultService(),
+): ConversationFilePort {
+  return {
+    readDirectory: async path => {
+      const result = await service.readDirectoryResult(path)
+      if (result.status === 'found') {
+        return { status: 'found', value: result.value.map(entry => entry.path || entry.name) }
+      }
+      return result.status === 'missing'
+        ? { status: 'missing' }
+        : { status: 'error', error: result.error }
+    },
+    readFile: async path => {
+      const result = await service.readFileResult(path)
+      if (result.status === 'error') return { status: 'error', error: result.error }
+      return result
+    },
+    writeFile: (path, content) => service.writeFile(path, content),
+    rename: (from, to) => service.renameFile(from, to),
+    remove: path => service.removeFile(path),
+    mkdir: path => service.createDirectory(path),
+  }
+}
+
 // ============ 兼容旧 import * as FileService ============
 // 这些 re-export 让现有调用方式 `FileService.foo()` / `FileService.bar()` 不变.
 // 它们路由到 getDefaultService() 拿当前 default service (产线单例).
@@ -319,6 +374,8 @@ export const openProjectDirectory = () =>
   getDefaultService().openProjectDirectory()
 export const selectSaveDirectory = () =>
   getDefaultService().selectSaveDirectory()
+export const readDirectory = (dirPath: string) =>
+  getDefaultService().readDirectory(dirPath)
 export const getProjectFiles = (dirPath: string) =>
   getDefaultService().getProjectFiles(dirPath)
 export const readFile = (filePath: string) =>

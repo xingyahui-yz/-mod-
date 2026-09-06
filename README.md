@@ -142,7 +142,7 @@ npm run test:watch
 
 当前版本在 AI 标签中配置 provider 和 API Key，输入自然语言要求后预览完整 Card 候选；只有确认才会应用到项目，且不会自动生成 C#。
 
-v0.10 已通过 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md) 确定升级方向：使用项目级右侧对话抽屉进行多轮对话，一轮可提出零到多张 Card，并逐 Card 预览、接受、拒绝和判断过期。该能力尚未实现。
+v0.10 的第一切片已接通项目级右侧对话抽屉、多轮历史、取消/重试、快捷回答、显式 Card 附件和版本化 JSON 恢复；旧 AI 标签暂时保留并标记为旧版。逐 Card 提案预览、接受/拒绝与过期判断将在下一切片完成，详见 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md)。
 
 ### 5. 测试游戏
 切换到「🎮 游戏测试」标签，设置游戏路径，点击启动游戏测试。
@@ -167,7 +167,7 @@ v0.10 已通过 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md) 确�
 | v0.1-v0.8 | ✅ 已完成 | 节点编辑器、Relic 模块、项目文件服务、AI 结构化输出与架构加深 |
 | v0.9 | ✅ 已完成 | Card 单一文档模型、行为图、自动保存、显式生成、迁移/恢复、回收站、批量生成、测试预检与 Electron release gate |
 | CardCatalog | ✅ 已完成 | Card 文档唯一权威、逐 Card 历史、文本/拖动事务合并与 revision-safe AI/生成操作 |
-| **v0.10** | 🛠️ 待实施 | 项目级 Card AI 多轮对话；按 walking skeleton → Card 提案 → 上下文智能 → 历史治理四个切片交付 |
+| **v0.10** | 🛠️ 实施中 | walking skeleton 已通过两遍独立门禁；继续交付 Card 提案 → 上下文智能 → 历史治理三个堆叠切片 |
 | 后续 | 📋 计划 | Relic 接入 Card 同等级项目生命周期，再扩展 Character / Potion / Event / Enemy / Buff / UI |
 | v1.0+ | 📋 计划 | Steam Workshop 发布流程 |
 

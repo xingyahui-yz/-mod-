@@ -5,7 +5,7 @@
  * 3. Toast 统一样式 (不再被 .save-message 覆盖)
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent, within, act } from '@testing-library/react'
+import { render, screen, fireEvent, within, act, waitFor } from '@testing-library/react'
 import { Modal } from './Modal'
 import { CardSearch } from './CardSearch'
 import { Toast } from './Toast'
@@ -15,6 +15,7 @@ import { createEmptyGraph } from '../node-editor/graph'
 import * as FileService from '../services/FileService'
 import { installFileService } from '../services/FileService'
 import { CardData } from '../types'
+import { serializeCardDocument, type CardDocument } from '../card/cardDocument'
 
 // 重置 Card store；Card 文档而非 localStorage 承担持久化
 beforeEach(() => {
@@ -303,4 +304,140 @@ describe('CardEditor 过滤 + 原始索引', () => {
     await new Promise(r => setTimeout(r, 50))
     expect(screen.queryByText(/加载卡牌失败/)).toBeNull()
   })
+
+  it('项目 A 的迟到加载不会覆盖已经切换到的项目 B', async () => {
+    const projectA = deferred<FileService.FileEntry[]>()
+    const alpha = cardDocument(seedCards[0])
+    const beta = cardDocument(seedCards[1])
+    const readDirectory = vi.fn((path: string): Promise<FileService.FileEntry[]> => {
+      if (path === '/A/.modstudio/cards') return projectA.promise
+      if (path === '/B/.modstudio/cards') return Promise.resolve([{ name: 'Shield.json', path: '/B/.modstudio/cards/Shield.json', isDirectory: false }])
+      return Promise.resolve([])
+    })
+    const mockApi = createCardEditorApi({
+      readDirectory,
+      readFile: vi.fn(async (path: string) => path.includes('/Shield.json')
+        ? serializeCardDocument(beta)
+        : serializeCardDocument(alpha)),
+    })
+    installFileService({ api: mockApi })
+
+    const editor = render(<CardEditor projectPath="/A" />)
+    await waitFor(() => expect(readDirectory).toHaveBeenCalledWith('/A/.modstudio/cards'))
+    editor.rerender(<CardEditor projectPath="/B" />)
+    expect((await screen.findAllByText('护盾')).length).toBeGreaterThan(0)
+
+    await act(async () => {
+      projectA.resolve([{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }])
+      await Promise.resolve()
+    })
+    expect(getCardCatalogView().sourceProjectRoot).toBe('/B')
+    expect(getCardCatalogView().currentCard?.id).toBe('Shield')
+    expect(screen.queryByText('火球')).toBeNull()
+  })
+
+  it('项目切换只把 A 的待保存 Card 写回 A，不会写入 B', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    const mockApi = createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.includes('/Fireball.json') ? serializeCardDocument(alpha) : null),
+      writeFile,
+    })
+    installFileService({ api: mockApi })
+
+    const editor = render(<CardEditor projectPath="/A" />)
+    const input = await screen.findByDisplayValue('火球')
+    fireEvent.change(input, { target: { value: '未保存火球' } })
+    editor.rerender(<CardEditor projectPath="/B" />)
+
+    await waitFor(() => expect(writeFile).toHaveBeenCalled())
+    const writtenPaths = writeFile.mock.calls.map(call => call[0])
+    expect(writtenPaths.some(path => path.startsWith('/A/.modstudio/cards/Fireball.json.tmp-'))).toBe(true)
+    expect(writtenPaths.some(path => path.startsWith('/B/'))).toBe(false)
+    expect(getCardCatalogView().sourceProjectRoot).toBe('/B')
+  })
+
+  it('项目 A 的迟到删除不会移除项目 B 中同 ID 的 Card', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const beta = cardDocument({ ...seedCards[0], name: 'B 项目火球' })
+    const delayedWrite = deferred<boolean>()
+    const writeFile = vi.fn((path: string) => path.startsWith('/A/') ? delayedWrite.promise : Promise.resolve(true))
+    const readDirectory = vi.fn(async (path: string): Promise<FileService.FileEntry[]> => {
+      if (path === '/A/.modstudio/cards') {
+        return [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+      }
+      if (path === '/B/.modstudio/cards') {
+        return [{ name: 'Fireball.json', path: '/B/.modstudio/cards/Fireball.json', isDirectory: false }]
+      }
+      return []
+    })
+    const mockApi = createCardEditorApi({
+      readDirectory,
+      readFile: vi.fn(async (path: string) => {
+        if (path === '/A/.modstudio/cards/Fireball.json') return serializeCardDocument(alpha)
+        if (path === '/B/.modstudio/cards/Fireball.json') return serializeCardDocument(beta)
+        return null
+      }),
+      writeFile,
+    })
+    installFileService({ api: mockApi })
+
+    const editor = render(<CardEditor projectPath="/A" />)
+    const aName = await screen.findByText('火球', { selector: '.card-name' })
+    fireEvent.click(within(aName.closest('.card-item') as HTMLElement).getByRole('button', { name: '×' }))
+    await waitFor(() => expect(writeFile).toHaveBeenCalled())
+
+    editor.rerender(<CardEditor projectPath="/B" />)
+    expect(await screen.findByText('B 项目火球', { selector: '.card-name' })).toBeTruthy()
+    await act(async () => {
+      delayedWrite.resolve(true)
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(getCardCatalogView().sourceProjectRoot).toBe('/B')
+      expect(getCardCatalogView().currentCard?.name).toBe('B 项目火球')
+    })
+    expect(mockApi.rename).toHaveBeenCalledWith(expect.stringMatching(/^\/A\//), '/A/.modstudio/cards/Fireball.json')
+    expect(mockApi.rename).not.toHaveBeenCalledWith(
+      '/A/.modstudio/cards/Fireball.json',
+      expect.stringContaining('/.modstudio/trash/'),
+    )
+  })
 })
+
+function cardDocument(card: CardData): CardDocument {
+  return {
+    schemaVersion: 2,
+    card,
+    graph: createEmptyGraph(card.id, 'card'),
+    generation: { lastGeneratedFingerprint: null },
+  }
+}
+
+function createCardEditorApi(overrides: Partial<FileService.ElectronAPI> = {}): FileService.ElectronAPI {
+  return {
+    openDirectory: vi.fn(),
+    saveDirectory: vi.fn(),
+    readDirectory: vi.fn(async () => []),
+    readFile: vi.fn(async () => null),
+    writeFile: vi.fn(async () => true),
+    mkdir: vi.fn(async () => true),
+    rename: vi.fn(async () => true),
+    remove: vi.fn(async () => true),
+    copyDirectory: vi.fn(),
+    getUserDataPath: vi.fn(),
+    launchGame: vi.fn(),
+    showInFolder: vi.fn(),
+    ...overrides,
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(next => { resolve = next })
+  return { promise, resolve }
+}

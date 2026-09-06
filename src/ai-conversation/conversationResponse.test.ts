@@ -7,6 +7,24 @@ describe('parseConversationResponse', () => {
     expect(result.ok).toBe(true)
   })
 
+  it('规范化快捷回答 ID 和文字，保证按钮草稿可直接发送', () => {
+    const result = parseConversationResponse({
+      schemaVersion: 1,
+      text: '  请选择  ',
+      quickReplies: [{ id: '  continue  ', label: '  继续  ' }],
+      proposals: [],
+    })
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        text: '请选择',
+        quickReplies: [{ id: 'continue', label: '继续' }],
+        proposals: [],
+      },
+    })
+  })
+
   it.each([
     { schemaVersion: 1, text: '', quickReplies: [], proposals: [] },
     { schemaVersion: 1, text: 'x', quickReplies: [], proposals: [], extra: true },
