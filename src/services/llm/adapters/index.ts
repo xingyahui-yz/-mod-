@@ -48,5 +48,6 @@ export function createAdapter(provider: LLMProvider, apiKey: string): BaseLLMAda
 }
 
 export { BaseLLMAdapter } from './base'
-export type { LLMResponse, CardGenerationResult, CardProposalGenerationResult, LLMConfig } from './base'
+export type { LLMResponse, LLMErrorType, LLMRequestOptions, LLMAdapterDiagnostics, CardGenerationResult, CardProposalGenerationResult, LLMConfig } from './base'
 export { HTTPAdapter } from './httpAdapter'
+export { createConversationModel } from './conversationModel'

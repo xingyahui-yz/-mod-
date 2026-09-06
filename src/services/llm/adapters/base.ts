@@ -7,10 +7,44 @@ import { parseCardData } from '../../../card/cardValidation'
 import type { CardDocument } from '../../../card/cardDocument'
 import { createCardProposal, type CardProposal } from '../../../card/cardAiProposal'
 
+export type LLMErrorType = 'cancelled' | 'timeout' | 'provider'
+
 export interface LLMResponse {
   success: boolean
   content?: string
   error?: string
+  /** 机器可判定的失败类别；旧调用方仍可继续展示 error。 */
+  errorType?: LLMErrorType
+}
+
+export interface LLMRequestOptions {
+  signal?: AbortSignal
+  /** 默认由 HTTP adapter 使用 30 秒。测试或特殊调用可显式覆盖。 */
+  timeoutMs?: number
+}
+
+export interface LLMAdapterDiagnostics {
+  provider: string
+  model: string
+  requestId?: string
+}
+
+const MAX_PROVIDER_ERROR_LENGTH = 480
+
+/** Provider 文本进入 Store/对话状态机之前的第一道脱敏与限长防线。 */
+export function sanitizeProviderError(error: unknown, secrets: readonly string[] = []): string {
+  let message = error instanceof Error ? error.message : String(error)
+  message = message
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, '[REDACTED]')
+  for (const secret of secrets) {
+    if (secret) message = message.split(secret).join('[REDACTED]')
+  }
+  message = message.replace(/\s+/g, ' ').trim()
+  if (!message) return 'Provider 请求失败'
+  return message.length <= MAX_PROVIDER_ERROR_LENGTH
+    ? message
+    : `${message.slice(0, MAX_PROVIDER_ERROR_LENGTH - 1)}…`
 }
 
 export interface CardGenerationResult {
@@ -18,6 +52,7 @@ export interface CardGenerationResult {
   rawResponse?: string
   success: boolean
   error?: string
+  errorType?: LLMErrorType
 }
 
 export interface CardProposalGenerationResult {
@@ -26,6 +61,7 @@ export interface CardProposalGenerationResult {
   rawResponse?: string
   violations: string[]
   error?: string
+  errorType?: LLMErrorType
 }
 
 export interface LLMConfig {
@@ -51,25 +87,31 @@ export abstract class BaseLLMAdapter {
 
   abstract getModelName(): string
 
-  abstract generate(prompt: string): Promise<LLMResponse>
+  diagnostics(): LLMAdapterDiagnostics {
+    return { provider: 'custom', model: this.modelName }
+  }
+
+  abstract generate(prompt: string, options?: LLMRequestOptions): Promise<LLMResponse>
 
   /**
    * 生成卡牌
    */
   async generateCards(
     userDescription: string,
-    preferredType?: CardData['type']
+    preferredType?: CardData['type'],
+    options?: LLMRequestOptions,
   ): Promise<CardGenerationResult> {
     const prompt = this.buildCardPrompt(userDescription, preferredType)
 
     try {
-      const response = await this.generate(prompt)
+      const response = await this.generate(prompt, options)
 
       if (!response.success || !response.content) {
         return {
           cards: [],
           success: false,
-          error: response.error || '生成失败'
+          error: sanitizeProviderError(response.error || '生成失败', [this.config.apiKey]),
+          errorType: response.errorType,
         }
       }
 
@@ -92,7 +134,8 @@ export abstract class BaseLLMAdapter {
       return {
         cards: [],
         success: false,
-        error: String(err)
+        error: sanitizeProviderError(err, [this.config.apiKey]),
+        errorType: 'provider',
       }
     }
   }
@@ -101,14 +144,15 @@ export abstract class BaseLLMAdapter {
   async generateCardProposal(
     baseDocument: CardDocument,
     userDescription: string,
+    options?: LLMRequestOptions,
   ): Promise<CardProposalGenerationResult> {
     if (!userDescription.trim()) {
       return { success: false, violations: ['请输入卡牌描述'], error: '请输入卡牌描述' }
     }
     try {
-      const response = await this.generate(this.buildCardProposalPrompt(baseDocument, userDescription))
+      const response = await this.generate(this.buildCardProposalPrompt(baseDocument, userDescription), options)
       if (!response.success || !response.content) {
-        return { success: false, violations: [], error: response.error || '生成失败' }
+        return { success: false, violations: [], error: sanitizeProviderError(response.error || '生成失败', [this.config.apiKey]), errorType: response.errorType }
       }
       let jsonText = response.content.trim()
       const fenced = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/i)
@@ -120,7 +164,7 @@ export abstract class BaseLLMAdapter {
       }
       return { success: true, rawResponse: response.content, violations: [], proposal: proposal.proposal }
     } catch (error) {
-      return { success: false, violations: [], error: error instanceof Error ? error.message : String(error) }
+      return { success: false, violations: [], error: sanitizeProviderError(error, [this.config.apiKey]), errorType: 'provider' }
     }
   }
 

@@ -2,7 +2,7 @@
  * Base LLM Adapter 测试
  */
 import { describe, it, expect } from 'vitest'
-import { BaseLLMAdapter, LLMResponse } from './base'
+import { BaseLLMAdapter, LLMResponse, sanitizeProviderError } from './base'
 import { createEmptyGraph } from '../../../node-editor/graph'
 import type { CardDocument } from '../../../card/cardDocument'
 
@@ -46,6 +46,14 @@ function proposalBase(): CardDocument {
 }
 
 describe('BaseLLMAdapter', () => {
+  it('provider 错误会脱敏并限长', () => {
+    const secret = 'sk-secret-value'
+    const sanitized = sanitizeProviderError(`Authorization: Bearer ${secret} ${'x'.repeat(700)}`, [secret])
+    expect(sanitized).not.toContain(secret)
+    expect(sanitized).toContain('[REDACTED]')
+    expect(sanitized.length).toBeLessThanOrEqual(480)
+  })
+
   describe('parseCardResponse', () => {
     it('应该解析JSON数组响应', () => {
       const adapter = new MockAdapter({ apiKey: 'test' })

@@ -15,6 +15,7 @@ interface CardEditSnapshot {
 }
 
 interface CatalogState {
+  sourceProjectRoot: string | null
   order: CardId[]
   documentsById: Map<CardId, CardDocument>
   historiesById: Map<CardId, HistoryState<CardEditSnapshot>>
@@ -22,6 +23,8 @@ interface CatalogState {
 }
 
 export interface CardCatalogView {
+  /** 当前投影所属项目；null 表示测试/尚未由项目加载器绑定。 */
+  sourceProjectRoot: string | null
   documents: readonly CardDocument[]
   cards: readonly CardData[]
   selectedCardId: CardId | null
@@ -56,6 +59,7 @@ interface OpenEdit {
 const openEdits = new Map<string, OpenEdit>()
 
 const emptyState: CatalogState = {
+  sourceProjectRoot: null,
   order: [],
   documentsById: new Map(),
   historiesById: new Map(),
@@ -98,6 +102,7 @@ function deriveView(state: CatalogState): CardCatalogView {
     edit.cardId === state.selectedCardId && !sameSnapshot(edit.base, edit.latest)
   )
   return {
+    sourceProjectRoot: state.sourceProjectRoot,
     documents,
     cards: documents.map(document => document.card),
     selectedCardId: state.selectedCardId,
@@ -188,7 +193,7 @@ function updateMerged(key: string, cardId: CardId, next: CardEditSnapshot, idleM
 }
 
 export const cardCatalogActions = {
-  loadDocuments(documents: readonly CardDocument[]): CatalogResult {
+  loadDocuments(documents: readonly CardDocument[], sourceProjectRoot: string | null = null): CatalogResult {
     const ids = new Set<string>()
     for (const document of documents) {
       if (parseCardDocument(document).status !== 'editable') return failure('invalid-document')
@@ -200,13 +205,13 @@ export const cardCatalogActions = {
     const order = documents.map(document => document.card.id)
     const documentsById = new Map(documents.map(document => [document.card.id, document]))
     const historiesById = new Map(documents.map(document => [document.card.id, createHistory(snapshot(document))]))
-    useCatalogState.setState({ order, documentsById, historiesById, selectedCardId: order[0] ?? null })
+    useCatalogState.setState({ sourceProjectRoot, order, documentsById, historiesById, selectedCardId: order[0] ?? null })
     return success()
   },
 
   clear(): void {
     cancelAllEdits()
-    useCatalogState.setState({ order: [], documentsById: new Map(), historiesById: new Map(), selectedCardId: null })
+    useCatalogState.setState({ sourceProjectRoot: null, order: [], documentsById: new Map(), historiesById: new Map(), selectedCardId: null })
   },
 
   selectCard(cardId: CardId | null): CatalogResult {

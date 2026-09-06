@@ -26,6 +26,13 @@ describe('CardCatalog', () => {
     expect(getCardCatalogView().cards.map(card => card.id)).toEqual(['Alpha', 'Beta'])
   })
 
+  it('记录当前 Card 投影所属项目', () => {
+    expect(cardCatalogActions.loadDocuments([document('Alpha')], '/mods/a').ok).toBe(true)
+    expect(getCardCatalogView().sourceProjectRoot).toBe('/mods/a')
+    cardCatalogActions.clear()
+    expect(getCardCatalogView().sourceProjectRoot).toBeNull()
+  })
+
   it('每张 Card 的 undo/redo 在切换后仍独立保留', () => {
     cardCatalogActions.loadDocuments([document('Alpha'), document('Beta')])
     cardCatalogActions.patchCurrentCard({ name: 'Alpha edited' })

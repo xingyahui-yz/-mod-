@@ -13,6 +13,12 @@ export interface FileStat {
   modifiedTime: string
 }
 
+export type FileReadErrorCode = 'invalid-path' | 'permission-denied' | 'io'
+export type FileReadResult<T> =
+  | { status: 'found'; value: T }
+  | { status: 'missing' }
+  | { status: 'error'; code: FileReadErrorCode; error: string }
+
 // 暴露给渲染进程的API
 const electronAPI = {
   // 打开文件夹选择对话框
@@ -27,9 +33,15 @@ const electronAPI = {
   readDirectory: (dirPath: string): Promise<FileEntry[]> =>
     ipcRenderer.invoke('fs:readDirectory', dirPath),
 
+  readDirectoryResult: (dirPath: string): Promise<FileReadResult<FileEntry[]>> =>
+    ipcRenderer.invoke('fs:readDirectoryResult', dirPath),
+
   // 读取文件内容
   readFile: (filePath: string): Promise<string | null> =>
     ipcRenderer.invoke('fs:readFile', filePath),
+
+  readFileResult: (filePath: string): Promise<FileReadResult<string>> =>
+    ipcRenderer.invoke('fs:readFileResult', filePath),
 
   // 写入文件
   writeFile: (filePath: string, content: string): Promise<boolean> =>

@@ -11,12 +11,25 @@ import { AIGenerator } from './components/AIGenerator'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AboutModal } from './components/AboutModal'
 import { RelicEditor } from './relic/RelicEditor'
+import { ProjectConversationProvider, usePrepareForProjectSwitch } from './ai-conversation/ProjectConversationContext'
+import { ProjectConversationDrawer } from './ai-conversation/ProjectConversationDrawer'
+import * as FileService from './services/FileService'
 
 type Tab = 'cards' | 'relics' | 'files' | 'test' | 'ai'
 
 function App() {
-  const { projectPath, modManifest, openProject } = useProjectStore()
+  const projectRoot = useProjectStore(state => state.projectRoot)
+  return (
+    <ProjectConversationProvider projectRoot={projectRoot}>
+      <AppContent />
+    </ProjectConversationProvider>
+  )
+}
+
+function AppContent() {
+  const { projectRoot, browsePath, modManifest, setProjectRoot, loadDirectory } = useProjectStore()
   const { isTaskMode, showTaskGuide } = useTaskStore()
+  const prepareForProjectSwitch = usePrepareForProjectSwitch()
 
   const [showNewProject, setShowNewProject] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('cards')
@@ -27,12 +40,20 @@ function App() {
 
   // 导航到子目录
   const navigateToDir = (dirPath: string) => {
-    useProjectStore.getState().setProjectPath(dirPath)
+    void loadDirectory(dirPath)
   }
 
   // 项目创建完成后的回调
-  const handleProjectCreated = (path: string) => {
-    useProjectStore.getState().setProjectPath(path)
+  const handleProjectCreated = async (path: string) => {
+    if (path === projectRoot || await prepareForProjectSwitch()) {
+      await setProjectRoot(path)
+    }
+  }
+
+  const handleOpenProject = async () => {
+    const path = await FileService.openProjectDirectory()
+    if (!path || path === projectRoot) return
+    if (await prepareForProjectSwitch()) await setProjectRoot(path)
   }
 
   // 教程完成
@@ -56,7 +77,7 @@ function App() {
           <button className="secondary-btn" onClick={() => setShowNewProject(true)}>
             📁 新建项目
           </button>
-          <button onClick={openProject}>
+          <button onClick={() => void handleOpenProject()}>
             📂 打开项目
           </button>
         </div>
@@ -80,7 +101,7 @@ function App() {
           className={activeTab === 'ai' ? 'active' : ''}
           onClick={() => setActiveTab('ai')}
         >
-          ✨ AI生成
+          ✨ AI生成（旧版）
         </button>
         <button
           className={activeTab === 'test' ? 'active' : ''}
@@ -97,6 +118,7 @@ function App() {
       </nav>
 
       {/* 主内容区 */}
+      <div className="workspace-shell">
       <main className="main">
         {/* 卡牌编辑器 */}
         {/*
@@ -109,8 +131,8 @@ function App() {
           style={{ display: activeTab === 'cards' ? undefined : 'none' }}
           aria-hidden={activeTab !== 'cards'}
         >
-          {projectPath ? (
-            <CardEditor projectPath={projectPath} />
+          {projectRoot ? (
+            <CardEditor projectPath={projectRoot} />
           ) : (
             <div className="no-project">
               <h2>请先打开或创建项目</h2>
@@ -119,7 +141,7 @@ function App() {
                 <button className="secondary-btn" onClick={() => setShowNewProject(true)}>
                   📁 新建项目
                 </button>
-                <button onClick={openProject}>
+                <button onClick={() => void handleOpenProject()}>
                   📂 打开项目
                 </button>
               </div>
@@ -137,6 +159,10 @@ function App() {
         {/* AI生成 */}
         {activeTab === 'ai' && (
           <div className="ai-area">
+            <div className="legacy-ai-notice" role="status">
+              <strong>旧版单次生成</strong>
+              <span>项目级多轮对话已移至右侧抽屉；此入口将在提案能力对等后移除。</span>
+            </div>
             <AIGenerator />
             <div className="ai-tips">
               <h4>💡 使用提示</h4>
@@ -155,11 +181,11 @@ function App() {
           <div className="test-area">
             <GameLauncher
               gamePath={gamePath}
-              projectPath={projectPath}
+              projectPath={projectRoot}
               onOpenSettings={() => setShowSettings(true)}
             />
 
-            {projectPath && (
+            {projectRoot && (
               <div className="project-summary">
                 <h3>📦 当前项目</h3>
                 <div className="summary-item">
@@ -187,9 +213,11 @@ function App() {
 
         {/* 文件浏览器 */}
         {activeTab === 'files' && (
-          <FileBrowser projectPath={projectPath} onNavigate={navigateToDir} />
+          <FileBrowser browsePath={browsePath} onNavigate={navigateToDir} />
         )}
       </main>
+      <ProjectConversationDrawer />
+      </div>
 
       {/* 任务引导 */}
       {showTaskGuide && isTaskMode && <TaskGuide />}
@@ -283,9 +311,18 @@ function App() {
           border-bottom-color: var(--accent);
         }
 
-        .main {
+        .workspace-shell {
           display: flex;
           flex: 1;
+          min-height: 0;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .main {
+          display: flex;
+          flex: 1 1 auto;
+          min-width: 0;
           overflow: hidden;
         }
 
@@ -370,6 +407,23 @@ function App() {
           overflow-y: auto;
         }
 
+        .legacy-ai-notice {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 12px;
+          border: 1px solid color-mix(in srgb, var(--border) 72%, #7baed4 28%);
+          border-radius: 8px;
+          background: color-mix(in srgb, var(--bg-secondary) 92%, #7baed4 8%);
+          color: var(--text-secondary);
+          font-size: 12px;
+        }
+
+        .legacy-ai-notice strong {
+          flex: 0 0 auto;
+          color: var(--text-primary);
+        }
+
         .ai-tips {
           background: var(--bg-secondary);
           border-radius: 8px;
@@ -395,10 +449,10 @@ function App() {
 }
 
 // 文件浏览器组件
-function FileBrowser({ projectPath, onNavigate }: { projectPath: string | null; onNavigate: (path: string) => void }) {
+function FileBrowser({ browsePath, onNavigate }: { browsePath: string | null; onNavigate: (path: string) => void }) {
   const { files, selectedFile, fileContent, loading, loadFile, clearSelection, navigateUp } = useProjectStore()
 
-  if (!projectPath) {
+  if (!browsePath) {
     return (
       <div className="empty-state">
         <p>暂无打开的项目</p>
@@ -411,7 +465,7 @@ function FileBrowser({ projectPath, onNavigate }: { projectPath: string | null; 
       <aside className="sidebar">
         <div className="path-bar">
           <button onClick={navigateUp}>⬆️</button>
-          <span className="current-path">{projectPath.split(/[/\\]/).pop()}</span>
+          <span className="current-path">{browsePath.split(/[/\\]/).pop()}</span>
         </div>
 
         <div className="file-list">
