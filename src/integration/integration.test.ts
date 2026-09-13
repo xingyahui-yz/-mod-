@@ -193,7 +193,7 @@ describe('4. HTTP LLM 适配器', () => {
     expect(body.temperature).toBe(0.7)
   })
 
-  it('解析 OpenAI 格式响应 → 提取 content', async () => {
+  it('统一 generate 契约解析 OpenAI 格式响应并透传 content', async () => {
     fetchSpy.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -202,11 +202,10 @@ describe('4. HTTP LLM 适配器', () => {
     })
 
     const adapter = new HTTPAdapter('qwen', { apiKey: 'k' })
-    const result = await adapter.generateCards('造一张火焰牌')
+    const result = await adapter.generate('造一张火焰牌')
 
     expect(result.success).toBe(true)
-    expect(result.cards).toHaveLength(1)
-    expect(result.cards[0].name).toBe('火焰')
+    expect(result.content).toBe('[{"name":"火焰","cost":1,"type":"Attack","rarity":"Common","description":"a","keywords":[]}]')
   })
 
   it('HTTP 错误返回错误信息', async () => {
@@ -235,17 +234,16 @@ describe('4. HTTP LLM 适配器', () => {
     expect(url).toContain('api.minimax.chat')
   })
 
-  it('LLM 返回非 JSON 时 generateCards 报告失败', async () => {
+  it('generate 不解析业务 JSON，而是把 provider 文本交给对话协议层', async () => {
     fetchSpy.mockResolvedValue({
       ok: true,
       json: async () => ({ choices: [{ message: { content: '抱歉，我无法生成卡牌' } }] })
     })
 
     const adapter = new HTTPAdapter('qwen', { apiKey: 'k' })
-    const result = await adapter.generateCards('测试')
+    const result = await adapter.generate('测试')
 
-    expect(result.success).toBe(false)
-    expect(result.error).toMatch(/无法解析/)
+    expect(result).toEqual({ success: true, content: '抱歉，我无法生成卡牌' })
   })
 })
 

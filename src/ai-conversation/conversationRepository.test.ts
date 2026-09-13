@@ -64,6 +64,23 @@ describe('ConversationRepository', () => {
     expect([...memory.data.keys()]).toEqual(['/project/.modstudio/ai/conversation.json'])
   })
 
+  it('加载并原子改写严格 v1 为 proposals 为空的 v2', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const current = createConversationDocument('2026-09-01T00:00:00Z')
+    const v1 = {
+      schemaVersion: 1,
+      turns: current.turns,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    }
+    const memory = memoryFiles({ [path]: JSON.stringify(v1) })
+
+    const result = await createConversationRepository(memory.files, () => 2, () => 'migrate-v1').load('/project')
+
+    expect(result).toEqual({ status: 'loaded', document: current, warning: undefined })
+    expect(JSON.parse(memory.data.get(path)!)).toEqual(current)
+  })
+
   it('read error 不会伪装成 missing', async () => {
     const memory = memoryFiles()
     const files: ConversationFilePort = {
@@ -85,6 +102,21 @@ describe('ConversationRepository', () => {
     expect(result).toHaveProperty('warning', `损坏活动文档已隔离到 ${path}.quarantine-42-quarantine`)
     expect(JSON.parse(memory.data.get(path)!)).toEqual(document)
     expect(memory.data.has(`${path}.quarantine-42-quarantine`)).toBe(true)
+  })
+
+  it('损坏的已知 v2 schema 仍可从备份恢复', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const backup = `${path}.backup-41-valid`
+    const document = createConversationDocument('2026-09-01T00:00:00Z')
+    const memory = memoryFiles({
+      [path]: JSON.stringify({ ...document, proposals: 'broken' }),
+      [backup]: JSON.stringify(document),
+    })
+
+    const result = await createConversationRepository(memory.files, () => 42, () => 'known-v2').load('/project')
+
+    expect(result).toMatchObject({ status: 'loaded', document })
+    expect(memory.data.has(`${path}.quarantine-42-known-v2`)).toBe(true)
   })
 
   it('未来 schema 即使存在旧备份也保持隔离，不自动降级继续写入', async () => {
@@ -226,6 +258,32 @@ describe('ConversationRepository', () => {
       const result = await createConversationRepository(realFiles()).load(root)
       expect(result).toMatchObject({ status: 'loaded', document })
       expect(await readdir(aiDirectory)).toEqual(['conversation.json'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('真实目录加载 v1 后持久化为 v2 且不遗留临时文件', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-migrate-'))
+    const aiDirectory = join(root, '.modstudio/ai')
+    const path = join(aiDirectory, 'conversation.json')
+    const current = createConversationDocument('2026-09-01T00:00:00Z')
+    const v1 = {
+      schemaVersion: 1,
+      turns: current.turns,
+      createdAt: current.createdAt,
+      updatedAt: current.updatedAt,
+    }
+    try {
+      await mkdir(aiDirectory, { recursive: true })
+      await writeFile(path, JSON.stringify(v1), 'utf8')
+
+      const result = await createConversationRepository(realFiles(), () => 2, () => 'real-migrate').load(root)
+
+      expect(result).toEqual({ status: 'loaded', document: current, warning: undefined })
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(current)
+      expect(await readdir(aiDirectory)).toEqual(expect.arrayContaining(['conversation.json', 'conversation.json.backup-2-real-migrate']))
+      expect((await readdir(aiDirectory)).some(entry => entry.includes('.tmp-'))).toBe(false)
     } finally {
       await rm(root, { recursive: true, force: true })
     }

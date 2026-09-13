@@ -1,7 +1,7 @@
 # Mod Studio 领域模型（CONTEXT）
 
-> 最后更新：2026-08-27 · 来源：v0.5.2 → v0.9 实施 + 架构评审 + `/grill-with-docs`
-> 状态：v1.56 — 由项目所有者与协作 agent 通过开发迭代同步
+> 最后更新：2026-09-14 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
+> 状态：v1.84 — 由项目所有者与协作 agent 通过开发迭代同步
 
 ## 1. 项目目标（Goal）
 
@@ -212,7 +212,7 @@ MyMod/                          ← 用户项目根
     └── trash/                  ← Card 文档与生成产物的可恢复删除区
 ```
 
-## 6. 当前状态（截至 2026-09-06，v0.10 第一切片已完成双重门禁）
+## 6. 当前状态（截至 2026-09-14，v0.10 第二切片已完成修复后首轮门禁）
 
 ### 6.1 已实现
 
@@ -220,7 +220,7 @@ MyMod/                          ← 用户项目根
 - ✅ E1 卡牌：Card 文档、表单与行为图、逐 Card 编辑历史、草稿自动保存、显式生成、AI 完整提案、迁移/恢复、回收站、批量生成与游戏预检端到端闭环
 - ✅ E3 遗物（Relic）：表单 + 节点图 + Kind Registry（v0.5.2）+ 撤销 / 重做（v0.7）
 - ✅ 节点编辑器（自研）：v0.1 数据模型 → v0.7 历史栈 + 快捷键
-- ✅ 测试基础设施：**462 个**单元 / 集成 / 组件测试；Card 与对话真实文件流、Renderer/Electron 双重构建门禁已通过
+- ✅ 测试基础设施：**567 个**单元 / 集成 / 组件测试；Card 与对话真实文件流、Renderer/Electron 双重构建门禁已通过
 
 **技术栈与 CI**
 - ✅ Electron + React + TypeScript + Zustand 技术栈
@@ -232,12 +232,13 @@ MyMod/                          ← 用户项目根
 - ✅ 7 份 ADR（0001-0007），v0.9 Card 闭环已实现，v0.10 项目级 AI 对话边界已锁定
 - ✅ CardCatalog 以 Card 文档为唯一权威目录状态，逐 Card 历史和编辑事务已收口
 - ✅ v0.10 walking skeleton：项目级右侧对话抽屉、版本化 JSON、原子保存/崩溃恢复、取消/重试、快捷回答来源、显式 Card revision 附件及项目切换守卫
+- ✅ v0.10 逐 Card 提案：一轮零到多份 create/update、分区差异预览、接受时占 ID、拒绝二次确认、逐 Card 过期与 undo/redo provenance；跨文件 transition WAL 可恢复接受/撤销/重做，旧单次 AI 入口已删除
 - ✅ Git 仓库多远端，主线已同步到 GitHub
 
 ### 6.2 未实现（按优先级排序）
 
 **v0.10 当前主线**
-- 🛠️ Card AI 对话式迭代（多轮）：walking skeleton 已完成两遍独立门禁；继续交付逐 Card 提案、上下文智能与历史治理
+- 🛠️ Card AI 对话式迭代（多轮）：对话骨架与逐 Card 提案已实现；第二切片待独立复检，随后进入上下文智能与历史治理
 
 **后续待做**
 - ❌ Relic 接入与 Card 同等级的项目文档、生成安全和恢复生命周期
@@ -338,3 +339,6 @@ MyMod/                          ← 用户项目根
 | 2026-08-28 | v1.79 收紧对话 Card 上下文 — Card 全文必须显式附加并记录 ID/revision，当前 Card 仅建议且不得默认发送 | 用户 + Codex `/grill-with-docs` |
 | 2026-08-28 | v1.80 定义两级 Card 目录摘要 — 超预算时可见地降级为紧凑目录，附件优先且无法完整容纳时阻止发送 | 用户 + Codex `/grill-with-docs` |
 | 2026-08-31 | v1.81 确认 v0.10 实施计划 — 四个纵向切片分别交付对话骨架、Card 提案、上下文智能与历史治理 | 用户 + Codex `/grill-with-docs` |
+| 2026-09-09 | v1.82 同步 v0.10 第二切片 — 逐 Card 提案生命周期、预览/接受/拒绝、过期判定、Card 历史 provenance 与旧 AI 入口替换完成首轮门禁 | Codex + 协作 agent |
+| 2026-09-11 | v1.83 加固 Card 提案事务 — accepted/reverted/restored 先写对话 WAL、Card 落盘后追加 committed；启动仅恢复未确认 transition，实际项目合法后继优先 | Codex + 协作 agent |
+| 2026-09-14 | v1.84 加固提案并发与恢复边界 — 建议 ID 不占历史命名空间，活动/回收站文件优先于 create 恢复；Card autosave、生成指纹与 proposal WAL 共用逐 Card 串行写入及 revision 防护 | Codex + 协作 agent |

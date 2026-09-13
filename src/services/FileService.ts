@@ -11,6 +11,7 @@
  */
 import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocumentSaveResult, type CardDocumentMigrationSaveResult } from '../card/cardRepository'
 import type { CardDocument } from '../card/cardDocument'
+import { cardDocumentRevision } from '../card/cardAiProposal'
 import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEntry, type CardTrashRestoreResult } from '../card/cardTrash'
 import { buildPreflightEntries, evaluateCardPreflight, type CardPreflightOptions, type CardPreflightReport } from '../card/cardPreflight'
 import { generateCardArtifact as writeCardArtifact, type CardGenerationResult } from '../card/cardGeneration'
@@ -119,6 +120,37 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
       remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
     },
   })
+  const cardSaveTails = new Map<string, Promise<void>>()
+  const enqueueCardWrite = <T>(
+    projectPath: string,
+    cardId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    const key = `${projectPath}\0${cardId.toLowerCase()}`
+    const previous = cardSaveTails.get(key) ?? Promise.resolve()
+    const result = previous.then(
+      operation,
+      operation,
+    )
+    const tail = result.then(() => undefined, () => undefined)
+    cardSaveTails.set(key, tail)
+    void tail.then(() => {
+      if (cardSaveTails.get(key) === tail) cardSaveTails.delete(key)
+    })
+    return result
+  }
+  const saveCardDocumentSerially = (projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult> =>
+    enqueueCardWrite(projectPath, document.card.id, () => cardDocumentRepository.save(projectPath, document))
+  const saveGeneratedDocumentIfCurrent = (
+    projectPath: string,
+    document: CardDocument,
+  ): Promise<boolean> => enqueueCardWrite(projectPath, document.card.id, async () => {
+    const loaded = await cardDocumentRepository.load(projectPath)
+    const current = loaded.find(entry => entry.fileName.toLowerCase() === `${document.card.id}.json`.toLowerCase())
+    if (!current || current.result.status !== 'editable' ||
+      cardDocumentRevision(current.result.document) !== cardDocumentRevision(document)) return false
+    return (await cardDocumentRepository.save(projectPath, document)).ok
+  })
 
   return {
     // ============ 项目操作 ============
@@ -185,7 +217,7 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
 
     loadCardDocuments: (projectPath) => cardDocumentRepository.load(projectPath),
 
-    saveCardDocument: (projectPath, document) => cardDocumentRepository.save(projectPath, document),
+    saveCardDocument: saveCardDocumentSerially,
 
     migrateCardDocument: (projectPath, fileName) => cardDocumentRepository.migrateAndSave(projectPath, fileName),
 
@@ -244,7 +276,9 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
           remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
           readFile: path => api.readFile(path),
         },
-        saveDocument: async next => (await cardDocumentRepository.save(projectPath, next)).ok,
+        // 与 CardEditor autosave / AI proposal WAL 共用同一 Card 写入队列；
+        // 若生成期间语义内容已变化，则拒绝把旧源文档的指纹写回。
+        saveDocument: next => saveGeneratedDocumentIfCurrent(projectPath, next),
         allowExternalOverwrite: options.allowExternalOverwrite,
         backupExternalArtifact: options.allowExternalOverwrite
           ? async (path, content) => api.writeFile(`${path}.external-${Date.now()}.bak`, content)
@@ -279,7 +313,7 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
           remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
           readFile: path => api.readFile(path),
         },
-        saveDocument: async next => (await cardDocumentRepository.save(projectPath, next)).ok,
+        saveDocument: next => saveGeneratedDocumentIfCurrent(projectPath, next),
         backupExternalArtifact: async (path, content) => api.writeFile(`${path}.external-${Date.now()}.bak`, content),
       })
     },

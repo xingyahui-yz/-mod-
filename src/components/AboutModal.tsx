@@ -15,18 +15,18 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
         <div className="about-hero">
           <div className="logo">🎮</div>
           <h3>Slay the Spire 2 Mod Studio</h3>
-          <p className="version">v0.1.0 MVP</p>
+          <p className="version">v0.10 开发预览</p>
         </div>
 
         <p className="description">
-          一个简洁的杀戮尖塔2 Mod开发工具，让零基础用户也能轻松创建自己的卡牌。
+          一个以项目为中心的杀戮尖塔2 Mod 开发工具，让 Card 编辑与 AI 协作共享同一份项目上下文。
         </p>
 
         <div className="features">
           <h4>✨ 主要功能</h4>
           <ul>
             <li>🃏 可视化卡牌编辑器</li>
-            <li>🤖 AI智能生成卡牌</li>
+            <li>🤖 项目级多轮 AI 对话与逐 Card 提案</li>
             <li>📚 内置教程和任务引导</li>
             <li>🚀 一键启动游戏测试</li>
             <li>🎨 暗/亮主题切换</li>

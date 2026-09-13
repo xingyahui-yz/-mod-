@@ -6,14 +6,29 @@ import {
   type ConversationAttemptDiagnostics,
   type ConversationAttemptFailureKind,
   type ConversationAttemptStatus,
-  type ConversationDocumentV1,
+  type ConversationDocument,
   type ConversationQuickReplySelection,
   type ConversationTurn,
 } from './conversationDocument'
 import type { ConversationRepository, ConversationLoadResult } from './conversationRepository'
 import { parseConversationResponseText, type ConversationResponseV1 } from './conversationResponse'
+import { cardDocumentRevision } from '../card/cardAiProposal'
+import type { CardDocument } from '../card/cardDocument'
+import type { ConversationPromptContext } from '../services/llm/conversationContext'
+import {
+  acceptConversationCardProposal,
+  markConversationProposalTransitionCommitted,
+  markConversationCardProposalReverted,
+  markConversationCardProposalStale,
+  pendingProposalCardTransition,
+  recordConversationCardProposalBatch,
+  rejectConversationCardProposal,
+  restoreConversationCardProposalAfterRedo,
+  type ConversationCardProposal,
+  type ConversationProposalRejectionFeedback,
+} from './proposalLifecycle'
 
-export interface ConversationRequest {
+export interface ConversationRequest extends ConversationPromptContext {
   projectPath: string
   turns: readonly ConversationTurn[]
   signal: AbortSignal
@@ -41,13 +56,19 @@ export type ProjectConversationErrorCode =
   | 'provider'
   | 'invalid-response'
   | 'persistence'
+  | 'proposal-not-found'
+  | 'proposal-not-pending'
+  | 'invalid-card-id'
+  | 'duplicate-card-id'
+  | 'stale-proposal'
+  | 'card-update-failed'
 
 export type ProjectConversationResult =
   | { ok: true }
   | { ok: false; error: string; code: ProjectConversationErrorCode }
 
 export interface ProjectConversationSnapshot {
-  document: ConversationDocumentV1 | null
+  document: ConversationDocument | null
   loadStatus: ConversationLoadResult['status'] | 'loading'
   quarantineReason: string | null
   isRunning: boolean
@@ -56,13 +77,29 @@ export interface ProjectConversationSnapshot {
   requiresReload: boolean
 }
 
+export interface ProposalCardCommit {
+  proposal: ConversationCardProposal
+  finalCardId: string
+  transactionId: string
+}
+
+export type ProposalCardCommitResult =
+  | { ok: true }
+  | { ok: false; error: string; certainty?: 'unchanged' | 'uncertain' }
+
 type Listener = () => void
 
 interface StartedAttempt {
-  document: ConversationDocumentV1
+  document: ConversationDocument
   attemptId: string
   requestId: number
   controller: AbortController
+  promptContext: ConversationPromptContext
+}
+
+interface ResolvedProjectContext {
+  promptContext: ConversationPromptContext
+  attachments: ConversationAttachment[]
 }
 
 export class ProjectConversation {
@@ -88,6 +125,7 @@ export class ProjectConversation {
     private readonly model: ConversationModel,
     private readonly clock: () => Date = () => new Date(),
     private readonly createId: () => string = () => crypto.randomUUID(),
+    private readonly getProjectDocuments: () => readonly CardDocument[] = () => [],
   ) {}
 
   getSnapshot = (): ProjectConversationSnapshot => this.snapshot
@@ -217,6 +255,224 @@ export class ProjectConversation {
     })
   }
 
+  async refreshProposal(proposalId: string): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      const ready = this.ensureReady()
+      if (!ready.ok) return ready
+      const document = this.snapshot.document
+      const proposal = document?.proposals.find(candidate => candidate.id === proposalId)
+      if (!document || !proposal) return failure('proposal-not-found', 'Card 提案不存在')
+      if (proposal.status !== 'pending' || proposal.operation !== 'update') return { ok: true }
+      const revisions = this.readCurrentCardRevisions()
+      if (!revisions.ok) return failure('invalid-input', revisions.error)
+      const observedRevision = revisions.value.get(proposal.targetCardId.toLowerCase()) ?? null
+      if (observedRevision === proposal.baseRevision) return { ok: true }
+      const stale = markConversationCardProposalStale(proposal, {
+        at: this.proposalEventTime(proposal),
+        eventId: this.createId(),
+        observedRevision,
+      })
+      if (!stale.ok) return failure('proposal-not-pending', 'Card 提案不能再标记为过期')
+      const saved = await this.persistProposalReplacement(document, stale.value)
+      return saved.ok ? failure('stale-proposal', '目标 Card 已变化，提案已过期') : saved
+    })
+  }
+
+  async acceptProposal(
+    proposalId: string,
+    finalCardId: string,
+    commitCard: (input: ProposalCardCommit) => ProposalCardCommitResult | Promise<ProposalCardCommitResult>,
+  ): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      const ready = this.ensureReady()
+      if (!ready.ok) return ready
+      const document = this.snapshot.document
+      const proposal = document?.proposals.find(candidate => candidate.id === proposalId)
+      if (!document || !proposal) return failure('proposal-not-found', 'Card 提案不存在')
+      if (proposal.status !== 'pending') return failure('proposal-not-pending', 'Card 提案已处理，不能再次接受')
+      const revisions = this.readCurrentCardRevisions()
+      if (!revisions.ok) return failure('invalid-input', revisions.error)
+      const observedRevision = proposal.operation === 'update'
+        ? revisions.value.get(proposal.targetCardId.toLowerCase()) ?? null
+        : null
+      if (proposal.operation === 'update' && observedRevision !== proposal.baseRevision) {
+        const stale = markConversationCardProposalStale(proposal, {
+          at: this.proposalEventTime(proposal),
+          eventId: this.createId(),
+          observedRevision,
+        })
+        if (!stale.ok) return failure('proposal-not-pending', 'Card 提案已处理')
+        const persisted = await this.persistProposalReplacement(document, stale.value)
+        return persisted.ok ? failure('stale-proposal', '目标 Card 已变化，提案已过期') : persisted
+      }
+
+      const transactionId = proposal.id
+      const accepted = acceptConversationCardProposal(proposal, {
+        at: this.proposalEventTime(proposal),
+        eventId: this.createId(),
+        transactionId,
+        finalCardId,
+        currentCardRevisions: revisions.value,
+      })
+      if (!accepted.ok) return proposalLifecycleFailure(accepted.error)
+      const next = replaceProposal(document, accepted.value)
+      const saved = await this.repository.save(this.projectPath, next)
+      if (!saved.ok) {
+        this.updatePersistenceFailure(document, `提案接受状态保存失败：${saved.error}`, saved.certainty)
+        return failure('persistence', `提案接受状态保存失败：${saved.error}`)
+      }
+
+      let committed: ProposalCardCommitResult
+      try {
+        const acceptedEvent = accepted.value.events.at(-1)
+        const acceptedCardId = acceptedEvent?.type === 'accepted' ? acceptedEvent.finalCardId : finalCardId.trim()
+        committed = await commitCard({ proposal, finalCardId: acceptedCardId, transactionId })
+      } catch (error) {
+        committed = { ok: false, error: sanitizeConversationError(error), certainty: 'uncertain' }
+      }
+      if (!committed.ok) {
+        if (committed.certainty === 'uncertain') {
+          const message = `Card 应用结果不确定：${committed.error}`
+          this.updatePersistenceFailure(next, message, 'uncertain', true)
+          return failure('persistence', message)
+        }
+        const rolledBack = await this.repository.save(this.projectPath, document)
+        if (!rolledBack.ok) {
+          const message = `Card 应用失败且提案状态回滚失败：${rolledBack.error}`
+          this.updatePersistenceFailure(next, message, rolledBack.certainty, true)
+          return failure('persistence', message)
+        }
+        this.update({
+          ...this.snapshot,
+          document,
+          lastError: committed.error,
+          persistenceError: null,
+          requiresReload: false,
+        })
+        return failure('card-update-failed', committed.error)
+      }
+
+      const acceptedTransition = pendingProposalCardTransition(accepted.value)
+      if (!acceptedTransition) {
+        const message = '提案接受事务缺少待兑现的 Card transition'
+        this.updatePersistenceFailure(next, message, 'uncertain', true)
+        return failure('persistence', message)
+      }
+      const committedProposal = markConversationProposalTransitionCommitted(accepted.value, {
+        at: this.proposalEventTime(accepted.value),
+        eventId: this.createId(),
+        transitionEventId: acceptedTransition.eventId,
+        transactionId,
+      })
+      if (!committedProposal.ok) {
+        const message = `提案接受事务无法确认：${committedProposal.error}`
+        this.updatePersistenceFailure(next, message, 'uncertain', true)
+        return failure('persistence', message)
+      }
+      const committedDocument = replaceProposal(next, committedProposal.value)
+      const confirmed = await this.repository.save(this.projectPath, committedDocument)
+      if (!confirmed.ok) {
+        const message = `Card 已应用，但提案事务确认保存失败：${confirmed.error}`
+        this.updatePersistenceFailure(next, message, confirmed.certainty, true)
+        return failure('persistence', message)
+      }
+
+      this.update({
+        ...this.snapshot,
+        document: committedDocument,
+        lastError: confirmed.warning ?? saved.warning ?? null,
+        persistenceError: null,
+        requiresReload: false,
+      })
+      return { ok: true }
+    })
+  }
+
+  async rejectProposal(
+    proposalId: string,
+    feedback: ConversationProposalRejectionFeedback | null,
+  ): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      const ready = this.ensureReady()
+      if (!ready.ok) return ready
+      const document = this.snapshot.document
+      const proposal = document?.proposals.find(candidate => candidate.id === proposalId)
+      if (!document || !proposal) return failure('proposal-not-found', 'Card 提案不存在')
+      const rejected = rejectConversationCardProposal(proposal, {
+        at: this.proposalEventTime(proposal),
+        eventId: this.createId(),
+        feedback,
+      })
+      if (!rejected.ok) return proposalLifecycleFailure(rejected.error)
+      return this.persistProposalReplacement(document, rejected.value)
+    })
+  }
+
+  async recordProposalHistory(
+    proposalId: string,
+    transactionId: string,
+    status: 'accepted' | 'reverted',
+    desiredDocument: CardDocument,
+  ): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      const ready = this.ensureLoaded()
+      if (!ready.ok) return ready
+      const conversationDocument = this.snapshot.document
+      const proposal = conversationDocument?.proposals.find(candidate => candidate.id === proposalId)
+      if (!conversationDocument || !proposal) return failure('proposal-not-found', 'Card 提案不存在')
+      if ((status === 'reverted' && proposal.status === 'reverted') ||
+        (status === 'accepted' && proposal.status === 'accepted')) return { ok: true }
+      const at = this.proposalEventTime(proposal)
+      const changed = status === 'reverted'
+        ? markConversationCardProposalReverted(proposal, { at, eventId: this.createId(), transactionId, document: desiredDocument })
+        : restoreConversationCardProposalAfterRedo(proposal, { at, eventId: this.createId(), transactionId, document: desiredDocument })
+      if (!changed.ok) return failure('proposal-not-pending', `提案历史状态不同步：${changed.error}`)
+      return this.persistProposalReplacement(conversationDocument, changed.value, true)
+    })
+  }
+
+  async confirmProposalCardTransition(
+    proposalId: string,
+    transactionId: string,
+  ): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      const ready = this.ensureLoaded()
+      if (!ready.ok) return ready
+      const document = this.snapshot.document
+      const proposal = document?.proposals.find(candidate => candidate.id === proposalId)
+      if (!document || !proposal) return failure('proposal-not-found', 'Card 提案不存在')
+      const pending = pendingProposalCardTransition(proposal)
+      if (!pending) {
+        const lastCommit = [...proposal.events].reverse().find(event => event.type === 'committed')
+        return lastCommit?.type === 'committed' && lastCommit.transactionId === transactionId
+          ? { ok: true }
+          : failure('proposal-not-pending', '提案没有待确认的 Card transition')
+      }
+      const changed = markConversationProposalTransitionCommitted(proposal, {
+        at: this.proposalEventTime(proposal),
+        eventId: this.createId(),
+        transitionEventId: pending.eventId,
+        transactionId,
+      })
+      if (!changed.ok) return failure('proposal-not-pending', `提案事务确认失败：${changed.error}`)
+      const next = replaceProposal(document, changed.value)
+      const saved = await this.repository.save(this.projectPath, next)
+      if (!saved.ok) {
+        const message = `提案事务确认保存失败：${saved.error}`
+        this.updatePersistenceFailure(document, message, saved.certainty, true)
+        return failure('persistence', message)
+      }
+      this.update({
+        ...this.snapshot,
+        document: next,
+        lastError: saved.warning ?? null,
+        persistenceError: null,
+        requiresReload: false,
+      })
+      return { ok: true }
+    })
+  }
+
   private async startNewTurn(
     text: string,
     attachments: readonly ConversationAttachment[],
@@ -228,13 +484,16 @@ export class ProjectConversation {
 
     const now = this.now()
     const attemptId = this.createId()
+    const base = this.snapshot.document ?? createConversationDocument(now)
+    const projectContext = this.resolveProjectContext(base, attachments, false)
+    if (!projectContext.ok) return projectContext
     const turn: ConversationTurn = {
       id: this.createId(),
       userText: text,
       assistantText: null,
       quickReplies: [],
       quickReplySelection,
-      attachments: [...attachments],
+      attachments: projectContext.value.attachments,
       createdAt: now,
       attempts: [{
         id: attemptId,
@@ -246,8 +505,11 @@ export class ProjectConversation {
         diagnostics: this.modelDiagnostics(),
       }],
     }
-    const base = this.snapshot.document ?? createConversationDocument(now)
-    return this.persistStartedAttempt({ ...base, turns: [...base.turns, turn], updatedAt: now }, attemptId)
+    const pending = { ...base, turns: [...base.turns, turn], updatedAt: now }
+    return this.persistStartedAttempt(pending, attemptId, {
+      ...projectContext.value.promptContext,
+      proposals: proposalSummaries(pending),
+    })
   }
 
   private async startRetry(turnId: string): Promise<{ ok: true; value: StartedAttempt } | Extract<ProjectConversationResult, { ok: false }>> {
@@ -263,7 +525,9 @@ export class ProjectConversation {
 
     const now = this.now()
     const attemptId = this.createId()
-    const pending: ConversationDocumentV1 = {
+    const projectContext = this.resolveProjectContext(document, turn.attachments, true)
+    if (!projectContext.ok) return projectContext
+    const pending: ConversationDocument = {
       ...document,
       updatedAt: now,
       turns: document.turns.map(candidate => candidate.id === turnId
@@ -271,6 +535,7 @@ export class ProjectConversation {
             ...candidate,
             assistantText: null,
             quickReplies: [],
+            attachments: projectContext.value.attachments,
             attempts: [...candidate.attempts, {
               id: attemptId,
               status: 'running' as const,
@@ -283,12 +548,16 @@ export class ProjectConversation {
           }
         : candidate),
     }
-    return this.persistStartedAttempt(pending, attemptId)
+    return this.persistStartedAttempt(pending, attemptId, {
+      ...projectContext.value.promptContext,
+      proposals: proposalSummaries(pending),
+    })
   }
 
   private async persistStartedAttempt(
-    document: ConversationDocumentV1,
+    document: ConversationDocument,
     attemptId: string,
+    promptContext: ConversationPromptContext,
   ): Promise<{ ok: true; value: StartedAttempt } | Extract<ProjectConversationResult, { ok: false }>> {
     const saved = await this.repository.save(this.projectPath, document)
     if (!saved.ok) {
@@ -314,7 +583,7 @@ export class ProjectConversation {
       persistenceError: null,
       requiresReload: false,
     })
-    return { ok: true, value: { document, attemptId, requestId, controller } }
+    return { ok: true, value: { document, attemptId, requestId, controller, promptContext } }
   }
 
   private async executeAttempt(started: StartedAttempt): Promise<ProjectConversationResult> {
@@ -324,6 +593,7 @@ export class ProjectConversation {
         projectPath: this.projectPath,
         turns: started.document.turns,
         signal: started.controller.signal,
+        ...started.promptContext,
       })
     } catch (error) {
       response = { success: false, error: sanitizeConversationError(error), kind: 'provider' }
@@ -348,8 +618,64 @@ export class ProjectConversation {
     response: ConversationResponseV1,
     diagnostics: ConversationAttemptDiagnostics,
   ): Promise<ProjectConversationResult> {
+    const requestCards = new Map(started.promptContext.cardCatalog.map(card => [card.id.toLowerCase(), card]))
+    const requestRevisions = new Map([...requestCards].map(([id, card]) => [id, card.revision]))
+    const authorizedUpdateTargets = new Set([
+      ...started.promptContext.resolvedAttachments.map(attachment => attachment.cardId.toLowerCase()),
+      ...started.promptContext.proposals
+        .filter(proposal => proposal.operation === 'update' &&
+          proposal.status === 'pending' &&
+          proposal.candidate !== null &&
+          proposal.baseRevision === requestRevisions.get(proposal.targetCardId.toLowerCase()))
+        .map(proposal => proposal.targetCardId.toLowerCase()),
+    ])
+    for (const proposal of response.proposals) {
+      if (proposal.operation === 'update' && !authorizedUpdateTargets.has(proposal.targetCardId.toLowerCase())) {
+        return this.finishFailure(
+          started,
+          'failed',
+          `Card 提案缺少全文上下文：${proposal.targetCardId}`,
+          'invalid-response',
+          diagnostics,
+        )
+      }
+    }
+    const currentRevisions = this.readCurrentCardRevisions()
+    if (!currentRevisions.ok) {
+      return this.finishFailure(started, 'failed', currentRevisions.error, 'invalid-response', diagnostics)
+    }
+    for (const proposal of response.proposals) {
+      if (proposal.operation !== 'update') continue
+      const requestCard = requestCards.get(proposal.targetCardId.toLowerCase())
+      if (!requestCard || requestCard.id !== proposal.targetCardId || requestCard.revision !== proposal.baseRevision) {
+        return this.finishFailure(
+          started,
+          'failed',
+          `Card 提案目标或基线无效：${proposal.targetCardId}`,
+          'invalid-response',
+          diagnostics,
+        )
+      }
+    }
+    const completedAt = this.now()
+    const currentDocument = this.snapshot.document ?? started.document
+    const proposals = recordConversationCardProposalBatch(currentDocument.proposals, response.proposals, {
+      source: { turnId: findTurnIdForAttempt(started.document, started.attemptId), attemptId: started.attemptId },
+      at: completedAt,
+      currentCardRevisions: currentRevisions.value,
+      createId: this.createId,
+    })
+    if (!proposals.ok) {
+      return this.finishFailure(
+        started,
+        'failed',
+        `Card 提案无效：${proposals.error}`,
+        'invalid-response',
+        diagnostics,
+      )
+    }
     const completed = this.mapAttempt(
-      started.document,
+      currentDocument,
       started.attemptId,
       turn => ({ ...turn, assistantText: response.text, quickReplies: response.quickReplies }),
       'completed',
@@ -357,11 +683,16 @@ export class ProjectConversation {
       null,
       diagnostics,
     )
-    const saved = await this.repository.save(this.projectPath, completed)
+    const completedWithProposals: ConversationDocument = {
+      ...completed,
+      proposals: proposals.value,
+      updatedAt: completedAt,
+    }
+    const saved = await this.repository.save(this.projectPath, completedWithProposals)
     if (!this.isCurrentRequest(started)) return failure('cancelled', '请求已取消')
     if (!saved.ok) {
       const persistenceFailed = this.mapAttempt(
-        started.document,
+        currentDocument,
         started.attemptId,
         turn => turn,
         'failed',
@@ -375,7 +706,7 @@ export class ProjectConversation {
     this.clearActiveRequest()
     this.update({
       ...this.snapshot,
-      document: completed,
+      document: completedWithProposals,
       isRunning: false,
       lastError: saved.warning ?? null,
       persistenceError: null,
@@ -391,7 +722,8 @@ export class ProjectConversation {
     kind: ConversationModelFailureKind,
     diagnostics: ConversationAttemptDiagnostics,
   ): Promise<ProjectConversationResult> {
-    const failed = this.mapAttempt(started.document, started.attemptId, turn => turn, status, error, kind, diagnostics)
+    const currentDocument = this.snapshot.document ?? started.document
+    const failed = this.mapAttempt(currentDocument, started.attemptId, turn => turn, status, error, kind, diagnostics)
     const saved = await this.repository.save(this.projectPath, failed)
     if (!this.isCurrentRequest(started)) return failure('cancelled', '请求已取消')
     this.clearActiveRequest()
@@ -407,7 +739,7 @@ export class ProjectConversation {
     return failure(errorCodeFor(kind), error)
   }
 
-  private persistTerminalFailure(document: ConversationDocumentV1, error: string): Extract<ProjectConversationResult, { ok: false }> {
+  private persistTerminalFailure(document: ConversationDocument, error: string): Extract<ProjectConversationResult, { ok: false }> {
     const safeError = sanitizeConversationError(error)
     this.update({
       ...this.snapshot,
@@ -421,23 +753,34 @@ export class ProjectConversation {
   }
 
   private ensureReady(): ProjectConversationResult {
-    if (this.snapshot.loadStatus === 'loading') return failure('not-loaded', '对话尚未加载完成')
-    if (this.snapshot.loadStatus === 'quarantined') return failure('quarantined', '对话文档已隔离，请先处理恢复')
-    if (this.snapshot.loadStatus === 'failed') return failure('load-failed', '对话加载失败，请重新加载')
-    if (this.snapshot.requiresReload) return failure('persistence', '对话持久化状态不确定，请重新加载')
+    const loaded = this.ensureLoaded()
+    if (!loaded.ok) return loaded
     if (this.snapshot.isRunning) return failure('already-running', '当前轮次仍在运行')
     return { ok: true }
   }
 
+  private proposalEventTime(proposal: ConversationCardProposal): string {
+    const now = this.now()
+    return Date.parse(now) >= Date.parse(proposal.updatedAt) ? now : proposal.updatedAt
+  }
+
+  private ensureLoaded(): ProjectConversationResult {
+    if (this.snapshot.loadStatus === 'loading') return failure('not-loaded', '对话尚未加载完成')
+    if (this.snapshot.loadStatus === 'quarantined') return failure('quarantined', '对话文档已隔离，请先处理恢复')
+    if (this.snapshot.loadStatus === 'failed') return failure('load-failed', '对话加载失败，请重新加载')
+    if (this.snapshot.requiresReload) return failure('persistence', '对话持久化状态不确定，请重新加载')
+    return { ok: true }
+  }
+
   private mapAttempt(
-    document: ConversationDocumentV1,
+    document: ConversationDocument,
     attemptId: string,
     mapTurn: (turn: ConversationTurn) => ConversationTurn,
     status: Exclude<ConversationAttemptStatus, 'running'>,
     error: string | null,
     failureKind: ConversationAttemptFailureKind | null,
     diagnostics?: ConversationAttemptDiagnostics,
-  ): ConversationDocumentV1 {
+  ): ConversationDocument {
     const finishedAt = this.now()
     return {
       ...document,
@@ -462,7 +805,8 @@ export class ProjectConversation {
   }
 
   private isCurrentRequest(started: StartedAttempt): boolean {
-    return started.requestId === this.requestSequence &&
+    return !started.controller.signal.aborted &&
+      started.requestId === this.requestSequence &&
       this.activeAttemptId === started.attemptId &&
       this.abortController === started.controller
   }
@@ -511,10 +855,155 @@ export class ProjectConversation {
     this.activeAttemptId = null
   }
 
+  private resolveProjectContext(
+    document: ConversationDocument,
+    requestedAttachments: readonly ConversationAttachment[],
+    useLatestAttachmentRevisions: boolean,
+  ): { ok: true; value: ResolvedProjectContext } | Extract<ProjectConversationResult, { ok: false }> {
+    let projectDocuments: readonly CardDocument[]
+    try {
+      projectDocuments = this.getProjectDocuments()
+    } catch (error) {
+      return failure('invalid-input', `无法读取当前项目 Card：${sanitizeConversationError(error)}`)
+    }
+    const normalizedDocumentIds = new Set(projectDocuments.map(candidate => candidate.card.id.toLowerCase()))
+    if (normalizedDocumentIds.size !== projectDocuments.length) {
+      return failure('invalid-input', '当前项目 Card ID 不唯一')
+    }
+    const documentsById = new Map(projectDocuments.map(candidate => [candidate.card.id, candidate]))
+    const attachmentIds = new Set<string>()
+    const attachments: ConversationAttachment[] = []
+    const resolvedAttachments = []
+    for (const requested of requestedAttachments) {
+      if (attachmentIds.has(requested.cardId)) return failure('invalid-input', 'Card 附件不能重复')
+      attachmentIds.add(requested.cardId)
+      const candidate = documentsById.get(requested.cardId)
+      if (!candidate) return failure('invalid-input', `Card 附件不存在：${requested.cardId}`)
+      const revision = cardDocumentRevision(candidate)
+      if (!useLatestAttachmentRevisions && requested.revision !== revision) {
+        return failure('invalid-input', `Card 附件已变化：${requested.cardId}`)
+      }
+      attachments.push({ cardId: requested.cardId, revision })
+      resolvedAttachments.push({ cardId: requested.cardId, revision, document: candidate })
+    }
+    return {
+      ok: true,
+      value: {
+        attachments,
+        promptContext: {
+          cardCatalog: projectDocuments.map(candidate => ({
+            id: candidate.card.id,
+            name: candidate.card.name,
+            type: candidate.card.type,
+            revision: cardDocumentRevision(candidate),
+          })),
+          resolvedAttachments,
+          proposals: proposalSummaries(document),
+        },
+      },
+    }
+  }
+
+  private readCurrentCardRevisions():
+    | { ok: true; value: ReadonlyMap<string, string> }
+    | { ok: false; error: string } {
+    try {
+      const revisions = new Map<string, string>()
+      for (const document of this.getProjectDocuments()) {
+        const normalized = document.card.id.toLowerCase()
+        if (revisions.has(normalized)) return { ok: false, error: '当前项目 Card ID 不唯一' }
+        revisions.set(normalized, cardDocumentRevision(document))
+      }
+      return { ok: true, value: revisions }
+    } catch (error) {
+      return { ok: false, error: `无法核对当前项目 Card：${sanitizeConversationError(error)}` }
+    }
+  }
+
+  private async persistProposalReplacement(
+    document: ConversationDocument,
+    proposal: ConversationCardProposal,
+    externalMutation = false,
+  ): Promise<ProjectConversationResult> {
+    const next = replaceProposal(document, proposal)
+    const saved = await this.repository.save(this.projectPath, next)
+    if (!saved.ok) {
+      const message = `提案状态保存失败：${saved.error}`
+      const visibleDocument = externalMutation || saved.certainty === 'uncertain' ? next : document
+      this.updatePersistenceFailure(visibleDocument, message, saved.certainty, externalMutation)
+      return failure('persistence', message)
+    }
+    this.update({
+      ...this.snapshot,
+      document: next,
+      lastError: saved.warning ?? null,
+      persistenceError: null,
+      requiresReload: false,
+    })
+    return { ok: true }
+  }
+
+  private updatePersistenceFailure(
+    document: ConversationDocument,
+    error: string,
+    certainty: 'unchanged' | 'uncertain',
+    forceReload = false,
+  ): void {
+    const safeError = sanitizeConversationError(error)
+    this.update({
+      ...this.snapshot,
+      document,
+      lastError: safeError,
+      persistenceError: safeError,
+      requiresReload: forceReload || certainty === 'uncertain',
+    })
+  }
+
   private now(): string { return this.clock().toISOString() }
   private update(snapshot: ProjectConversationSnapshot): void {
     this.snapshot = snapshot
     this.listeners.forEach(listener => listener())
+  }
+}
+
+function proposalSummaries(document: ConversationDocument): ConversationPromptContext['proposals'] {
+  return document.proposals.map(proposal => {
+    const rejected = [...proposal.events].reverse().find(event => event.type === 'rejected')
+    const accepted = [...proposal.events].reverse().find(event => event.type === 'accepted')
+    return {
+      id: proposal.id,
+      operation: proposal.operation,
+      targetCardId: proposal.targetCardId,
+      baseRevision: proposal.baseRevision,
+      status: proposal.status,
+      candidate: proposal.status === 'pending' ? proposal.document : null,
+      rejectionFeedback: rejected?.type === 'rejected' ? rejected.feedback : null,
+      finalCardId: accepted?.type === 'accepted' ? accepted.finalCardId : null,
+    }
+  })
+}
+
+function findTurnIdForAttempt(document: ConversationDocument, attemptId: string): string {
+  return document.turns.find(turn => turn.attempts.some(attempt => attempt.id === attemptId))?.id ?? ''
+}
+
+function replaceProposal(
+  document: ConversationDocument,
+  proposal: ConversationCardProposal,
+): ConversationDocument {
+  return {
+    ...document,
+    proposals: document.proposals.map(candidate => candidate.id === proposal.id ? proposal : candidate),
+    updatedAt: proposal.updatedAt,
+  }
+}
+
+function proposalLifecycleFailure(error: string): Extract<ProjectConversationResult, { ok: false }> {
+  switch (error) {
+    case 'invalid-card-id': return failure('invalid-card-id', 'Card ID 必须是 PascalCase')
+    case 'duplicate-card-id': return failure('duplicate-card-id', 'Card ID 已被占用')
+    case 'proposal-not-pending': return failure('proposal-not-pending', 'Card 提案已处理')
+    default: return failure('invalid-input', `Card 提案状态无效：${error}`)
   }
 }
 

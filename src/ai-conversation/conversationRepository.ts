@@ -1,4 +1,4 @@
-import { migrateConversationDocument, parseConversationDocument, type ConversationDocumentV1 } from './conversationDocument'
+import { migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
 
 export type ConversationFileRead<T> =
   | { status: 'found'; value: T }
@@ -20,13 +20,13 @@ export type ConversationSaveResult =
 
 export type ConversationLoadResult =
   | { status: 'missing'; warning?: string }
-  | { status: 'loaded'; document: ConversationDocumentV1; warning?: string }
+  | { status: 'loaded'; document: ConversationDocument; warning?: string }
   | { status: 'quarantined'; reason: string; path: string; warning?: string }
   | { status: 'failed'; reason: string; path: string }
 
 export interface ConversationRepository {
   load(projectPath: string): Promise<ConversationLoadResult>
-  save(projectPath: string, document: ConversationDocumentV1): Promise<ConversationSaveResult>
+  save(projectPath: string, document: ConversationDocument): Promise<ConversationSaveResult>
 }
 
 const directory = (projectPath: string) => `${projectPath}/.modstudio/ai`
@@ -50,7 +50,7 @@ export function createConversationRepository(
 
   const saveInternal = async (
     projectPath: string,
-    document: ConversationDocumentV1,
+    document: ConversationDocument,
     retainBackup = false,
   ): Promise<ConversationSaveResult> => {
     const parsed = parseConversationDocument(document)
@@ -193,7 +193,7 @@ export function createConversationRepository(
 }
 
 type ParsedRaw =
-  | { ok: true; document: ConversationDocumentV1; migrated: boolean }
+  | { ok: true; document: ConversationDocument; migrated: boolean }
   | { ok: false; reason: string; canRestoreBackup: boolean }
 
 function parseRawDocument(content: string): ParsedRaw {
@@ -211,11 +211,11 @@ function parseRawDocument(content: string): ParsedRaw {
   return {
     ok: false,
     reason: migrated.reason,
-    canRestoreBackup: schemaVersion === undefined || schemaVersion === 1,
+    canRestoreBackup: schemaVersion === undefined || schemaVersion === 1 || schemaVersion === 2,
   }
 }
 
-function parseSavedDocument(content: string): ConversationDocumentV1 | null {
+function parseSavedDocument(content: string): ConversationDocument | null {
   try {
     const parsed = parseConversationDocument(JSON.parse(content))
     return parsed.ok ? parsed.document : null
@@ -231,7 +231,7 @@ async function restoreLatestValidBackup(
 ): Promise<
   | { status: 'none' }
   | { status: 'error'; error: string }
-  | { status: 'restored'; document: ConversationDocumentV1; migrated: boolean }
+  | { status: 'restored'; document: ConversationDocument; migrated: boolean }
 > {
   for (const backup of backups) {
     const content = await files.readFile(backup)
@@ -289,7 +289,7 @@ async function verifyOriginalState(
     : 'uncertain'
 }
 
-function documentsEqual(left: ConversationDocumentV1, right: ConversationDocumentV1): boolean {
+function documentsEqual(left: ConversationDocument, right: ConversationDocument): boolean {
   return canonicalJson(left) === canonicalJson(right)
 }
 

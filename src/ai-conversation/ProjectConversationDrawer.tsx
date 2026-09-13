@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { cardDocumentRevision } from '../card/cardAiProposal'
-import { useCardCatalog } from '../card/cardCatalog'
+import { cardCatalogActions, useCardCatalog } from '../card/cardCatalog'
 import type {
   ConversationAttemptStatus,
   ConversationQuickReplySelection,
@@ -11,11 +11,17 @@ import {
   useProjectConversationActions,
   type ProjectConversationView,
 } from './ProjectConversationContext'
+import { CardProposalPanel } from './CardProposalPanel'
+import type { ConversationProposalRejectionFeedback } from './proposalLifecycle'
 
 const RETRIABLE_STATUSES = new Set<ConversationAttemptStatus>(['failed', 'cancelled', 'interrupted'])
 const NO_CARD_DOCUMENTS: readonly never[] = []
 
-export function ProjectConversationDrawer() {
+export function ProjectConversationDrawer({
+  onOpenCard,
+}: {
+  onOpenCard?: (cardId: string) => void
+} = {}) {
   const view = useProjectConversation(value => value)
   const actions = useProjectConversationActions()
   const documents = useCardCatalog(value => value.documents)
@@ -36,6 +42,12 @@ export function ProjectConversationDrawer() {
   const restoreRailFocusRef = useRef(false)
   const previousProjectRoot = useRef(view.projectRoot)
   const previousActivityCount = useRef(0)
+  const unreadBaselineReadyRef = useRef(view.loadStatus !== 'loading')
+  const turns = view.document?.turns ?? []
+  const activityCount = turns.reduce((count, turn) => {
+    const lastAttempt = turn.attempts.at(-1)
+    return count + (turn.assistantText !== null || (lastAttempt && lastAttempt.status !== 'running') ? 1 : 0)
+  }, 0)
 
   useEffect(() => {
     const media = window.matchMedia?.('(max-width: 1099px)')
@@ -53,9 +65,12 @@ export function ProjectConversationDrawer() {
       setSelectedQuickReply(null)
       setAttachmentIds([])
       setActionError(null)
+      setHasUnread(false)
+      previousActivityCount.current = activityCount
+      unreadBaselineReadyRef.current = view.loadStatus !== 'loading'
     }
     previousProjectRoot.current = view.projectRoot
-  }, [view.projectRoot])
+  }, [activityCount, view.loadStatus, view.projectRoot])
 
   useEffect(() => {
     if (!isOpen && restoreRailFocusRef.current) {
@@ -95,10 +110,39 @@ export function ProjectConversationDrawer() {
 
   const projectDocuments = sourceProjectRoot === view.projectRoot ? documents : NO_CARD_DOCUMENTS
   const projectCurrentDocument = sourceProjectRoot === view.projectRoot ? currentDocument : null
+  const isCardCatalogReady = Boolean(view.projectRoot && sourceProjectRoot === view.projectRoot)
   const documentsById = useMemo(
     () => new Map(projectDocuments.map(document => [document.card.id, document])),
     [projectDocuments],
   )
+  const pendingUpdateRevisionSignature = view.loadStatus === 'loaded' && sourceProjectRoot === view.projectRoot
+    ? (view.document?.proposals ?? [])
+        .filter(proposal => proposal.operation === 'update' && proposal.status === 'pending')
+        .map(proposal => {
+          const current = documentsById.get(proposal.targetCardId)
+          return `${proposal.id}:${current ? cardDocumentRevision(current) : 'missing'}`
+        })
+        .join('|')
+    : ''
+
+  useEffect(() => {
+    if (!pendingUpdateRevisionSignature) return
+    const proposalIds = (view.document?.proposals ?? [])
+      .filter(proposal => proposal.operation === 'update' && proposal.status === 'pending')
+      .map(proposal => proposal.id)
+    let active = true
+    void (async () => {
+      for (const proposalId of proposalIds) {
+        const result = await actions.refreshProposal(proposalId)
+        if (!active) return
+        if (!result.ok && result.code !== 'stale-proposal' && result.code !== 'proposal-not-pending') {
+          setActionError(result.error)
+        }
+      }
+    })()
+    return () => { active = false }
+  }, [actions, pendingUpdateRevisionSignature, view.document?.proposals])
+
   const attachedDocuments = attachmentIds.flatMap(cardId => {
     const document = documentsById.get(cardId)
     return document ? [document] : []
@@ -106,6 +150,7 @@ export function ProjectConversationDrawer() {
   const availableDocuments = projectDocuments.filter(document => !attachmentIds.includes(document.card.id))
   const canSend = Boolean(
     view.projectRoot &&
+    isCardCatalogReady &&
     view.loadStatus !== 'loading' &&
     view.loadStatus !== 'error' &&
     view.loadStatus !== 'quarantined' &&
@@ -113,17 +158,17 @@ export function ProjectConversationDrawer() {
     !view.isRunning &&
     draft.trim(),
   )
-  const turns = view.document?.turns ?? []
-  const activityCount = turns.reduce((count, turn) => {
-    const lastAttempt = turn.attempts.at(-1)
-    return count + (turn.assistantText !== null || (lastAttempt && lastAttempt.status !== 'running') ? 1 : 0)
-  }, 0)
-
   useEffect(() => {
+    if (!unreadBaselineReadyRef.current) {
+      previousActivityCount.current = activityCount
+      if (view.loadStatus !== 'loading') unreadBaselineReadyRef.current = true
+      setHasUnread(false)
+      return
+    }
     if (isOpen) setHasUnread(false)
     else if (activityCount > previousActivityCount.current) setHasUnread(true)
     previousActivityCount.current = activityCount
-  }, [activityCount, isOpen])
+  }, [activityCount, isOpen, view.loadStatus])
 
   const handleSubmit = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -169,6 +214,56 @@ export function ProjectConversationDrawer() {
   const updateDraft = (value: string) => {
     setDraft(value)
     setSelectedQuickReply(null)
+  }
+
+  const previewUpdateProposal = async (proposalId: string, cardId: string) => {
+    setActionError(null)
+    const proposal = view.document?.proposals.find(candidate => candidate.id === proposalId)
+    if (proposal?.status === 'pending') {
+      const refreshed = await actions.refreshProposal(proposalId)
+      if (!refreshed.ok && refreshed.code !== 'stale-proposal' && refreshed.code !== 'proposal-not-pending') {
+        setActionError(refreshed.error)
+      }
+    }
+    const selected = cardCatalogActions.selectCard(cardId)
+    if (!selected.ok) {
+      setActionError(`无法定位 @${cardId}：${selected.error}`)
+      return
+    }
+    onOpenCard?.(cardId)
+  }
+
+  const acceptProposal = async (proposalId: string, finalCardId: string) => {
+    setActionError(null)
+    const result = await actions.acceptProposal(proposalId, finalCardId)
+    if (!result.ok) {
+      throw new Error(result.error)
+    }
+    onOpenCard?.(finalCardId)
+  }
+
+  const rejectProposal = async (
+    proposalId: string,
+    feedback: ConversationProposalRejectionFeedback | null,
+  ) => {
+    setActionError(null)
+    const result = await actions.rejectProposal(proposalId, feedback)
+    if (!result.ok) throw new Error(result.error)
+  }
+
+  const redoFromCurrent = (proposalId: string) => {
+    const proposal = view.document?.proposals.find(candidate => candidate.id === proposalId)
+    if (!proposal) {
+      setActionError('Card 提案不存在')
+      return
+    }
+    setActionError(null)
+    setSelectedQuickReply(null)
+    setDraft(`基于当前版本重做 @${proposal.targetCardId}`)
+    if (documentsById.has(proposal.targetCardId)) {
+      setAttachmentIds(ids => ids.includes(proposal.targetCardId) ? ids : [...ids, proposal.targetCardId])
+    }
+    requestAnimationFrame(() => composerRef.current?.focus())
   }
 
   const latestTurnId = turns.at(-1)?.id ?? null
@@ -266,6 +361,17 @@ export function ProjectConversationDrawer() {
                   <span /><span /><span />
                 </div>
               )}
+              {view.document && (
+                <CardProposalPanel
+                  key={view.projectRoot}
+                  documents={projectDocuments}
+                  proposals={view.document.proposals}
+                  onPreviewUpdate={(proposalId, cardId) => void previewUpdateProposal(proposalId, cardId)}
+                  onAccept={acceptProposal}
+                  onReject={rejectProposal}
+                  onRedoFromCurrent={redoFromCurrent}
+                />
+              )}
             </div>
 
             {(view.persistenceError || actionError || (view.lastError && !view.isRunning)) && (
@@ -296,7 +402,7 @@ export function ProjectConversationDrawer() {
                 <select
                   aria-label="添加 Card 上下文"
                   value=""
-                  disabled={!view.projectRoot || availableDocuments.length === 0 || view.isRunning}
+                  disabled={!isCardCatalogReady || availableDocuments.length === 0 || view.isRunning}
                   onChange={event => {
                     if (event.target.value) setAttachmentIds(ids => [...ids, event.target.value])
                   }}
@@ -322,10 +428,10 @@ export function ProjectConversationDrawer() {
                   value={draft}
                   onChange={event => updateDraft(event.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={composerPlaceholder(view.loadStatus)}
+                  placeholder={composerPlaceholder(view.loadStatus, isCardCatalogReady)}
                   aria-label="发送给项目 AI 的消息"
                   rows={3}
-                  disabled={!view.projectRoot || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.isRunning}
+                  disabled={!isCardCatalogReady || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.isRunning}
                 />
                 {view.isRunning ? (
                   <button type="button" className="conversation-send-button is-cancel" onClick={() => void actions.cancel()}>
@@ -337,7 +443,11 @@ export function ProjectConversationDrawer() {
                   </button>
                 )}
               </div>
-              <p className="conversation-composer-hint">Enter 发送 · Shift + Enter 换行 · 附件仅记录发送时版本</p>
+              <p className="conversation-composer-hint">
+                {view.projectRoot && !isCardCatalogReady
+                  ? '正在等待当前项目 Card 目录加载完成…'
+                  : 'Enter 发送 · Shift + Enter 换行 · 附件仅记录发送时版本'}
+              </p>
             </form>
           </div>
         )}
@@ -443,11 +553,12 @@ function shortRevision(revision: string): string {
   return revision.slice(0, 8)
 }
 
-function composerPlaceholder(status: ProjectConversationView['loadStatus']): string {
+function composerPlaceholder(status: ProjectConversationView['loadStatus'], isCardCatalogReady: boolean): string {
   if (status === 'no-project') return '请先打开项目'
   if (status === 'loading') return '正在恢复对话…'
   if (status === 'quarantined') return '对话已隔离，暂时无法发送'
   if (status === 'error') return '对话加载失败'
+  if (!isCardCatalogReady) return '正在加载当前项目 Card 目录…'
   return '讨论项目目标、比较 Card，或提出下一步修改…'
 }
 

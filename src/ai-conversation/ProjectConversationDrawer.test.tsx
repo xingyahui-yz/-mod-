@@ -1,14 +1,19 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createEmptyGraph } from '../node-editor/graph'
-import { cardCatalogActions } from '../card/cardCatalog'
+import { cardCatalogActions, getCardCatalogView } from '../card/cardCatalog'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
-import type { ConversationDocumentV1 } from './conversationDocument'
+import type { ConversationDocument } from './conversationDocument'
 import type { ConversationLoadResult, ConversationRepository } from './conversationRepository'
 import { ProjectConversation, type ConversationModel } from './projectConversation'
 import { ProjectConversationProvider } from './ProjectConversationContext'
 import { ProjectConversationDrawer } from './ProjectConversationDrawer'
+import {
+  createProposalCardApplication,
+  type ProposalCardPersistencePort,
+} from './proposalApplication'
+import type { ConversationCardProposal, ConversationProposalEvent } from './proposalLifecycle'
 
 const NOW = '2026-09-02T01:00:00.000Z'
 
@@ -92,6 +97,267 @@ describe('ProjectConversationDrawer', () => {
       cardId: 'FrostArc',
       revision: cardDocumentRevision(document),
     }])
+  })
+
+  it('同一轮的多个 Card 提案都显示在项目抽屉中', async () => {
+    const document = completedDocument()
+    document.proposals = [
+      proposal('proposal-a', cardDocument('CardA', 'A1'), 'create'),
+      proposal('proposal-b', cardDocument('CardB', 'B1'), 'create'),
+    ]
+
+    renderDrawer('/mods/quiet-depth', memoryRepository({ status: 'loaded', document }), successModel('不会调用'))
+
+    expect(await screen.findByRole('button', { name: /@CardA.*创建新 Card/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /@CardB.*创建新 Card/ })).toBeTruthy()
+    expect(screen.getByLabelText('2 个提案')).toBeTruthy()
+  })
+
+  it('预览 update 时先刷新提案，再定位 Card 并通知 App 打开编辑器', async () => {
+    const first = cardDocument('CardA', 'A0')
+    const target = cardDocument('CardB', 'B0')
+    const candidate = cardDocument('CardB', 'B1')
+    cardCatalogActions.loadDocuments([first, target], '/mods/quiet-depth')
+    const document = completedDocument()
+    document.proposals = [proposal(
+      'proposal-update',
+      candidate,
+      'update',
+      'pending',
+      cardDocumentRevision(target),
+    )]
+    const onOpenCard = vi.fn()
+    renderDrawer(
+      '/mods/quiet-depth',
+      memoryRepository({ status: 'loaded', document }),
+      successModel('不会调用'),
+      onOpenCard,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /@CardB.*修改现有 Card/ }))
+
+    await waitFor(() => expect(getCardCatalogView().selectedCardId).toBe('CardB'))
+    expect(onOpenCard).toHaveBeenCalledWith('CardB')
+    expect(screen.getByText('当前内容 ↔ 提案内容')).toBeTruthy()
+  })
+
+  it('目标 Card 在提案生成后继续编辑时，列表自动持久化为已过期', async () => {
+    const target = cardDocument('FrostArc', '生成时内容')
+    cardCatalogActions.loadDocuments([target], '/mods/quiet-depth')
+    const document = completedDocument()
+    document.proposals = [proposal(
+      'proposal-auto-stale',
+      cardDocument('FrostArc', 'AI 候选'),
+      'update',
+      'pending',
+      cardDocumentRevision(target),
+    )]
+    const repository = memoryRepository({ status: 'loaded', document })
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+    expect(await screen.findByText('待确认')).toBeTruthy()
+
+    act(() => {
+      expect(cardCatalogActions.patchCurrentCard({ description: '用户继续编辑后的内容' }).ok).toBe(true)
+    })
+
+    expect(await screen.findByText('已过期')).toBeTruthy()
+    expect(repository.current?.proposals[0].status).toBe('stale')
+  })
+
+  it('创建提案只有接受时才以最终 ID 加入项目', async () => {
+    cardCatalogActions.loadDocuments([cardDocument('CardA', 'A0')], '/mods/quiet-depth')
+    const conversationDocument = completedDocument()
+    conversationDocument.proposals = [proposal(
+      'proposal-create',
+      cardDocument('SuggestedCard', '候选'),
+      'create',
+    )]
+    const repository = memoryRepository({ status: 'loaded', document: conversationDocument })
+    const onOpenCard = vi.fn()
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'), onOpenCard)
+
+    fireEvent.click(await screen.findByRole('button', { name: /@SuggestedCard.*创建新 Card/ }))
+    expect(getCardCatalogView().documents.map(value => value.card.id)).toEqual(['CardA'])
+    fireEvent.change(screen.getByLabelText('最终 Card ID'), { target: { value: 'FinalCard' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建并接受' }))
+
+    await waitFor(() => expect(getCardCatalogView().documents.map(value => value.card.id)).toEqual(['CardA', 'FinalCard']))
+    expect(repository.current?.proposals[0].status).toBe('accepted')
+    expect(getCardCatalogView().currentDocument).toMatchObject({
+      card: { id: 'FinalCard' },
+      graph: { entityId: 'FinalCard' },
+    })
+    expect(onOpenCard).toHaveBeenCalledWith('FinalCard')
+  })
+
+  it('拒绝提案经二次确认后保存结构化原因', async () => {
+    const conversationDocument = completedDocument()
+    conversationDocument.proposals = [proposal(
+      'proposal-reject',
+      cardDocument('RejectedCard', '不要'),
+      'create',
+    )]
+    const repository = memoryRepository({ status: 'loaded', document: conversationDocument })
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /@RejectedCard.*创建新 Card/ }))
+    fireEvent.click(screen.getByRole('button', { name: '拒绝提案' }))
+    fireEvent.change(screen.getByLabelText('原因（可选）'), { target: { value: 'scope' } })
+    fireEvent.change(screen.getByLabelText('补充说明（可选）'), { target: { value: '稍后再做' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认永久拒绝' }))
+
+    await waitFor(() => expect(repository.current?.proposals[0].status).toBe('rejected'))
+    expect(repository.current?.proposals[0].events.at(-1)).toMatchObject({
+      type: 'rejected',
+      feedback: { code: 'scope', note: '稍后再做' },
+    })
+  })
+
+  it('提案动作失败时显示错误且不导航、不关闭确认层', async () => {
+    const conversationDocument = completedDocument()
+    conversationDocument.proposals = [proposal(
+      'proposal-failure',
+      cardDocument('FailedCard', '候选'),
+      'create',
+    )]
+    const repository = memoryRepository({ status: 'loaded', document: conversationDocument })
+    vi.mocked(repository.save).mockResolvedValueOnce({
+      ok: false,
+      error: '磁盘不可写',
+      certainty: 'unchanged',
+    })
+    const onOpenCard = vi.fn()
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'), onOpenCard)
+
+    fireEvent.click(await screen.findByRole('button', { name: /@FailedCard.*创建新 Card/ }))
+    fireEvent.click(screen.getByRole('button', { name: '拒绝提案' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认永久拒绝' }))
+
+    expect(await screen.findByText('提案状态保存失败：磁盘不可写')).toBeTruthy()
+    expect(screen.getByRole('group', { name: '确认拒绝提案' })).toBeTruthy()
+    expect(onOpenCard).not.toHaveBeenCalled()
+    expect(repository.current?.proposals[0].status).toBe('pending')
+  })
+
+  it('接受状态保存失败时显示错误，且不创建 Card、不导航', async () => {
+    cardCatalogActions.loadDocuments([cardDocument('CardA', 'A0')], '/mods/quiet-depth')
+    const conversationDocument = completedDocument()
+    conversationDocument.proposals = [proposal(
+      'proposal-accept-failure',
+      cardDocument('CandidateCard', '候选'),
+      'create',
+    )]
+    const repository = memoryRepository({ status: 'loaded', document: conversationDocument })
+    vi.mocked(repository.save).mockResolvedValueOnce({
+      ok: false,
+      error: '磁盘不可写',
+      certainty: 'unchanged',
+    })
+    const onOpenCard = vi.fn()
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'), onOpenCard)
+
+    fireEvent.click(await screen.findByRole('button', { name: /@CandidateCard.*创建新 Card/ }))
+    fireEvent.click(screen.getByRole('button', { name: '创建并接受' }))
+
+    expect(await screen.findByText('提案接受状态保存失败：磁盘不可写')).toBeTruthy()
+    expect(getCardCatalogView().documents.map(value => value.card.id)).toEqual(['CardA'])
+    expect(onOpenCard).not.toHaveBeenCalled()
+    expect(repository.current?.proposals[0].status).toBe('pending')
+  })
+
+  it('过期提案的重做只填入可编辑草稿，不自动发送', async () => {
+    const model = successModel('不应调用')
+    const target = cardDocument('FrostArc', '当前内容')
+    cardCatalogActions.loadDocuments([target], '/mods/quiet-depth')
+    const conversationDocument = completedDocument()
+    conversationDocument.proposals = [proposal(
+      'proposal-stale',
+      cardDocument('FrostArc', '旧候选'),
+      'update',
+      'stale',
+      'old-revision',
+    )]
+    renderDrawer('/mods/quiet-depth', memoryRepository({ status: 'loaded', document: conversationDocument }), model)
+
+    fireEvent.click(await screen.findByRole('button', { name: /@FrostArc.*修改现有 Card/ }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '基于当前内容重做' }))
+    })
+
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value)
+      .toBe('基于当前版本重做 @FrostArc')
+    expect(screen.getByLabelText('已添加的 Card 上下文').textContent).toContain('@FrostArc')
+    expect(model.respond).not.toHaveBeenCalled()
+  })
+
+  it('切换项目会关闭同 ID 提案的旧预览', async () => {
+    const firstDocument = completedDocument()
+    firstDocument.proposals = [proposal('shared-proposal', cardDocument('FirstCard', 'A'), 'create')]
+    const secondDocument = completedDocument()
+    secondDocument.proposals = [proposal('shared-proposal', cardDocument('SecondCard', 'B'), 'create')]
+    const conversations = new Map([
+      ['/mods/a', new ProjectConversation('/mods/a', memoryRepository({ status: 'loaded', document: firstDocument }), successModel('不会调用'))],
+      ['/mods/b', new ProjectConversation('/mods/b', memoryRepository({ status: 'loaded', document: secondDocument }), successModel('不会调用'))],
+    ])
+    const factory = (projectRoot: string) => conversations.get(projectRoot)!
+    const rendered = render(
+      <ProjectConversationProvider projectRoot="/mods/a" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /@FirstCard.*创建新 Card/ }))
+    expect(screen.getByLabelText('@FirstCard 提案预览')).toBeTruthy()
+
+    rendered.rerender(
+      <ProjectConversationProvider projectRoot="/mods/b" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+
+    const second = await screen.findByRole('button', { name: /@SecondCard.*创建新 Card/ })
+    expect(second.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByLabelText('@SecondCard 提案预览')).toBeNull()
+  })
+
+  it('切换项目会清除旧项目未读，并以新项目已加载历史重置计数基线', async () => {
+    const first = new ProjectConversation(
+      '/mods/a',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      successModel('A 的新回复'),
+      () => new Date(NOW),
+      sequentialIds(),
+    )
+    const second = new ProjectConversation(
+      '/mods/b',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      successModel('B 的新回复'),
+      () => new Date(NOW),
+      sequentialIds(),
+    )
+    const conversations = new Map([['/mods/a', first], ['/mods/b', second]])
+    const factory = (projectRoot: string) => conversations.get(projectRoot)!
+    const rendered = render(
+      <ProjectConversationProvider projectRoot="/mods/a" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    await screen.findByText('先明确玩法主线。')
+    fireEvent.click(screen.getByRole('button', { name: '收起项目 AI 对话' }))
+
+    await act(async () => { await first.send('A 的追加消息') })
+    expect(screen.getByRole('button', { name: /展开项目 AI 对话，有未读消息/ })).toBeTruthy()
+
+    rendered.rerender(
+      <ProjectConversationProvider projectRoot="/mods/b" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '展开项目 AI 对话' })).toBeTruthy()
+    })
+
+    await act(async () => { await second.send('B 的追加消息') })
+    expect(screen.getByRole('button', { name: /展开项目 AI 对话，有未读消息/ })).toBeTruthy()
   })
 
   it('失败、取消或中断的最后一轮提供手动重试', async () => {
@@ -184,6 +450,31 @@ describe('ProjectConversationDrawer', () => {
     const picker = screen.getByLabelText('添加 Card 上下文') as HTMLSelectElement
     expect(picker.disabled).toBe(true)
     expect(screen.queryByRole('option', { name: /SecretCard/ })).toBeNull()
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).disabled).toBe(true)
+    expect(screen.getByText('正在等待当前项目 Card 目录加载完成…')).toBeTruthy()
+  })
+
+  it('未绑定 Card 目录时等待加载，已绑定的空目录仍可发送', async () => {
+    const projectRoot = '/mods/empty-project'
+    const repository = memoryRepository({ status: 'missing' })
+    const model = successModel('已收到')
+    const conversation = new ProjectConversation(projectRoot, repository, model)
+    const rendered = render(
+      <ProjectConversationProvider projectRoot={projectRoot} createConversation={() => conversation}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    await screen.findByText('从项目目标开始')
+    const composer = screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement
+    expect(composer.disabled).toBe(true)
+    expect(screen.getByText('正在等待当前项目 Card 目录加载完成…')).toBeTruthy()
+
+    act(() => { cardCatalogActions.loadDocuments([], projectRoot) })
+    expect(composer.disabled).toBe(false)
+    fireEvent.change(composer, { target: { value: '从空项目开始' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(model.respond).toHaveBeenCalledTimes(1))
+    rendered.unmount()
   })
 
   it('输入法组合期间按 Enter 不发送，组合结束后才发送', async () => {
@@ -210,18 +501,50 @@ describe('ProjectConversationDrawer', () => {
   })
 })
 
-function renderDrawer(projectRoot: string, repository: ReturnType<typeof memoryRepository>, model: ConversationModel) {
-  const conversation = new ProjectConversation(projectRoot, repository, model, () => new Date(NOW), sequentialIds())
+function renderDrawer(
+  projectRoot: string,
+  repository: ReturnType<typeof memoryRepository>,
+  model: ConversationModel,
+  onOpenCard?: (cardId: string) => void,
+) {
+  const catalog = getCardCatalogView()
+  if (catalog.sourceProjectRoot === null && catalog.documents.length === 0) {
+    cardCatalogActions.loadDocuments([], projectRoot)
+  }
+  const conversation = new ProjectConversation(
+    projectRoot,
+    repository,
+    model,
+    () => new Date(NOW),
+    sequentialIds(),
+    () => {
+      const catalog = getCardCatalogView()
+      return catalog.sourceProjectRoot === projectRoot ? catalog.documents : []
+    },
+  )
   return render(
-    <ProjectConversationProvider projectRoot={projectRoot} createConversation={() => conversation}>
-      <ProjectConversationDrawer />
+    <ProjectConversationProvider
+      projectRoot={projectRoot}
+      createConversation={() => conversation}
+      createProposalApplication={() => createProposalCardApplication(projectRoot, successfulCardFiles())}
+    >
+      <ProjectConversationDrawer onOpenCard={onOpenCard} />
     </ProjectConversationProvider>,
   )
 }
 
+function successfulCardFiles(): ProposalCardPersistencePort {
+  return {
+    saveCardDocument: vi.fn(async () => ({ ok: true as const })),
+    removeCardDocument: vi.fn(async () => true),
+    inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
+    hasTrashedCardDocument: vi.fn(async () => false),
+  }
+}
+
 function memoryRepository(initial: ConversationLoadResult) {
   let current = initial.status === 'loaded' ? initial.document : null
-  const repository: ConversationRepository & { current: ConversationDocumentV1 | null } = {
+  const repository: ConversationRepository & { current: ConversationDocument | null } = {
     get current() { return current },
     set current(value) { current = value },
     load: vi.fn(async () => current ? { status: 'loaded' as const, document: current } : initial),
@@ -243,9 +566,10 @@ function responseText(text: string): string {
   return JSON.stringify({ schemaVersion: 1, text, quickReplies: [], proposals: [] })
 }
 
-function completedDocument(): ConversationDocumentV1 {
+function completedDocument(): ConversationDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    proposals: [],
     turns: [{
       id: 'turn-1',
       userText: '我们先做什么？',
@@ -264,6 +588,32 @@ function completedDocument(): ConversationDocumentV1 {
       }],
       createdAt: NOW,
     }],
+    createdAt: NOW,
+    updatedAt: NOW,
+  }
+}
+
+function proposal(
+  id: string,
+  document: CardDocument,
+  operation: 'create' | 'update',
+  status: 'pending' | 'stale' = 'pending',
+  baseRevision: string | null = null,
+): ConversationCardProposal {
+  const events: ConversationProposalEvent[] = [{ id: `${id}-proposed`, type: 'proposed', at: NOW }]
+  if (status === 'stale') {
+    events.push({ id: `${id}-stale`, type: 'stale', at: NOW, observedRevision: null })
+  }
+  return {
+    id,
+    operation,
+    targetCardId: document.card.id,
+    baseRevision: operation === 'update' ? baseRevision ?? 'revision' : null,
+    document,
+    status,
+    provenance: { turnId: 'turn-1', attemptId: 'attempt-1' },
+    projectReferences: [],
+    events,
     createdAt: NOW,
     updatedAt: NOW,
   }

@@ -1,5 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
-import { cardCatalogActions, getCardCatalogView, useCardCatalog } from '../card/cardCatalog'
+import {
+  cardCatalogActions,
+  getCardCatalogView,
+  subscribeCardCatalogEvents,
+  useCardCatalog,
+} from '../card/cardCatalog'
 import { CardData, createDefaultCard } from '../types'
 import { generateCardDocumentCode } from '../card/codegen'
 import { isValidCardId, validateCard } from '../card/cardValidation'
@@ -43,6 +48,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [graphError, setGraphError] = useState<string | null>(null)
   const [autosaveState, setAutosaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const autosaveCardId = useRef<string | null>(null)
+  const proposalManagedSnapshots = useRef(new Set<string>())
   const persistedSnapshot = useRef<string | null>(null)
   const activeProjectRef = useRef<string | null>(projectPath)
   const loadedProjectRef = useRef<string | null>(null)
@@ -59,6 +66,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     if (activeProjectRef.current === projectPath) return
     activeProjectRef.current = projectPath
     loadedProjectRef.current = null
+    proposalManagedSnapshots.current.clear()
     persistedSnapshot.current = null
     loadGenerationRef.current += 1
     setSaving(false)
@@ -76,6 +84,23 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   useEffect(() => setGraphError(null), [selectedCardId])
 
+  // AI proposal application 自己负责 `conversation WAL → Card → committed`。
+  // Catalog 事件同步到达，因此可在 React effect cleanup 之前丢弃同 Card 的
+  // 旧 autosave，并标记新快照不再由通用 autosave 重复/抢先写入。
+  useLayoutEffect(() => {
+    if (!projectPath) return
+    return subscribeCardCatalogEvents(event => {
+      if (event.sourceProjectRoot !== projectPath) return
+      if (autosaveTimer.current && autosaveCardId.current === event.cardId) {
+        clearTimeout(autosaveTimer.current)
+        autosaveTimer.current = null
+        autosaveCardId.current = null
+      }
+      const document = getCardCatalogView().documents.find(candidate => candidate.card.id === event.cardId)
+      if (document) proposalManagedSnapshots.current.add(serializeCardDocument(document))
+    })
+  }, [projectPath])
+
   // Card 属性与行为图共享同一份防抖草稿自动保存；generation 指纹随编辑
   // 失效但不会在这里生成 C#。effect cleanup 会在切换 Card/项目或卸载前
   // 尽力 flush 当前待保存快照，避免用户快速切换丢失最后一次编辑。
@@ -83,6 +108,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     if (autosaveTimer.current) {
       clearTimeout(autosaveTimer.current)
       autosaveTimer.current = null
+      autosaveCardId.current = null
     }
     if (!projectPath || !currentDocument || loadedProjectRef.current !== projectPath ||
       getCardCatalogView().sourceProjectRoot !== projectPath) {
@@ -92,6 +118,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     }
 
     const snapshot = serializeCardDocument(currentDocument)
+    if (proposalManagedSnapshots.current.delete(snapshot)) {
+      persistedSnapshot.current = snapshot
+      setAutosaveState('saved')
+      return
+    }
     if (persistedSnapshot.current === null) {
       persistedSnapshot.current = snapshot
       setAutosaveState('saved')
@@ -115,13 +146,16 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     }
     autosaveTimer.current = setTimeout(() => {
       autosaveTimer.current = null
+      autosaveCardId.current = null
       void flush()
     }, 500)
+    autosaveCardId.current = documentToSave.card.id
 
     return () => {
       if (autosaveTimer.current) {
         clearTimeout(autosaveTimer.current)
         autosaveTimer.current = null
+        autosaveCardId.current = null
         // 不等待 Promise，先启动写入；Electron 文件端口会自行完成原子写。
         void flush()
       }

@@ -14,11 +14,37 @@ interface CardEditSnapshot {
   graph: NodeGraph
 }
 
+export interface CardEditProvenance {
+  kind: 'ai-proposal'
+  proposalId: string
+  /** 一次接受事务的稳定标识；undo/redo 必须复用它。 */
+  transactionId: string
+}
+
+interface CardHistorySnapshot extends CardEditSnapshot {
+  /** 描述“如何到达此快照”，不属于 CardDocument，也不参与 revision。 */
+  provenance?: CardEditProvenance
+}
+
+export type CardCatalogEvent = {
+  type: 'proposal-status-changed'
+  sourceProjectRoot: string | null
+  cardId: CardId
+  proposalId: string
+  transactionId: string
+  status: 'accepted' | 'reverted'
+  source: 'apply' | 'undo' | 'redo'
+}
+
+export interface CardCatalogMutationOptions {
+  provenance?: CardEditProvenance
+}
+
 interface CatalogState {
   sourceProjectRoot: string | null
   order: CardId[]
   documentsById: Map<CardId, CardDocument>
-  historiesById: Map<CardId, HistoryState<CardEditSnapshot>>
+  historiesById: Map<CardId, HistoryState<CardHistorySnapshot>>
   selectedCardId: CardId | null
 }
 
@@ -57,6 +83,7 @@ interface OpenEdit {
 }
 
 const openEdits = new Map<string, OpenEdit>()
+const eventListeners = new Set<(event: CardCatalogEvent) => void>()
 
 const emptyState: CatalogState = {
   sourceProjectRoot: null,
@@ -80,6 +107,39 @@ function snapshot(document: CardDocument): CardEditSnapshot {
   return { card: document.card, graph: document.graph }
 }
 
+function historySnapshot(
+  value: CardEditSnapshot,
+  provenance?: CardEditProvenance,
+): CardHistorySnapshot {
+  return provenance ? { ...value, provenance } : value
+}
+
+function emitProposalStatus(
+  cardId: CardId,
+  provenance: CardEditProvenance | undefined,
+  status: CardCatalogEvent['status'],
+  source: CardCatalogEvent['source'],
+): void {
+  if (!provenance) return
+  const event: CardCatalogEvent = {
+    type: 'proposal-status-changed',
+    sourceProjectRoot: useCatalogState.getState().sourceProjectRoot,
+    cardId,
+    proposalId: provenance.proposalId,
+    transactionId: provenance.transactionId,
+    status,
+    source,
+  }
+  for (const listener of eventListeners) {
+    // 外部同步失败不能回滚已经完成的 Card 权威状态变更，也不能阻断其他订阅者。
+    try {
+      listener(event)
+    } catch {
+      // 订阅者负责自己的诊断与重试；Catalog 保持 mutation seam 无异常。
+    }
+  }
+}
+
 function clearGeneration(document: CardDocument, next: CardEditSnapshot): CardDocument {
   return {
     ...document,
@@ -90,7 +150,8 @@ function clearGeneration(document: CardDocument, next: CardEditSnapshot): CardDo
 }
 
 function sameSnapshot(a: CardEditSnapshot, b: CardEditSnapshot): boolean {
-  return (a.card === b.card && a.graph === b.graph) || JSON.stringify(a) === JSON.stringify(b)
+  return (a.card === b.card && a.graph === b.graph)
+    || (JSON.stringify(a.card) === JSON.stringify(b.card) && JSON.stringify(a.graph) === JSON.stringify(b.graph))
 }
 
 function deriveView(state: CatalogState): CardCatalogView {
@@ -146,21 +207,56 @@ function cancelAllEdits(): void {
   openEdits.clear()
 }
 
-function commitSnapshot(cardId: CardId, next: CardEditSnapshot): CatalogResult {
+function commitSnapshot(
+  cardId: CardId,
+  next: CardEditSnapshot,
+  options: CardCatalogMutationOptions = {},
+): CatalogResult {
   finishCardEdits(cardId)
   const state = useCatalogState.getState()
   const document = state.documentsById.get(cardId)
   const history = state.historiesById.get(cardId)
   if (!document || !history) return failure('card-not-found')
-  if (sameSnapshot(snapshot(document), next)) return success()
+  if (sameSnapshot(snapshot(document), next)) {
+    emitProposalStatus(cardId, options.provenance, 'accepted', 'apply')
+    return success()
+  }
   const nextDocument = clearGeneration(document, next)
   if (parseCardDocument(nextDocument).status !== 'editable') return failure('invalid-document')
   const documentsById = new Map(state.documentsById)
   documentsById.set(cardId, nextDocument)
   const historiesById = new Map(state.historiesById)
-  historiesById.set(cardId, commitHistory(history, next))
+  historiesById.set(cardId, commitHistory(history, historySnapshot(next, options.provenance)))
   useCatalogState.setState({ documentsById, historiesById })
+  emitProposalStatus(cardId, options.provenance, 'accepted', 'apply')
   return success()
+}
+
+function createCardDocument(
+  document: CardDocument,
+  options: CardCatalogMutationOptions = {},
+): CatalogResult<{ cardId: string }> {
+  let state = useCatalogState.getState()
+  if (!isValidCardId(document.card.id)) return failure('invalid-card-id')
+  if (parseCardDocument(document).status !== 'editable') return failure('invalid-document')
+  if (state.order.some(id => id.toLowerCase() === document.card.id.toLowerCase())) {
+    return failure('duplicate-card-id')
+  }
+  if (state.selectedCardId) finishCardEdits(state.selectedCardId)
+  state = useCatalogState.getState()
+  const cardId = document.card.id
+  const documentsById = new Map(state.documentsById)
+  documentsById.set(cardId, document)
+  const historiesById = new Map(state.historiesById)
+  historiesById.set(cardId, createHistory(historySnapshot(snapshot(document), options.provenance)))
+  useCatalogState.setState({
+    order: [...state.order, cardId],
+    documentsById,
+    historiesById,
+    selectedCardId: cardId,
+  })
+  emitProposalStatus(cardId, options.provenance, 'accepted', 'apply')
+  return success({ cardId })
 }
 
 function updateMerged(key: string, cardId: CardId, next: CardEditSnapshot, idleMs?: number): CatalogResult {
@@ -222,25 +318,25 @@ export const cardCatalogActions = {
     return success()
   },
 
-  createCard(card: CardData): CatalogResult<{ cardId: string }> {
-    let state = useCatalogState.getState()
+  createCard(
+    card: CardData,
+    options: CardCatalogMutationOptions = {},
+  ): CatalogResult<{ cardId: string }> {
     if (!isValidCardId(card.id)) return failure('invalid-card-id')
-    if (state.order.some(id => id.toLowerCase() === card.id.toLowerCase())) return failure('duplicate-card-id')
-    if (state.selectedCardId) finishCardEdits(state.selectedCardId)
-    state = useCatalogState.getState()
     const document: CardDocument = {
       schemaVersion: 2,
       card,
       graph: createEmptyGraph(card.id, 'card'),
       generation: { lastGeneratedFingerprint: null },
     }
-    const documentsById = new Map(state.documentsById)
-    documentsById.set(card.id, document)
-    const historiesById = new Map(state.historiesById)
-    historiesById.set(card.id, createHistory(snapshot(document)))
-    useCatalogState.setState({ order: [...state.order, card.id], documentsById, historiesById, selectedCardId: card.id })
-    return success({ cardId: card.id })
+    return createCardDocument(document, options)
   },
+
+  /**
+   * 接受“创建 Card”提案时写入完整、已由上层 rekey 的文档。
+   * 创建本身不进入目录级 undo；新 Card 仅从一条空的自身编辑历史开始。
+   */
+  createCardDocument,
 
   removeCard(cardId: CardId): CatalogResult {
     const state = useCatalogState.getState()
@@ -306,13 +402,16 @@ export const cardCatalogActions = {
     return success()
   },
 
-  applyProposal(proposal: CardProposal): CatalogResult {
+  applyProposal(
+    proposal: CardProposal,
+    options: CardCatalogMutationOptions = {},
+  ): CatalogResult {
     const state = useCatalogState.getState()
     const current = state.documentsById.get(proposal.cardId)
     if (!current) return failure('card-not-found')
     const applied = applyProposalDocument(current, proposal)
     if (!applied.ok) return failure('stale-proposal')
-    return commitSnapshot(proposal.cardId, snapshot(applied.document))
+    return commitSnapshot(proposal.cardId, snapshot(applied.document), options)
   },
 
   recordGeneration(input: { cardId: CardId; baseRevision: string; fingerprint: GenerationFingerprint }): CatalogResult {
@@ -343,6 +442,7 @@ export const cardCatalogActions = {
     const documentsById = new Map(latest.documentsById)
     documentsById.set(cardId, clearGeneration(document, nextHistory.present))
     useCatalogState.setState({ historiesById, documentsById })
+    emitProposalStatus(cardId, history.present.provenance, 'reverted', 'undo')
   },
 
   redo(): void {
@@ -361,7 +461,17 @@ export const cardCatalogActions = {
     const documentsById = new Map(latest.documentsById)
     documentsById.set(cardId, clearGeneration(document, nextHistory.present))
     useCatalogState.setState({ historiesById, documentsById })
+    emitProposalStatus(cardId, nextHistory.present.provenance, 'accepted', 'redo')
   },
+}
+
+/**
+ * 订阅 Card 编辑导致的提案状态转换。事件在权威 Card 状态更新后同步发出；
+ * 订阅者只能看到领域事实，不能读取内部 Map 或 HistoryState。
+ */
+export function subscribeCardCatalogEvents(listener: (event: CardCatalogEvent) => void): () => void {
+  eventListeners.add(listener)
+  return () => eventListeners.delete(listener)
 }
 
 export function useCardCatalog<T>(selector: (view: CardCatalogView) => T): T {

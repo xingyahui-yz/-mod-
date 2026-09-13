@@ -16,6 +16,7 @@ import * as FileService from '../services/FileService'
 import { installFileService } from '../services/FileService'
 import { CardData } from '../types'
 import { serializeCardDocument, type CardDocument } from '../card/cardDocument'
+import { createCardProposal } from '../card/cardAiProposal'
 
 // 重置 Card store；Card 文档而非 localStorage 承担持久化
 beforeEach(() => {
@@ -358,6 +359,47 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(writtenPaths.some(path => path.startsWith('/A/.modstudio/cards/Fireball.json.tmp-'))).toBe(true)
     expect(writtenPaths.some(path => path.startsWith('/B/'))).toBe(false)
     expect(getCardCatalogView().sourceProjectRoot).toBe('/B')
+  })
+
+  it('AI 提案接管 Card 持久化时取消通用 autosave，不会写回旧草稿或重复写候选', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const writeFile = vi.fn(async () => true)
+    const mockApi = createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.includes('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    })
+    installFileService({ api: mockApi })
+
+    render(<CardEditor projectPath="/A" />)
+    const input = await screen.findByDisplayValue('火球')
+    fireEvent.change(input, { target: { value: '尚未保存的手工草稿' } })
+    const edited = getCardCatalogView().currentDocument!
+    const proposal = createCardProposal(edited, {
+      ...edited,
+      card: { ...edited.card, name: 'AI 候选内容' },
+    })
+    expect(proposal.status).toBe('ready')
+
+    await act(async () => {
+      if (proposal.status === 'ready') {
+        cardCatalogActions.applyProposal(proposal.proposal, {
+          provenance: {
+            kind: 'ai-proposal',
+            proposalId: 'proposal-autosave-order',
+            transactionId: 'transaction-autosave-order',
+          },
+        })
+      }
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+
+    expect(screen.getByDisplayValue('AI 候选内容')).toBeTruthy()
+    expect(writeFile).not.toHaveBeenCalled()
   })
 
   it('项目 A 的迟到删除不会移除项目 B 中同 ID 的 Card', async () => {
