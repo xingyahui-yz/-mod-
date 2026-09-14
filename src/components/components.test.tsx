@@ -307,6 +307,23 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(screen.queryByText(/加载卡牌失败/)).toBeNull()
   })
 
+  it('空项目中新建 Card 会作为未持久化草稿自动保存', async () => {
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async () => []),
+      writeFile,
+    }) })
+
+    render(<CardEditor projectPath="/A" />)
+    fireEvent.click(await screen.findByRole('button', { name: '创建第一张卡牌' }))
+    fireEvent.change(screen.getByTestId('new-card-id-input'), { target: { value: 'NewCard' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认创建' }))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeFile).mock.calls[0]?.[0]).toMatch(/NewCard\.json\.tmp-/)
+  })
+
   it('项目 A 的迟到加载不会覆盖已经切换到的项目 B', async () => {
     const projectA = deferred<FileService.FileEntry[]>()
     const alpha = cardDocument(seedCards[0])

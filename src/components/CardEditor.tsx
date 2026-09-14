@@ -200,11 +200,6 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
     proposalManagedSnapshots.current.delete(currentDocument.card.id)
-    if (!persistedSnapshots.current.has(currentDocument.card.id)) {
-      persistedSnapshots.current.set(currentDocument.card.id, snapshot)
-      setAutosaveState('saved')
-      return
-    }
     if (persistedSnapshots.current.get(currentDocument.card.id) === snapshot) return
 
     setAutosaveState('pending')
@@ -256,6 +251,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     if (!projectToLoad || activeProjectRef.current !== projectToLoad) return
     const loadGeneration = ++loadGenerationRef.current
     loadedProjectRef.current = null
+    proposalManagedSnapshots.current.clear()
+    deferredAutosaveTokens.current.clear()
+    persistedSnapshots.current.clear()
 
     setLoadingCards(true)
     setRecoveryEntries([])
@@ -272,7 +270,12 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         .filter((document): document is NonNullable<typeof document> => document !== null)
       const invalidEntries = entries.filter(entry => entry.result.status !== 'editable')
       setRecoveryEntries(invalidEntries)
-      cardCatalogActions.loadDocuments(editableDocuments, projectToLoad)
+      const loaded = cardCatalogActions.loadDocuments(editableDocuments, projectToLoad)
+      if (!loaded.ok) throw new Error(`Card 目录状态无效：${loaded.error}`)
+      persistedSnapshots.current = new Map(editableDocuments.map(document => [
+        document.card.id,
+        serializeCardDocument(document),
+      ]))
       loadedProjectRef.current = projectToLoad
       const nextTrashEntries = await FileService.listCardTrash(projectToLoad)
       if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return

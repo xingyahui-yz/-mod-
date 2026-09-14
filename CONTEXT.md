@@ -220,7 +220,7 @@ MyMod/                          ← 用户项目根
 - ✅ E1 卡牌：Card 文档、表单与行为图、逐 Card 编辑历史、草稿自动保存、显式生成、AI 完整提案、迁移/恢复、回收站、批量生成与游戏预检端到端闭环
 - ✅ E3 遗物（Relic）：表单 + 节点图 + Kind Registry（v0.5.2）+ 撤销 / 重做（v0.7）
 - ✅ 节点编辑器（自研）：v0.1 数据模型 → v0.7 历史栈 + 快捷键
-- ✅ 测试基础设施：**585 个**单元 / 集成 / 组件测试；Card 与对话真实文件流、Renderer/Electron 双重构建门禁已通过
+- ✅ 测试基础设施：**586 个**单元 / 集成 / 组件测试；Card 与对话真实文件流、Renderer/Electron 双重构建门禁已通过
 
 **技术栈与 CI**
 - ✅ Electron + React + TypeScript + Zustand 技术栈
@@ -343,4 +343,4 @@ MyMod/                          ← 用户项目根
 | 2026-09-11 | v1.83 加固 Card 提案事务 — accepted/reverted/restored 先写对话 WAL、Card 落盘后追加 committed；启动仅恢复未确认 transition，实际项目合法后继优先 | Codex + 协作 agent |
 | 2026-09-14 | v1.84 加固提案并发与恢复边界 — 建议 ID 不占历史命名空间，活动/回收站文件优先于 create 恢复；Card autosave、生成指纹与 proposal WAL 共用逐 Card 串行写入及 revision 防护 | Codex + 协作 agent |
 | 2026-09-14 | v1.85 收口第二切片独立复检 — undo/redo 以 barrier 严格执行逐事件 WAL→Card→committed；创建与恢复使用 fail-if-exists 原子 ID 占用；预保存结果不确定时项目切换不可绕过 | Codex + 协作 agent |
-| 2026-09-14 | v1.86 补强 Card 文件竞争边界 — Card 创建/恢复以小写 claim 原子串行大小写变体；接受与历史事务期间的后继草稿按 Card 延迟落盘；未提交 create 不再用无来源回收站记录冒充完成 | Codex + 协作 agent |
+| 2026-09-14 | v1.86 补强 Card 文件竞争边界 — Card 创建/恢复以小写 claim 原子串行大小写变体；新建 Card 与事务期间后继草稿按 Card 准确落盘；未提交 create 不再用无来源回收站记录冒充完成 | Codex + 协作 agent |
