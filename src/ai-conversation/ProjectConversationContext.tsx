@@ -25,6 +25,7 @@ import {
   subscribeCardCatalogEvents,
   useCardCatalog,
 } from '../card/cardCatalog'
+import { acquireCardPersistenceBarrier } from '../card/cardPersistenceBarrier'
 import {
   pendingProposalCardTransition,
   type ConversationProposalRejectionFeedback,
@@ -133,9 +134,14 @@ export function ProjectConversationProvider({
     if (!conversation || !projectRoot) return
     return subscribeCardCatalogEvents(event => {
       if (event.sourceProjectRoot !== projectRoot || event.source === 'apply') return
+      // 同步获取 barrier，使 CardEditor 在本事件的 WAL→Card→committed 完成前
+      // 不能把后继草稿抢先落盘。rapid undo/redo 会持有两个 lease，直到
+      // 两个事件按 operationGate 顺序分别完成。
+      const persistenceLease = acquireCardPersistenceBarrier(projectRoot, event.cardId)
       // 事件发出时立刻捕获对应快照；快速 undo/redo 会排队，但不能都保存成最后状态。
       const document = getCardCatalogView().documents.find(candidate => candidate.card.id === event.cardId)
       if (!document || !proposalApplication) {
+        persistenceLease.release()
         operationGate.block('Card 历史状态无法定位对应文档，已停止继续操作')
         return
       }
@@ -162,6 +168,7 @@ export function ProjectConversationProvider({
         )
         if (!confirmed.ok) operationGate.block(confirmed.error)
       }).catch(error => operationGate.block(operationErrorMessage(error)))
+        .finally(() => persistenceLease.release())
     })
   }, [conversation, operationGate, projectRoot, proposalApplication])
 
@@ -373,7 +380,13 @@ export function useProjectConversationActions(): ProjectConversationActions {
       if (!conversation?.hasActiveWork()) return true
       if (!confirmed && !confirmSwitch()) return false
       const result = await conversation.cancel()
-      return result.ok && !conversation.hasActiveWork()
+      await operationGate.drain()
+      const snapshot = conversation.getSnapshot()
+      return result.ok &&
+        !snapshot.requiresReload &&
+        !conversation.hasActiveWork() &&
+        !operationGate.hasPending &&
+        (!operationGate.error || confirmed)
     },
   }), [conversation, projectRoot, proposalApplication, operationGate])
 }

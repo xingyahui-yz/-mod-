@@ -22,6 +22,7 @@ export interface CardDocumentFilePort {
   mkdir(path: string): Promise<boolean>
   writeFile(path: string, content: string): Promise<boolean>
   rename(from: string, to: string): Promise<boolean>
+  linkNoReplace(from: string, to: string): Promise<{ status: 'linked' | 'exists' | 'failed' }>
   remove(path: string): Promise<boolean>
 }
 
@@ -43,12 +44,13 @@ export type CardDocumentMigrationSaveResult =
 export interface CardDocumentRepository {
   load(projectPath: string): Promise<CardDocumentLoadEntry[]>
   save(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
+  create(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
   migrateAndSave(projectPath: string, fileName: string): Promise<CardDocumentMigrationSaveResult>
 }
 
 /** 将现有 FileService 接到 repository，不改变旧的 C# load/save 方法。 */
 export function createCardDocumentRepositoryFromFileService(
-  service: Pick<FileService, 'getProjectFiles' | 'readFile' | 'createDirectory' | 'writeFile' | 'renameFile' | 'removeFile'>,
+  service: Pick<FileService, 'getProjectFiles' | 'readFile' | 'createDirectory' | 'writeFile' | 'renameFile' | 'linkFileNoReplace' | 'removeFile'>,
 ): CardDocumentRepository {
   return createCardDocumentRepository({
     files: {
@@ -57,6 +59,7 @@ export function createCardDocumentRepositoryFromFileService(
       mkdir: path => service.createDirectory(path),
       writeFile: (path, content) => service.writeFile(path, content),
       rename: (from, to) => service.renameFile(from, to),
+      linkNoReplace: (from, to) => service.linkFileNoReplace(from, to),
       remove: path => service.removeFile(path),
     },
   })
@@ -91,6 +94,15 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
     return true
   }
 
+  const validateDocument = (document: CardDocument): string | null => {
+    if (!isValidCardId(document.card.id)) return 'Card ID 不合法，无法保存'
+    const parsed = parseCardDocument(document)
+    if (parsed.status !== 'editable') {
+      return parsed.status === 'invalid' ? parsed.reason : 'CardDocument 不是可编辑状态'
+    }
+    return null
+  }
+
   return {
     async load(projectPath) {
       const cardsPath = joinPath(projectPath, CARDS_DIR)
@@ -120,13 +132,8 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
     },
 
     async save(projectPath, document) {
-      if (!isValidCardId(document.card.id)) {
-        return { ok: false, error: 'Card ID 不合法，无法保存' }
-      }
-      const parsed = parseCardDocument(document)
-      if (parsed.status !== 'editable') {
-        return { ok: false, error: parsed.status === 'invalid' ? parsed.reason : 'CardDocument 不是可编辑状态' }
-      }
+      const invalid = validateDocument(document)
+      if (invalid) return { ok: false, error: invalid }
 
       const cardsPath = joinPath(projectPath, CARDS_DIR)
       const target = joinPath(cardsPath, `${document.card.id}.json`)
@@ -136,6 +143,37 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
 
       if (!await atomicWrite(target, serializeCardDocument(document), document.card.id)) {
         return { ok: false, error: '无法原子替换 CardDocument' }
+      }
+      return { ok: true, path: target }
+    },
+
+    async create(projectPath, document) {
+      const invalid = validateDocument(document)
+      if (invalid) return { ok: false, error: invalid }
+
+      const cardsPath = joinPath(projectPath, CARDS_DIR)
+      if (!await files.mkdir(cardsPath)) {
+        return { ok: false, error: '无法创建 CardDocument 目录' }
+      }
+      const occupied = await files.readDirectory(cardsPath)
+        .then(entries => entries.some(entry => !entry.isDirectory &&
+          entry.name.toLowerCase() === `${document.card.id}.json`.toLowerCase()))
+        .catch(() => true)
+      if (occupied) return { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
+
+      const target = joinPath(cardsPath, `${document.card.id}.json`)
+      const temp = temporaryPath(target, document.card.id)
+      if (!await files.writeFile(temp, serializeCardDocument(document))) {
+        await files.remove(temp).catch(() => false)
+        return { ok: false, error: '无法写入 CardDocument 临时文件' }
+      }
+      const linked = await files.linkNoReplace(temp, target).catch(() => ({ status: 'failed' as const }))
+      await files.remove(temp).catch(() => false)
+      if (linked.status === 'exists') {
+        return { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
+      }
+      if (linked.status !== 'linked') {
+        return { ok: false, error: '无法原子占用 Card ID' }
       }
       return { ok: true, path: target }
     },

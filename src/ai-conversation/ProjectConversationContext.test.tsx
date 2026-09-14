@@ -11,6 +11,7 @@ import {
 import { cardCatalogActions, getCardCatalogView } from '../card/cardCatalog'
 import { cardDocumentRevision, createCardProposal } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
+import { isCardPersistenceBlocked } from '../card/cardPersistenceBarrier'
 import type { ConversationCardProposal } from './proposalLifecycle'
 import {
   createProposalCardApplication,
@@ -85,6 +86,24 @@ describe('ProjectConversationProvider 项目切换守卫', () => {
     await expect(send).resolves.toMatchObject({ ok: false, code: 'cancelled' })
   })
 
+  it('预保存结果不确定时不得被空取消绕过项目切换守卫', async () => {
+    const firstSave = deferred<ConversationSaveResult>()
+    const repository = repositoryWithSaves([firstSave.promise])
+    const actions = renderActions(repository, successModel('不应发送'))
+    await waitFor(() => expect(repository.load).toHaveBeenCalledTimes(1))
+
+    let send!: ReturnType<ProjectConversationActions['send']>
+    act(() => { send = actions.current.send('开始') })
+    await waitFor(() => expect(repository.save).toHaveBeenCalledTimes(1))
+
+    const prepare = actions.current.prepareForProjectSwitch(() => true)
+    firstSave.resolve({ ok: false, error: '原子保存结果不确定', certainty: 'uncertain' })
+
+    await expect(prepare).resolves.toBe(false)
+    await expect(send).resolves.toMatchObject({ ok: false, code: 'persistence' })
+    await expect(actions.current.prepareForProjectSwitch(() => true)).resolves.toBe(false)
+  })
+
   it('接受提案仍在保存 Card 时等待，完成后才允许项目切换', async () => {
     const repository = repositoryWithSaves([])
     const candidate = cardDocument('DraftCard', '候选')
@@ -92,6 +111,7 @@ describe('ProjectConversationProvider 项目切换守卫', () => {
     const cardSave = deferred<{ ok: true } | { ok: false; error: string }>()
     const files: ProposalCardPersistencePort = {
       saveCardDocument: vi.fn(() => cardSave.promise),
+      createCardDocument: vi.fn(() => cardSave.promise),
       removeCardDocument: vi.fn(async () => true),
       inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
       hasTrashedCardDocument: vi.fn(async () => false),
@@ -107,7 +127,7 @@ describe('ProjectConversationProvider 项目切换守卫', () => {
 
     let accepted!: ReturnType<ProjectConversationActions['acceptProposal']>
     act(() => { accepted = actions.current.acceptProposal(proposalId, 'FinalCard') })
-    await waitFor(() => expect(files.saveCardDocument).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(files.createCardDocument).toHaveBeenCalledTimes(1))
     let switchSettled = false
     const prepare = actions.current.prepareForProjectSwitch().then(result => {
       switchSettled = true
@@ -226,6 +246,49 @@ describe('ProjectConversationProvider 提案动作', () => {
     ])
   })
 
+  it('快速 undo→redo 逐事件执行 WAL→Card→committed，后继状态不会越过自己的 WAL', async () => {
+    const undoWal = deferred<ConversationSaveResult>()
+    const immediate = Promise.resolve({ ok: true as const })
+    const repository = repositoryWithSaves([
+      immediate, immediate, // send running / completed
+      immediate, immediate, // accepted WAL / committed
+      undoWal.promise,
+      immediate, // undo committed
+      immediate, immediate, // redo WAL / committed
+    ])
+    const base = cardDocument('CardA', '旧内容')
+    const candidate = { ...base, card: { ...base.card, description: '提案内容' } }
+    const files = successfulCardFiles()
+    cardCatalogActions.loadDocuments([base], '/mods/a')
+    const actions = renderActions(repository, proposalModel({
+      operation: 'update',
+      targetCardId: 'CardA',
+      baseRevision: cardDocumentRevision(base),
+      document: candidate,
+    }), createProposalCardApplication('/mods/a', files))
+    await waitFor(() => expect(repository.load).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await actions.current.send('修改 CardA', [{ cardId: 'CardA', revision: cardDocumentRevision(base) }])
+      await actions.current.acceptProposal(repository.current!.proposals[0].id, 'CardA')
+    })
+
+    act(() => {
+      cardCatalogActions.undo()
+      cardCatalogActions.redo()
+    })
+    await waitFor(() => expect(repository.save).toHaveBeenCalledTimes(5))
+    expect(isCardPersistenceBlocked('/mods/a', 'CardA')).toBe(true)
+    expect(files.saveCardDocument).toHaveBeenCalledTimes(1)
+
+    undoWal.resolve({ ok: true })
+    await waitFor(() => expect(repository.current!.proposals[0].events.map(event => event.type)).toEqual([
+      'proposed', 'accepted', 'committed', 'reverted', 'committed', 'restored', 'committed',
+    ]))
+    expect(files.saveCardDocument).toHaveBeenNthCalledWith(2, '/mods/a', base)
+    expect(files.saveCardDocument).toHaveBeenNthCalledWith(3, '/mods/a', candidate)
+    expect(isCardPersistenceBlocked('/mods/a', 'CardA')).toBe(false)
+  })
+
   it('忽略其他项目 CardCatalog 发出的 undo/redo 提案事件', async () => {
     const repository = repositoryWithSaves([])
     const conversation = new ProjectConversation('/mods/a', repository, successModel('完成'), () => new Date(NOW), sequentialIds())
@@ -320,6 +383,7 @@ function renderActions(
 function successfulCardFiles(): ProposalCardPersistencePort {
   return {
     saveCardDocument: vi.fn(async () => ({ ok: true as const })),
+    createCardDocument: vi.fn(async () => ({ ok: true as const })),
     removeCardDocument: vi.fn(async () => true),
     inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
     hasTrashedCardDocument: vi.fn(async () => false),

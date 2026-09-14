@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join, resolve, isAbsolute } from 'path'
 import { existsSync } from 'fs'
-import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink } from 'fs/promises'
+import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink, link } from 'fs/promises'
 import { spawn } from 'child_process'
 
 type FileReadErrorCode = 'invalid-path' | 'permission-denied' | 'io'
@@ -185,6 +185,25 @@ ipcMain.handle('fs:rename', async (_event, from: string, to: string) => {
   } catch (error) {
     console.error('Error renaming file:', error)
     return false
+  }
+})
+
+// 原子 fail-if-exists：Card ID 只在接受创建/恢复时占用，绝不覆盖竞争文件。
+ipcMain.handle('fs:linkNoReplace', async (_event, from: string, to: string) => {
+  if (!isPathSafe(from) || !isPathSafe(to)) {
+    console.error('Invalid path for no-replace link:', { from, to })
+    return { status: 'failed' as const }
+  }
+  try {
+    await link(from, to)
+    return { status: 'linked' as const }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : ''
+    if (code === 'EEXIST') return { status: 'exists' as const }
+    console.error('Error linking file without replacement:', code || 'unknown')
+    return { status: 'failed' as const }
   }
 })
 

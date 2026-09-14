@@ -103,6 +103,39 @@ describe('Card proposal lifecycle', () => {
     expect(historical).toEqual({ ok: false, error: 'unaccepted-card-reference' })
   })
 
+  it('pending 建议 ID 不遮蔽项目中后来出现的同名真实 Card', () => {
+    const first = recordConversationCardProposalBatch([], [
+      { operation: 'create', document: document('Foo') },
+    ], {
+      source,
+      at: '2026-09-01T00:00:00Z',
+      currentCardRevisions: new Map(),
+      createId: ids('proposal-foo', 'event-foo'),
+    })
+    if (!first.ok) throw new Error(first.error)
+
+    const next = recordConversationCardProposalBatch(first.value, [{
+      operation: 'update',
+      targetCardId: 'Existing',
+      baseRevision: 'rev-existing',
+      document: document('Existing', ['Foo']),
+    }], {
+      source: { turnId: 'turn-2', attemptId: 'attempt-2' },
+      at: '2026-09-02T00:00:00Z',
+      currentCardRevisions: new Map([
+        ['Existing', 'rev-existing'],
+        ['Foo', 'rev-real-foo'],
+      ]),
+      createId: ids('proposal-update', 'event-update'),
+    })
+
+    expect(next.ok).toBe(true)
+    if (!next.ok) return
+    expect(next.value.at(-1)?.projectReferences).toEqual([
+      { cardId: 'Foo', revision: 'rev-real-foo' },
+    ])
+  })
+
   it('把已存在项目 Card 的跨 Card 引用及 revision 写入可重载验证记录', () => {
     const result = recordConversationCardProposalBatch([], [{
       operation: 'update',

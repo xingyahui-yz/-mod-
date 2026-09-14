@@ -20,6 +20,7 @@ export type ProposalCardPersistenceResult =
 
 export interface ProposalCardPersistencePort {
   saveCardDocument(projectRoot: string, document: CardDocument): Promise<{ ok: true } | { ok: false; error: string }>
+  createCardDocument(projectRoot: string, document: CardDocument): Promise<{ ok: true } | { ok: false; error: string }>
   removeCardDocument(projectRoot: string, cardId: string): Promise<boolean>
   inspectCardDocument(projectRoot: string, cardId: string): Promise<
     | { status: 'missing' }
@@ -58,31 +59,17 @@ export function createProposalCardApplication(
       if (document.card.id !== event.cardId) {
         return uncertain('Card 历史事件与当前文档不一致，已停止持久化')
       }
-      const beforeSave = getCardCatalogView()
-      const current = beforeSave.sourceProjectRoot === projectRoot
-        ? beforeSave.documents.find(candidate => candidate.card.id === event.cardId)
-        : undefined
-      if (!current || cardDocumentRevision(current) !== cardDocumentRevision(document)) {
-        // 用户已经在这个 undo/redo 之后继续编辑；旧 transition 不得覆盖真实项目状态。
-        return { ok: true }
-      }
-      const saved = await saveCard(files, projectRoot, document)
-      if (!saved.ok) return saved
-      const afterSave = getCardCatalogView()
-      const latest = afterSave.sourceProjectRoot === projectRoot
-        ? afterSave.documents.find(candidate => candidate.card.id === event.cardId)
-        : undefined
-      if (!latest || cardDocumentRevision(latest) === cardDocumentRevision(document)) return { ok: true }
-      const restored = await saveCard(files, projectRoot, latest)
-      return restored.ok
-        ? { ok: true }
-        : uncertain('Card 历史保存期间出现后继编辑，且无法恢复最新磁盘状态')
+      // 调用方用 Card persistence barrier 把后继 autosave 延后到 committed 之后。
+      // 这里必须且只能落盘当前事件捕获的快照；若提前写入 later snapshot，
+      // rapid undo→redo 会在 redo WAL 尚未建立时留下不可恢复的磁盘状态。
+      return saveCard(files, projectRoot, document)
     },
   }
 }
 
 const defaultProposalCardPersistencePort: ProposalCardPersistencePort = {
   saveCardDocument: (projectRoot, document) => FileService.saveCardDocument(projectRoot, document),
+  createCardDocument: (projectRoot, document) => FileService.createCardDocument(projectRoot, document),
   removeCardDocument: (projectRoot, cardId) =>
     FileService.removeFile(`${projectRoot}/.modstudio/cards/${cardId}.json`),
   async inspectCardDocument(projectRoot, cardId) {
@@ -210,15 +197,19 @@ export async function persistProposalToCardCatalog(
   const next = input.proposal.operation === 'create'
     ? rekeyCreatedCardDocument(input.proposal.document, finalCardId)
     : input.proposal.document
+  let createdByThisAttempt = false
   if (input.proposal.operation === 'create') {
     const target = await inspectCard(files, projectRoot, finalCardId)
     if (target.status === 'occupied') return unchanged(target.error)
-    if (target.status === 'found' && !sameDocument(target.document, next)) {
+    if (target.status === 'found') {
       return unchanged(`Card ID ${finalCardId} 的磁盘文档已存在，未覆盖`)
     }
   }
-  const saved = await saveCard(files, projectRoot, next)
+  const saved = input.proposal.operation === 'create'
+    ? await createCard(files, projectRoot, next)
+    : await saveCard(files, projectRoot, next)
   if (!saved.ok) return saved
+  createdByThisAttempt = input.proposal.operation === 'create'
 
   // 文件写入会让出事件循环。期间 CardEditor 仍可能提交编辑或删除 Card；
   // 此时不能用最初捕获的 base 回滚，否则会覆盖用户刚完成的修改。
@@ -236,7 +227,9 @@ export async function persistProposalToCardCatalog(
     const restoreDocument = latestCatalog.sourceProjectRoot === projectRoot ? latest : before
     const restored = restoreDocument
       ? (await saveCard(files, projectRoot, restoreDocument)).ok
-      : await removeCard(files, projectRoot, finalCardId)
+      : createdByThisAttempt
+        ? await removeCard(files, projectRoot, finalCardId)
+        : true
     if (!restored) {
       return uncertain('Card 保存期间项目状态已变化，且无法恢复最新磁盘状态')
     }
@@ -255,7 +248,9 @@ export async function persistProposalToCardCatalog(
   const restoreDocument = current.sourceProjectRoot === projectRoot ? currentDocument : before
   const rolledBack = restoreDocument
     ? (await saveCard(files, projectRoot, restoreDocument)).ok
-    : await removeCard(files, projectRoot, finalCardId)
+    : createdByThisAttempt
+      ? await removeCard(files, projectRoot, finalCardId)
+      : true
   if (!rolledBack) {
     return uncertain(`Card 已写入但目录应用失败（${applied.error}），磁盘回滚也失败，状态不确定`)
   }
@@ -292,11 +287,17 @@ export async function reconcilePendingProposalTransition(
   )
   if (current && cardDocumentRevision(current) === cardDocumentRevision(desired)) return { ok: true }
 
+  let activeCreateAlreadyMatches = false
   if (proposal.operation === 'create' && current === undefined) {
     const active = await inspectCard(files, projectRoot, finalCardId)
-    if (active.status === 'occupied') return { ok: true }
+    if (active.status === 'occupied') {
+      return uncertain(`Card ID ${finalCardId} 已被不可编辑文件占用，未覆盖`)
+    }
     if (active.status === 'found') {
-      if (!sameDocument(active.document, desired)) return { ok: true }
+      if (!sameDocument(active.document, desired)) {
+        return uncertain(`Card ID ${finalCardId} 已被其他 CardDocument 占用，未覆盖`)
+      }
+      activeCreateAlreadyMatches = true
     } else if (await hasTrashedCard(files, projectRoot, finalCardId)) {
       return { ok: true }
     }
@@ -310,7 +311,11 @@ export async function reconcilePendingProposalTransition(
     return { ok: true }
   }
 
-  const saved = await saveCard(files, projectRoot, desired)
+  const saved = proposal.operation === 'create' && current === undefined && !activeCreateAlreadyMatches
+    ? await createCard(files, projectRoot, desired)
+    : activeCreateAlreadyMatches
+      ? { ok: true as const }
+      : await saveCard(files, projectRoot, desired)
   if (!saved.ok) return saved
 
   const latest = getCardCatalogView()
@@ -386,6 +391,21 @@ async function saveCard(
       : unchanged(`CardDocument 保存失败：${result.error}`)
   } catch (error) {
     return uncertain(`CardDocument 保存异常：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+async function createCard(
+  files: ProposalCardPersistencePort,
+  projectRoot: string,
+  document: CardDocument,
+): Promise<ProposalCardPersistenceResult> {
+  try {
+    const result = await files.createCardDocument(projectRoot, document)
+    return result.ok
+      ? { ok: true }
+      : unchanged(`CardDocument 创建失败：${result.error}`)
+  } catch (error) {
+    return uncertain(`CardDocument 创建异常：${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rename, rm, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rename, rm, mkdir, writeFile, link } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -25,6 +25,17 @@ function realFiles() {
       try { await mkdir(dirname(path), { recursive: true }); await writeFile(path, content, 'utf8'); return true } catch { return false }
     },
     async rename(from: string, to: string) { try { await mkdir(dirname(to), { recursive: true }); await rename(from, to); return true } catch { return false } },
+    async linkNoReplace(from: string, to: string) {
+      try {
+        await mkdir(dirname(to), { recursive: true })
+        await link(from, to)
+        return { status: 'linked' as const }
+      } catch (error) {
+        return error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST'
+          ? { status: 'exists' as const }
+          : { status: 'failed' as const }
+      }
+    },
     async remove(path: string) { try { await rm(path, { recursive: true, force: true }); return true } catch { return false } },
   }
 }
@@ -79,5 +90,26 @@ describe('v0.9 real filesystem release flow', () => {
     expect(await files.readFile(artifactPath)).toBeNull()
     expect((await trash.restore(project, 'ReleaseCard-release')).status).toBe('restored')
     expect(await files.readFile(artifactPath)).toBe('external edit')
+  })
+
+  it('真实文件系统并发创建同一 ID 时只有一个原子占用且不会互相覆盖', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'mod-studio-card-claim-'))
+    projects.push(project)
+    const repository = createCardDocumentRepository({ files: realFiles() })
+    const first = makeDocument()
+    const second = { ...first, card: { ...first.card, description: '竞争版本' } }
+
+    const results = await Promise.all([
+      repository.create(project, first),
+      repository.create(project, second),
+    ])
+
+    expect(results.filter(result => result.ok)).toHaveLength(1)
+    expect(results.filter(result => !result.ok)).toEqual([
+      { ok: false, error: 'Card ID 已被占用（大小写不敏感）' },
+    ])
+    const loaded = await repository.load(project)
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0]?.result.status).toBe('editable')
   })
 })

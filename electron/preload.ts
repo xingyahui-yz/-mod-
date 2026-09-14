@@ -51,6 +51,9 @@ const electronAPI = {
   rename: (from: string, to: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:rename', from, to),
 
+  linkNoReplace: (from: string, to: string): Promise<{ status: 'linked' | 'exists' | 'failed' }> =>
+    ipcRenderer.invoke('fs:linkNoReplace', from, to),
+
   remove: (filePath: string): Promise<boolean> =>
     ipcRenderer.invoke('fs:remove', filePath),
 

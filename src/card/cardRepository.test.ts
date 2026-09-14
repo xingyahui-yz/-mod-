@@ -26,6 +26,8 @@ class MemoryFiles implements CardDocumentFilePort {
   renameCalls: Array<{ from: string; to: string }> = []
   failRename = false
   failWrite = false
+  linkResult: 'linked' | 'exists' | 'failed' = 'linked'
+  beforeLink: ((from: string, to: string) => void) | null = null
 
   async readDirectory(path: string) {
     const prefix = `${path}/`
@@ -62,6 +64,16 @@ class MemoryFiles implements CardDocumentFilePort {
     this.files.set(to, content)
     this.renameCalls.push({ from, to })
     return true
+  }
+
+  async linkNoReplace(from: string, to: string) {
+    this.beforeLink?.(from, to)
+    if (this.linkResult !== 'linked') return { status: this.linkResult } as const
+    if (this.files.has(to)) return { status: 'exists' } as const
+    const content = this.files.get(from)
+    if (content === undefined) return { status: 'failed' } as const
+    this.files.set(to, content)
+    return { status: 'linked' } as const
   }
 
   async remove(path: string) {
@@ -106,6 +118,33 @@ describe('CardDocumentRepository', () => {
     const result = await createCardDocumentRepository({ files }).save('/project', makeDocument('Fireball'))
     expect(result.ok).toBe(false)
     expect(files.files.get(target)).toBe(original)
+    expect([...files.files.keys()].some(path => path.includes('.tmp-'))).toBe(false)
+  })
+
+  it('创建用 fail-if-exists 原子占用 ID，竞争者出现时不覆盖文件', async () => {
+    const files = new MemoryFiles()
+    const target = '/project/.modstudio/cards/Fireball.json'
+    const competing = JSON.stringify(makeDocument('Fireball'))
+    files.beforeLink = (_from, to) => {
+      files.files.set(to, competing)
+    }
+
+    const result = await createCardDocumentRepository({ files }).create('/project', makeDocument('Fireball'))
+
+    expect(result).toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
+    expect(files.files.get(target)).toBe(competing)
+    expect([...files.files.keys()].some(path => path.includes('.tmp-'))).toBe(false)
+  })
+
+  it('创建在落临时文件前拒绝大小写不同的同 ID 文档', async () => {
+    const files = new MemoryFiles()
+    const occupied = '/project/.modstudio/cards/fireball.json'
+    files.files.set(occupied, JSON.stringify(makeDocument('Fireball')))
+
+    const result = await createCardDocumentRepository({ files }).create('/project', makeDocument('Fireball'))
+
+    expect(result).toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
+    expect(files.files.get(occupied)).toBeDefined()
     expect([...files.files.keys()].some(path => path.includes('.tmp-'))).toBe(false)
   })
 

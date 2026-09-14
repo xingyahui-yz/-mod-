@@ -5,6 +5,7 @@ class MemoryFiles implements CardTrashFilePort {
   files = new Map<string, string>()
   directories = new Set<string>()
   failRenameTo: string | null = null
+  beforeLink: ((from: string, to: string) => void) | null = null
 
   async readDirectory(path: string): Promise<CardTrashFileEntry[]> {
     if (!this.directories.has(path) && ![...this.files.keys()].some(file => file.startsWith(`${path}/`))) {
@@ -30,6 +31,15 @@ class MemoryFiles implements CardTrashFilePort {
     this.files.delete(from)
     this.files.set(to, content)
     return true
+  }
+  async linkNoReplace(from: string, to: string) {
+    this.beforeLink?.(from, to)
+    if (this.failRenameTo === to) return { status: 'failed' } as const
+    if (this.files.has(to)) return { status: 'exists' } as const
+    const content = this.files.get(from)
+    if (content === undefined) return { status: 'failed' } as const
+    this.files.set(to, content)
+    return { status: 'linked' } as const
   }
   async remove(path: string) { this.files.delete(path); this.directories.delete(path); return true }
 }
@@ -95,5 +105,24 @@ describe('Card trash repository', () => {
     expect(result.status).toBe('failed')
     expect(files.files.get(`${project}/.modstudio/trash/cards/Fireball-1/card.json`)).toBe(document)
     expect(files.files.get(`${project}/.modstudio/trash/cards/Fireball-1/artifact.cs`)).toBe('generated')
+  })
+
+  it('恢复占用 ID 时使用 no-replace，检查后出现的竞争文件不会被覆盖', async () => {
+    const files = new MemoryFiles()
+    const trashDocument = `${project}/.modstudio/trash/cards/Fireball-1/card.json`
+    const targetDocument = `${project}/.modstudio/cards/Fireball.json`
+    const competing = 'future-schema-document'
+    files.files.set(trashDocument, document)
+    files.directories.add(`${project}/.modstudio/trash/cards`)
+    files.directories.add(`${project}/.modstudio/trash/cards/Fireball-1`)
+    files.beforeLink = (_from, to) => {
+      if (to === targetDocument) files.files.set(to, competing)
+    }
+
+    const result = await createCardTrashRepository({ files }).restore(project, 'Fireball-1')
+
+    expect(result).toMatchObject({ status: 'conflict', cardId: 'Fireball' })
+    expect(files.files.get(targetDocument)).toBe(competing)
+    expect(files.files.get(trashDocument)).toBe(document)
   })
 })

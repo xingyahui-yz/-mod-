@@ -78,7 +78,7 @@ describe('提案应用边界', () => {
       transactionId: proposal.id,
     }, files)).resolves.toEqual({
       ok: false,
-      error: 'CardDocument 保存失败：EACCES',
+      error: 'CardDocument 创建失败：EACCES',
       certainty: 'unchanged',
     })
     expect(getCardCatalogView().cards.map(card => card.id)).toEqual(['Existing'])
@@ -111,7 +111,7 @@ describe('提案应用边界', () => {
     expect(getCardCatalogView().currentCard?.description).toBe('用户继续编辑')
   })
 
-  it('history Card 保存期间出现后继编辑时再次保存最新快照而不回写旧 undo', async () => {
+  it('history Card 只写当前 transition 快照，后继状态必须等待自己的 WAL', async () => {
     const undone = cardDocument('CardA')
     cardCatalogActions.loadDocuments([undone], '/mods/a')
     const firstSave = deferred<{ ok: true } | { ok: false; error: string }>()
@@ -132,11 +132,32 @@ describe('提案应用边界', () => {
     await vi.waitFor(() => expect(files.saveCardDocument).toHaveBeenCalledTimes(1))
 
     expect(cardCatalogActions.patchCurrentCard({ description: '用户后继编辑' }).ok).toBe(true)
-    const latest = getCardCatalogView().currentDocument!
     firstSave.resolve({ ok: true })
 
     await expect(saving).resolves.toEqual({ ok: true })
-    expect(files.saveCardDocument).toHaveBeenNthCalledWith(2, '/mods/a', latest)
+    expect(files.saveCardDocument).toHaveBeenCalledTimes(1)
+    expect(files.saveCardDocument).toHaveBeenNthCalledWith(1, '/mods/a', undone)
+  })
+
+  it('history 开始持久化前已有后继编辑时也不越过后继 WAL 写入 latest', async () => {
+    const undone = cardDocument('CardA')
+    cardCatalogActions.loadDocuments([undone], '/mods/a')
+    expect(cardCatalogActions.patchCurrentCard({ description: '先于持久化发生的后继编辑' }).ok).toBe(true)
+    const files = persistencePort()
+    const application = createProposalCardApplication('/mods/a', files)
+
+    await expect(application.persistHistoryCard({
+      type: 'proposal-status-changed',
+      sourceProjectRoot: '/mods/a',
+      cardId: 'CardA',
+      proposalId: 'proposal-a',
+      transactionId: 'proposal-a',
+      status: 'reverted',
+      source: 'undo',
+    }, undone)).resolves.toEqual({ ok: true })
+
+    expect(files.saveCardDocument).toHaveBeenNthCalledWith(1, '/mods/a', undone)
+    expect(files.saveCardDocument).toHaveBeenCalledTimes(1)
   })
 
   it('创建提案不会覆盖磁盘上未载入的同 ID CardDocument', async () => {
@@ -153,6 +174,28 @@ describe('提案应用边界', () => {
       finalCardId: 'FinalCard',
       transactionId: proposal.id,
     }, files)).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
+    expect(files.saveCardDocument).not.toHaveBeenCalled()
+    expect(getCardCatalogView().documents).toHaveLength(0)
+  })
+
+  it('创建提案在检查后被竞争者占用 ID 时保持 pending 且不修改目录', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = createProposal(cardDocument('DraftCard'))
+    const files = persistencePort()
+    vi.mocked(files.createCardDocument).mockResolvedValue({
+      ok: false,
+      error: 'Card ID 已被占用（大小写不敏感）',
+    })
+
+    await expect(persistProposalToCardCatalog('/mods/a', {
+      proposal,
+      finalCardId: 'FinalCard',
+      transactionId: proposal.id,
+    }, files)).resolves.toEqual({
+      ok: false,
+      error: 'CardDocument 创建失败：Card ID 已被占用（大小写不敏感）',
+      certainty: 'unchanged',
+    })
     expect(files.saveCardDocument).not.toHaveBeenCalled()
     expect(getCardCatalogView().documents).toHaveLength(0)
   })
@@ -178,7 +221,7 @@ describe('提案应用边界', () => {
     const created = getCardCatalogView().currentDocument!
     expect(created.card.id).toBe('FinalCard')
     expect(created.graph).toMatchObject({ id: 'graph-FinalCard', entityId: 'FinalCard' })
-    expect(files.saveCardDocument).toHaveBeenCalledWith('/mods/a', created)
+    expect(files.createCardDocument).toHaveBeenCalledWith('/mods/a', created)
   })
 
   it('已 committed 的 create 后续被用户删除时不会被旧 accepted 记录复活', async () => {
@@ -201,7 +244,7 @@ describe('提案应用边界', () => {
     const files = persistencePort()
 
     await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
-    expect(files.saveCardDocument).not.toHaveBeenCalled()
+    expect(files.createCardDocument).not.toHaveBeenCalled()
     expect(getCardCatalogView().documents).toHaveLength(0)
   })
 
@@ -214,8 +257,12 @@ describe('提案应用边界', () => {
       error: 'FinalCard.json 是 future schema',
     })
 
-    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
-    expect(files.saveCardDocument).not.toHaveBeenCalled()
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({
+      ok: false,
+      error: 'Card ID FinalCard 已被不可编辑文件占用，未覆盖',
+      certainty: 'uncertain',
+    })
+    expect(files.createCardDocument).not.toHaveBeenCalled()
     expect(getCardCatalogView().documents).toHaveLength(0)
   })
 
@@ -344,6 +391,7 @@ function persistencePort(options: {
 } = {}): ProposalCardPersistencePort {
   return {
     saveCardDocument: vi.fn(async () => options.save ?? { ok: true as const }),
+    createCardDocument: vi.fn(async () => options.save ?? { ok: true as const }),
     removeCardDocument: vi.fn(async () => options.remove ?? true),
     inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
     hasTrashedCardDocument: vi.fn(async () => false),

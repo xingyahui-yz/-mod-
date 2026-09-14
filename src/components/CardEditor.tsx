@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import {
   cardCatalogActions,
   getCardCatalogView,
@@ -23,6 +23,10 @@ import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocumentLoadEntry } from '../card/cardRepository'
 import type { CardTrashEntry } from '../card/cardTrash'
 import type { BatchGenerationReport } from '../card/cardBatchGeneration'
+import {
+  isCardPersistenceBlocked,
+  subscribeCardPersistenceBarrier,
+} from '../card/cardPersistenceBarrier'
 
 interface CardEditorProps {
   projectPath: string | null
@@ -35,6 +39,22 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const selectedCardId = useCardCatalog(view => view.selectedCardId)
   const canUndo = useCardCatalog(view => view.canUndo)
   const canRedo = useCardCatalog(view => view.canRedo)
+  const persistenceBarrierSubscribe = useMemo(
+    () => (listener: () => void) => projectPath && selectedCardId
+      ? subscribeCardPersistenceBarrier(projectPath, selectedCardId, listener)
+      : () => undefined,
+    [projectPath, selectedCardId],
+  )
+  const persistenceBarrierSnapshot = useMemo(
+    () => () => Boolean(projectPath && selectedCardId &&
+      isCardPersistenceBlocked(projectPath, selectedCardId)),
+    [projectPath, selectedCardId],
+  )
+  const cardPersistenceBlocked = useSyncExternalStore(
+    persistenceBarrierSubscribe,
+    persistenceBarrierSnapshot,
+    persistenceBarrierSnapshot,
+  )
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
   const [saving, setSaving] = useState(false)
@@ -117,6 +137,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
 
+    if (cardPersistenceBlocked) {
+      setAutosaveState('pending')
+      return
+    }
+
     const snapshot = serializeCardDocument(currentDocument)
     if (proposalManagedSnapshots.current.delete(snapshot)) {
       persistedSnapshot.current = snapshot
@@ -160,7 +185,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         void flush()
       }
     }
-  }, [projectPath, currentDocument])
+  }, [projectPath, currentDocument, cardPersistenceBlocked])
 
   // 当项目路径变化时，加载现有卡牌
   useEffect(() => {
@@ -241,7 +266,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   }
 
   const handleBatchGenerate = async () => {
-    if (!projectPath || !isActiveCatalogProject(projectPath)) return
+    if (!projectPath || cardPersistenceBlocked || !isActiveCatalogProject(projectPath)) return
     const operationProject = projectPath
     setSaving(true)
     setBatchReport(null)
@@ -326,6 +351,10 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
     const operationProject = projectPath
+    if (isCardPersistenceBlocked(operationProject, cardId)) {
+      showLoadMessage('error', 'Card 历史事务正在持久化，请稍后再删除')
+      return
+    }
     if (!isActiveCatalogProject(operationProject)) return
     const document = getCardCatalogView().documents.find(item => item.card.id === cardId)
     if (!document) return
@@ -407,7 +436,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   }
 
   const handleGenerateArtifact = async () => {
-    if (!projectPath || !currentCard || !currentDocument || !isActiveCatalogProject(projectPath)) return
+    if (!projectPath || cardPersistenceBlocked || !currentCard || !currentDocument || !isActiveCatalogProject(projectPath)) return
     const operationProject = projectPath
     const documentToGenerate = currentDocument
     const validationErrors = validateCard(currentCard)
@@ -465,7 +494,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   // 保存卡牌到项目
   const handleSave = async () => {
-    if (!projectPath || !currentCard || !currentDocument || !isActiveCatalogProject(projectPath)) return
+    if (!projectPath || cardPersistenceBlocked || !currentCard || !currentDocument || !isActiveCatalogProject(projectPath)) return
     const operationProject = projectPath
     const documentToSave = currentDocument
 
@@ -522,7 +551,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           {autosaveState === 'error' && <span className="error-text">自动保存失败</span>}
           <button onClick={cardCatalogActions.undo} disabled={!canUndo} title="撤销 Card 编辑">↶ 撤销</button>
           <button onClick={cardCatalogActions.redo} disabled={!canRedo} title="重做 Card 编辑">↷ 重做</button>
-          <button onClick={() => void handleBatchGenerate()} disabled={saving || !projectPath || cards.length === 0} title="逐张生成当前项目中的 Card">
+          <button onClick={() => void handleBatchGenerate()} disabled={saving || cardPersistenceBlocked || !projectPath || cards.length === 0} title="逐张生成当前项目中的 Card">
             ⚡ 批量生成
           </button>
           <button onClick={openCreateCard}>+ 新建卡牌</button>
@@ -566,6 +595,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 <button
                   className="delete-btn"
                   onClick={(e) => { e.stopPropagation(); void handleDeleteCard(card.id); }}
+                  disabled={Boolean(projectPath && isCardPersistenceBlocked(projectPath, card.id))}
                 >
                   ×
                 </button>
@@ -756,14 +786,14 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 <button
                   onClick={() => void handleGenerateArtifact()}
                   className="preview-btn"
-                  disabled={saving || !projectPath}
+                  disabled={saving || cardPersistenceBlocked || !projectPath}
                 >
                   ⚡ 生成 C#
                 </button>
                 <button
                   onClick={handleSave}
                   className="save-btn"
-                  disabled={saving || !projectPath}
+                  disabled={saving || cardPersistenceBlocked || !projectPath}
                 >
                   {saving ? '保存中...' : '💾 保存到项目'}
                 </button>

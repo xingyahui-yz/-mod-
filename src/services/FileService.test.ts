@@ -13,6 +13,7 @@ function electronApi(): ElectronAPI {
     readFileResult: vi.fn().mockResolvedValue({ status: 'missing' }),
     writeFile: vi.fn().mockResolvedValue(true),
     rename: vi.fn().mockResolvedValue(true),
+    linkNoReplace: vi.fn().mockResolvedValue({ status: 'linked' }),
     remove: vi.fn().mockResolvedValue(true),
     mkdir: vi.fn().mockResolvedValue(true),
     copyDirectory: vi.fn().mockResolvedValue(true),
@@ -118,6 +119,22 @@ describe('FileService conversation port', () => {
     await expect(second).resolves.toMatchObject({ ok: true })
     expect(api.writeFile).toHaveBeenCalledTimes(2)
     expect(vi.mocked(api.writeFile).mock.calls[1]?.[1]).toContain('最终火球')
+  })
+
+  it('创建 Card 使用 fail-if-exists 原语并与同 ID 写入共用串行队列', async () => {
+    const api = electronApi()
+    vi.mocked(api.linkNoReplace!).mockResolvedValue({ status: 'exists' })
+    const service = createFileService({ api })
+
+    await expect(service.createCardDocument('/project', cardDocument('Fireball', '火球')))
+      .resolves.toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
+
+    expect(api.linkNoReplace).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/project\/\.modstudio\/cards\/Fireball\.json\.tmp-/),
+      '/project/.modstudio/cards/Fireball.json',
+    )
+    expect(api.rename).not.toHaveBeenCalled()
+    expect(api.remove).toHaveBeenCalledWith(expect.stringMatching(/Fireball\.json\.tmp-/))
   })
 
   it('生成期间 Card 语义变化时不把旧源文档的指纹写回', async () => {

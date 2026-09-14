@@ -449,10 +449,14 @@ function referencesOnlyAcceptedCards(
   const accepted = new Set(currentRevisions.keys())
   const unacceptedCreates = new Set<string>()
   for (const proposal of existing) {
-    if (proposal.operation === 'create' && proposal.status === 'pending') unacceptedCreates.add(normalizeCardId(proposal.targetCardId))
+    const target = normalizeCardId(proposal.targetCardId)
+    if (proposal.operation === 'create' && proposal.status === 'pending' && !accepted.has(target)) {
+      unacceptedCreates.add(target)
+    }
   }
   for (const draft of drafts) {
-    if (draft.operation === 'create') unacceptedCreates.add(normalizeCardId(draft.document.card.id))
+    const target = normalizeCardId(draft.document.card.id)
+    if (draft.operation === 'create' && !accepted.has(target)) unacceptedCreates.add(target)
   }
   for (const draft of drafts) {
     const self = normalizeCardId(draft.operation === 'update' ? draft.targetCardId : draft.document.card.id)
