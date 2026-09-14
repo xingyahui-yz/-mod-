@@ -345,6 +345,12 @@ export function useProjectConversationActions(): ProjectConversationActions {
       if (!conversation || !projectRoot || !proposalApplication) {
         return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
       }
+      const proposal = conversation.getSnapshot().document?.proposals
+        .find(candidate => candidate.id === proposalId)
+      const cardId = proposal?.operation === 'update' ? proposal.targetCardId : finalCardId.trim()
+      const persistenceLease = cardId
+        ? acquireCardPersistenceBarrier(projectRoot, cardId)
+        : null
       return runProposalMutation(() => conversation.acceptProposal(
         proposalId,
         finalCardId,
@@ -353,7 +359,7 @@ export function useProjectConversationActions(): ProjectConversationActions {
           if (!result.ok && result.certainty === 'uncertain') operationGate.block(result.error)
           return result
         },
-      ))
+      )).finally(() => persistenceLease?.release())
     },
     rejectProposal: (
       proposalId: string,

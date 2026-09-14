@@ -126,7 +126,7 @@ describe('CardDocumentRepository', () => {
     const target = '/project/.modstudio/cards/Fireball.json'
     const competing = JSON.stringify(makeDocument('Fireball'))
     files.beforeLink = (_from, to) => {
-      files.files.set(to, competing)
+      if (to === target) files.files.set(to, competing)
     }
 
     const result = await createCardDocumentRepository({ files }).create('/project', makeDocument('Fireball'))

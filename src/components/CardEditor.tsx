@@ -26,6 +26,7 @@ import type { BatchGenerationReport } from '../card/cardBatchGeneration'
 import {
   isCardPersistenceBlocked,
   subscribeCardPersistenceBarrier,
+  waitForCardPersistenceBarrier,
 } from '../card/cardPersistenceBarrier'
 
 interface CardEditorProps {
@@ -69,8 +70,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const [autosaveState, setAutosaveState] = useState<'idle' | 'pending' | 'saving' | 'saved' | 'error'>('idle')
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autosaveCardId = useRef<string | null>(null)
-  const proposalManagedSnapshots = useRef(new Set<string>())
-  const persistedSnapshot = useRef<string | null>(null)
+  const proposalManagedSnapshots = useRef(new Map<string, string>())
+  const deferredAutosaveTokens = useRef(new Map<string, number>())
+  const persistedSnapshots = useRef(new Map<string, string>())
   const activeProjectRef = useRef<string | null>(projectPath)
   const loadedProjectRef = useRef<string | null>(null)
   const loadGenerationRef = useRef(0)
@@ -87,7 +89,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     activeProjectRef.current = projectPath
     loadedProjectRef.current = null
     proposalManagedSnapshots.current.clear()
-    persistedSnapshot.current = null
+    deferredAutosaveTokens.current.clear()
+    persistedSnapshots.current.clear()
     loadGenerationRef.current += 1
     setSaving(false)
     setLoadingCards(false)
@@ -117,7 +120,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         autosaveCardId.current = null
       }
       const document = getCardCatalogView().documents.find(candidate => candidate.card.id === event.cardId)
-      if (document) proposalManagedSnapshots.current.add(serializeCardDocument(document))
+      if (document) proposalManagedSnapshots.current.set(event.cardId, serializeCardDocument(document))
     })
   }, [projectPath])
 
@@ -130,30 +133,79 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       autosaveTimer.current = null
       autosaveCardId.current = null
     }
-    if (!projectPath || !currentDocument || loadedProjectRef.current !== projectPath ||
+    if (!projectPath || loadedProjectRef.current !== projectPath ||
       getCardCatalogView().sourceProjectRoot !== projectPath) {
-      persistedSnapshot.current = null
+      persistedSnapshots.current.clear()
+      setAutosaveState('idle')
+      return
+    }
+    if (!currentDocument) {
       setAutosaveState('idle')
       return
     }
 
+    const snapshot = serializeCardDocument(currentDocument)
     if (cardPersistenceBlocked) {
+      const managedSnapshot = proposalManagedSnapshots.current.get(currentDocument.card.id)
+      if (managedSnapshot !== snapshot) {
+        const projectToSave = projectPath
+        const cardId = currentDocument.card.id
+        const token = (deferredAutosaveTokens.current.get(cardId) ?? 0) + 1
+        deferredAutosaveTokens.current.set(cardId, token)
+        // 选择可继续切到其他 Card；因此不能只依赖当前 selector 在 barrier
+        // 释放时重渲染。这里保存该 Card 的最新目录投影，并用 token 合并多次编辑。
+        void waitForCardPersistenceBarrier(projectToSave, cardId).then(async () => {
+          if (deferredAutosaveTokens.current.get(cardId) !== token ||
+            activeProjectRef.current !== projectToSave ||
+            getCardCatalogView().sourceProjectRoot !== projectToSave) return
+          const latest = getCardCatalogView().documents.find(candidate => candidate.card.id === cardId)
+          if (!latest) {
+            deferredAutosaveTokens.current.delete(cardId)
+            return
+          }
+          const latestSnapshot = serializeCardDocument(latest)
+          if (proposalManagedSnapshots.current.get(cardId) === latestSnapshot) {
+            proposalManagedSnapshots.current.delete(cardId)
+            deferredAutosaveTokens.current.delete(cardId)
+            persistedSnapshots.current.set(cardId, latestSnapshot)
+            return
+          }
+          const result = await FileService.saveCardDocument(projectToSave, latest)
+          if (activeProjectRef.current !== projectToSave ||
+            getCardCatalogView().sourceProjectRoot !== projectToSave) return
+          deferredAutosaveTokens.current.delete(cardId)
+          if (getCardCatalogView().selectedCardId === cardId) {
+            if (result.ok) {
+              persistedSnapshots.current.set(cardId, latestSnapshot)
+              setAutosaveState('saved')
+            } else {
+              setAutosaveState('error')
+            }
+          }
+        })
+      }
       setAutosaveState('pending')
       return
     }
 
-    const snapshot = serializeCardDocument(currentDocument)
-    if (proposalManagedSnapshots.current.delete(snapshot)) {
-      persistedSnapshot.current = snapshot
+    if (deferredAutosaveTokens.current.has(currentDocument.card.id)) {
+      setAutosaveState('pending')
+      return
+    }
+
+    if (proposalManagedSnapshots.current.get(currentDocument.card.id) === snapshot) {
+      proposalManagedSnapshots.current.delete(currentDocument.card.id)
+      persistedSnapshots.current.set(currentDocument.card.id, snapshot)
       setAutosaveState('saved')
       return
     }
-    if (persistedSnapshot.current === null) {
-      persistedSnapshot.current = snapshot
+    proposalManagedSnapshots.current.delete(currentDocument.card.id)
+    if (!persistedSnapshots.current.has(currentDocument.card.id)) {
+      persistedSnapshots.current.set(currentDocument.card.id, snapshot)
       setAutosaveState('saved')
       return
     }
-    if (persistedSnapshot.current === snapshot) return
+    if (persistedSnapshots.current.get(currentDocument.card.id) === snapshot) return
 
     setAutosaveState('pending')
     const documentToSave = currentDocument
@@ -163,7 +215,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       const result = await FileService.saveCardDocument(projectToSave, documentToSave)
       if (activeProjectRef.current !== projectToSave || loadedProjectRef.current !== projectToSave) return
       if (result.ok) {
-        persistedSnapshot.current = snapshot
+        persistedSnapshots.current.set(documentToSave.card.id, snapshot)
         setAutosaveState('saved')
       } else {
         setAutosaveState('error')
@@ -513,7 +565,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       if (!isActiveCatalogProject(operationProject)) return
 
       if (result.ok) {
-        persistedSnapshot.current = serializeCardDocument(documentToSave)
+        persistedSnapshots.current.set(documentToSave.card.id, serializeCardDocument(documentToSave))
         setAutosaveState('saved')
         showSaveMessage('success', `已保存到 ${result.path}`)
       } else {

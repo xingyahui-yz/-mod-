@@ -3,6 +3,7 @@ import {
   acquireCardPersistenceBarrier,
   isCardPersistenceBlocked,
   subscribeCardPersistenceBarrier,
+  waitForCardPersistenceBarrier,
   type CardPersistenceBarrierLease,
 } from './cardPersistenceBarrier'
 
@@ -62,5 +63,20 @@ describe('Card persistence barrier', () => {
     expect(healthy).toHaveBeenCalledTimes(2)
     unsubscribeThrowing()
     unsubscribeHealthy()
+  })
+
+  it('等待者只在最后一个 lease 释放后继续', async () => {
+    const first = acquire('/mods/a', 'CardA')
+    const second = acquire('/mods/a', 'carda')
+    let resumed = false
+    const waiting = waitForCardPersistenceBarrier('/mods/a', 'CardA').then(() => { resumed = true })
+
+    first.release()
+    await Promise.resolve()
+    expect(resumed).toBe(false)
+
+    second.release()
+    await waiting
+    expect(resumed).toBe(true)
   })
 })

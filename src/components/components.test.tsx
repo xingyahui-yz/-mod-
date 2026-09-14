@@ -425,6 +425,7 @@ describe('CardEditor 过滤 + 原始索引', () => {
 
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
     expect(writeFile).not.toHaveBeenCalled()
+    act(() => { cardCatalogActions.selectCard(null) })
 
     await act(async () => {
       lease.release()
@@ -433,6 +434,70 @@ describe('CardEditor 过滤 + 原始索引', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
     expect(writeFile).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('WAL 后继草稿')
+  })
+
+  it('history WAL barrier 释放后选中 Card 的延迟草稿只保存一次', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.includes('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    }) })
+
+    render(<CardEditor projectPath="/A" />)
+    const input = await screen.findByDisplayValue('火球')
+    let lease!: ReturnType<typeof acquireCardPersistenceBarrier>
+    act(() => { lease = acquireCardPersistenceBarrier('/A', 'Fireball') })
+    fireEvent.change(input, { target: { value: '只写一次' } })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+
+    await act(async () => { lease.release(); await Promise.resolve() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('只写一次')
+  })
+
+  it('rapid undo/redo 的中间提案快照不会让未来同内容手工编辑跳过保存', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.includes('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    }) })
+
+    render(<CardEditor projectPath="/A" />)
+    await screen.findByDisplayValue('火球')
+    const proposal = createCardProposal(alpha, {
+      ...alpha,
+      card: { ...alpha.card, name: 'AI 火球' },
+    })
+    if (proposal.status !== 'ready') throw new Error('测试提案无效')
+    act(() => cardCatalogActions.applyProposal(proposal.proposal, {
+      provenance: { kind: 'ai-proposal', proposalId: 'proposal-rapid', transactionId: 'proposal-rapid' },
+    }))
+
+    let lease!: ReturnType<typeof acquireCardPersistenceBarrier>
+    act(() => {
+      lease = acquireCardPersistenceBarrier('/A', 'Fireball')
+      cardCatalogActions.undo()
+      cardCatalogActions.redo()
+    })
+    await act(async () => { lease.release(); await Promise.resolve() })
+
+    fireEvent.change(screen.getByDisplayValue('AI 火球'), { target: { value: '火球' } })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('"name": "火球"')
   })
 
   it('项目 A 的迟到删除不会移除项目 B 中同 ID 的 Card', async () => {

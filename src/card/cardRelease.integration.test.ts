@@ -40,8 +40,8 @@ function realFiles() {
   }
 }
 
-function makeDocument(): CardDocument {
-  let graph = createEmptyGraph('ReleaseCard', 'card')
+function makeDocument(id = 'ReleaseCard'): CardDocument {
+  let graph = createEmptyGraph(id, 'card')
   const trigger = appendNode(graph, 'trigger', { x: 0, y: 0 }, { event: 'onPlay' })
   graph = trigger.graph
   const effect = appendNode(graph, 'effect', { x: 100, y: 0 }, { kind: 'exhaustSelf' })
@@ -49,7 +49,7 @@ function makeDocument(): CardDocument {
   if (!linked.ok) throw new Error(linked.reason)
   return {
     schemaVersion: 2,
-    card: { id: 'ReleaseCard', name: 'Release Card', cost: 1, type: 'Attack', rarity: 'Common', description: 'Exhaust.', keywords: [] },
+    card: { id, name: id, cost: 1, type: 'Attack', rarity: 'Common', description: 'Exhaust.', keywords: [] },
     graph: linked.graph,
     generation: { lastGeneratedFingerprint: null },
   }
@@ -109,6 +109,47 @@ describe('v0.9 real filesystem release flow', () => {
       { ok: false, error: 'Card ID 已被占用（大小写不敏感）' },
     ])
     const loaded = await repository.load(project)
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0]?.result.status).toBe('editable')
+  })
+
+  it('真实文件系统并发创建大小写不同的逻辑同 ID 时也只有一个原子占用', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'mod-studio-card-case-claim-'))
+    projects.push(project)
+    const repository = createCardDocumentRepository({ files: realFiles() })
+
+    const results = await Promise.all([
+      repository.create(project, makeDocument('FireBall')),
+      repository.create(project, makeDocument('Fireball')),
+    ])
+
+    expect(results.filter(result => result.ok)).toHaveLength(1)
+    expect(results.filter(result => !result.ok)).toEqual([
+      { ok: false, error: 'Card ID 已被占用（大小写不敏感）' },
+    ])
+    const loaded = await repository.load(project)
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0]?.result.status).toBe('editable')
+  })
+
+  it('真实文件系统并发恢复大小写不同的逻辑同 ID 时也只有一个成功', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'mod-studio-trash-case-claim-'))
+    projects.push(project)
+    const trashRoot = join(project, '.modstudio/trash/cards')
+    await mkdir(join(trashRoot, 'FireBall-a'), { recursive: true })
+    await mkdir(join(trashRoot, 'Fireball-b'), { recursive: true })
+    await writeFile(join(trashRoot, 'FireBall-a/card.json'), JSON.stringify(makeDocument('FireBall')), 'utf8')
+    await writeFile(join(trashRoot, 'Fireball-b/card.json'), JSON.stringify(makeDocument('Fireball')), 'utf8')
+    const trash = createCardTrashRepository({ files: realFiles() })
+
+    const results = await Promise.all([
+      trash.restore(project, 'FireBall-a'),
+      trash.restore(project, 'Fireball-b'),
+    ])
+
+    expect(results.filter(result => result.status === 'restored')).toHaveLength(1)
+    expect(results.filter(result => result.status === 'conflict')).toHaveLength(1)
+    const loaded = await createCardDocumentRepository({ files: realFiles() }).load(project)
     expect(loaded).toHaveLength(1)
     expect(loaded[0]?.result.status).toBe('editable')
   })

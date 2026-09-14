@@ -266,17 +266,6 @@ describe('提案应用边界', () => {
     expect(getCardCatalogView().documents).toHaveLength(0)
   })
 
-  it('未 committed 的 create 若已被移入回收站则尊重删除事实而不复活', async () => {
-    cardCatalogActions.loadDocuments([], '/mods/a')
-    const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
-    const files = persistencePort()
-    vi.mocked(files.hasTrashedCardDocument).mockResolvedValue(true)
-
-    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
-    expect(files.saveCardDocument).not.toHaveBeenCalled()
-    expect(getCardCatalogView().documents).toHaveLength(0)
-  })
-
   it('重启对账可把未 committed 的 undo WAL 前向恢复为 base', async () => {
     const base = cardDocument('CardA')
     const candidate = { ...base, card: { ...base.card, description: 'accepted candidate' } }
@@ -387,14 +376,11 @@ function acceptedCreateProposal(document: CardDocument, finalCardId: string): Co
 
 function persistencePort(options: {
   save?: { ok: true } | { ok: false; error: string }
-  remove?: boolean
 } = {}): ProposalCardPersistencePort {
   return {
     saveCardDocument: vi.fn(async () => options.save ?? { ok: true as const }),
     createCardDocument: vi.fn(async () => options.save ?? { ok: true as const }),
-    removeCardDocument: vi.fn(async () => options.remove ?? true),
     inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
-    hasTrashedCardDocument: vi.fn(async () => false),
   }
 }
 

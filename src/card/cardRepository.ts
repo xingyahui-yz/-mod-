@@ -8,6 +8,7 @@ import { migrateCardDocument } from './cardMigrations'
 import { parseCardDocumentJson } from './cardDocument'
 import { isValidCardId } from './cardValidation'
 import type { FileService } from '../services/FileService'
+import { acquireCardIdClaim } from './cardIdClaim'
 
 export interface CardDocumentFileEntry {
   name: string
@@ -167,15 +168,37 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
         await files.remove(temp).catch(() => false)
         return { ok: false, error: '无法写入 CardDocument 临时文件' }
       }
-      const linked = await files.linkNoReplace(temp, target).catch(() => ({ status: 'failed' as const }))
-      await files.remove(temp).catch(() => false)
-      if (linked.status === 'exists') {
-        return { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
+      const claim = await acquireCardIdClaim(files, cardsPath, document.card.id, temp)
+      if (claim.status !== 'acquired') {
+        await files.remove(temp).catch(() => false)
+        return claim.status === 'occupied'
+          ? { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
+          : { ok: false, error: '无法原子占用 Card ID' }
       }
-      if (linked.status !== 'linked') {
-        return { ok: false, error: '无法原子占用 Card ID' }
+      try {
+        // 第一次扫描与 claim 之间可能已有竞争者完成创建；持有归一化
+        // claim 后必须再扫一次，才能把大小写不同的目标也纳入原子边界。
+        const occupiedAfterClaim = await files.readDirectory(cardsPath)
+          .then(entries => entries.some(entry => !entry.isDirectory &&
+            entry.name.toLowerCase() === `${document.card.id}.json`.toLowerCase()))
+          .catch(() => true)
+        if (occupiedAfterClaim) {
+          return { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
+        }
+
+        const linked = await files.linkNoReplace(temp, target)
+          .catch(() => ({ status: 'failed' as const }))
+        if (linked.status === 'exists') {
+          return { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
+        }
+        if (linked.status !== 'linked') {
+          return { ok: false, error: '无法原子占用 Card ID' }
+        }
+        return { ok: true, path: target }
+      } finally {
+        await claim.release()
+        await files.remove(temp).catch(() => false)
       }
-      return { ok: true, path: target }
     },
 
     async migrateAndSave(projectPath, fileName) {

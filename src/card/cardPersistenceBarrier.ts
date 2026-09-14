@@ -94,3 +94,18 @@ export function subscribeCardPersistenceBarrier(
     removeUnusedEntry(projectRoot, cardId, entry)
   }
 }
+
+/** 在最后一个跨文件事务 lease 释放后继续；已可写时立即完成。 */
+export function waitForCardPersistenceBarrier(
+  projectRoot: string,
+  cardId: string,
+): Promise<void> {
+  if (!isCardPersistenceBlocked(projectRoot, cardId)) return Promise.resolve()
+  return new Promise(resolve => {
+    const unsubscribe = subscribeCardPersistenceBarrier(projectRoot, cardId, () => {
+      if (isCardPersistenceBlocked(projectRoot, cardId)) return
+      unsubscribe()
+      resolve()
+    })
+  })
+}

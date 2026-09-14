@@ -1,5 +1,6 @@
 import { parseCardDocumentJson, type CardDocumentParseResult } from './cardDocument'
 import { isValidCardId } from './cardValidation'
+import { acquireCardIdClaim } from './cardIdClaim'
 
 export interface CardTrashFileEntry {
   name: string
@@ -175,49 +176,67 @@ export function createCardTrashRepository(
       const artifactRoot = joinPath(projectPath, ARTIFACTS_DIR)
       const targetDocument = joinPath(cardsRoot, `${cardId}.json`)
       const targetArtifact = joinPath(artifactRoot, `${cardId}.cs`)
-      const activeEntries = await files.readDirectory(cardsRoot).catch(() => [] as CardTrashFileEntry[])
-      const hasDocumentConflict = activeEntries.some(entry => !entry.isDirectory && entry.name.toLowerCase() === `${cardId}.json`.toLowerCase())
-      const artifactEntries = await files.readDirectory(artifactRoot).catch(() => [] as CardTrashFileEntry[])
-      const hasArtifactConflict = artifactEntries.some(entry => !entry.isDirectory && entry.name.toLowerCase() === `${cardId}.cs`.toLowerCase())
-      if (hasDocumentConflict || hasArtifactConflict) {
-        return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
-      }
-
       const artifact = await files.readFile(trashArtifact).catch(() => null)
       if (!await files.mkdir(cardsRoot)) return { status: 'failed', reason: '无法创建 CardDocument 目录' }
       if (artifact !== null && !await files.mkdir(artifactRoot)) return { status: 'failed', reason: '无法创建 C# 目录' }
 
-      const documentLink = await files.linkNoReplace(trashDocument, targetDocument)
-        .catch(() => ({ status: 'failed' as const }))
-      if (documentLink.status === 'exists') {
-        return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
+      const claim = await acquireCardIdClaim(files, cardsRoot, cardId, trashDocument)
+      if (claim.status !== 'acquired') {
+        return claim.status === 'occupied'
+          ? { status: 'conflict', cardId, reason: '活动目录正在占用同 ID Card，恢复不会自动改名' }
+          : { status: 'failed', reason: '无法原子占用 Card ID，回收站内容保留' }
       }
-      if (documentLink.status !== 'linked') {
-        return { status: 'failed', reason: '无法原子占用 Card ID，回收站内容保留' }
-      }
-      if (artifact !== null) {
-        const artifactLink = await files.linkNoReplace(trashArtifact, targetArtifact)
-          .catch(() => ({ status: 'failed' as const }))
-        if (artifactLink.status !== 'linked') {
-          await files.remove(targetDocument).catch(() => false)
-          return artifactLink.status === 'exists'
-            ? { status: 'conflict', cardId, reason: '活动目录已有同 ID C# 产物，恢复不会覆盖' }
-            : { status: 'failed', reason: '无法原子恢复 C# 产物，回收站内容保留' }
+      try {
+        // 目录检查必须位于归一化 claim 内，才能同时排斥大小写变体的创建/恢复。
+        const activeEntries = await files.readDirectory(cardsRoot)
+          .catch(error => isMissingDirectory(error) ? [] as CardTrashFileEntry[] : null)
+        const artifactEntries = await files.readDirectory(artifactRoot)
+          .catch(error => isMissingDirectory(error) ? [] as CardTrashFileEntry[] : null)
+        if (activeEntries === null || artifactEntries === null) {
+          return { status: 'failed', reason: '无法确认活动 Card 目录，回收站内容保留' }
         }
-      }
+        const hasDocumentConflict = activeEntries.some(entry => !entry.isDirectory &&
+          entry.name.toLowerCase() === `${cardId}.json`.toLowerCase())
+        const hasArtifactConflict = artifactEntries.some(entry => !entry.isDirectory &&
+          entry.name.toLowerCase() === `${cardId}.cs`.toLowerCase())
+        if (hasDocumentConflict || hasArtifactConflict) {
+          return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
+        }
 
-      const activeDocument = await files.readFile(targetDocument).catch(() => null)
-      const activeArtifact = artifact !== null ? await files.readFile(targetArtifact).catch(() => null) : null
-      if (activeDocument === null || (artifact !== null && activeArtifact === null)) {
-        if (artifact !== null && activeArtifact !== null) await files.remove(targetArtifact).catch(() => false)
-        await files.remove(targetDocument).catch(() => false)
-        return { status: 'failed', reason: '恢复后活动文件校验失败，已补偿回收站' }
+        const documentLink = await files.linkNoReplace(trashDocument, targetDocument)
+          .catch(() => ({ status: 'failed' as const }))
+        if (documentLink.status === 'exists') {
+          return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
+        }
+        if (documentLink.status !== 'linked') {
+          return { status: 'failed', reason: '无法原子占用 Card ID，回收站内容保留' }
+        }
+        if (artifact !== null) {
+          const artifactLink = await files.linkNoReplace(trashArtifact, targetArtifact)
+            .catch(() => ({ status: 'failed' as const }))
+          if (artifactLink.status !== 'linked') {
+            await files.remove(targetDocument).catch(() => false)
+            return artifactLink.status === 'exists'
+              ? { status: 'conflict', cardId, reason: '活动目录已有同 ID C# 产物，恢复不会覆盖' }
+              : { status: 'failed', reason: '无法原子恢复 C# 产物，回收站内容保留' }
+          }
+        }
+
+        const activeDocument = await files.readFile(targetDocument).catch(() => null)
+        const activeArtifact = artifact !== null ? await files.readFile(targetArtifact).catch(() => null) : null
+        if (activeDocument === null || (artifact !== null && activeArtifact === null)) {
+          if (artifact !== null && activeArtifact !== null) await files.remove(targetArtifact).catch(() => false)
+          await files.remove(targetDocument).catch(() => false)
+          return { status: 'failed', reason: '恢复后活动文件校验失败，已补偿回收站' }
+        }
+        // link 成功后再解除回收站目录项；若清理失败，活动 Card 已完整，保留的
+        // hard-link 副本不会造成数据丢失，后续列表会以冲突方式保持可见。
+        await files.remove(trashDocument).catch(() => false)
+        if (artifact !== null) await files.remove(trashArtifact).catch(() => false)
+        return { status: 'restored', cardId }
+      } finally {
+        await claim.release()
       }
-      // link 成功后再解除回收站目录项；若清理失败，活动 Card 已完整，保留的
-      // hard-link 副本不会造成数据丢失，后续列表会以冲突方式保持可见。
-      await files.remove(trashDocument).catch(() => false)
-      if (artifact !== null) await files.remove(trashArtifact).catch(() => false)
-      return { status: 'restored', cardId }
     },
   }
 }

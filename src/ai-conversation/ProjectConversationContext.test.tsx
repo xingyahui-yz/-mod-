@@ -112,9 +112,7 @@ describe('ProjectConversationProvider 项目切换守卫', () => {
     const files: ProposalCardPersistencePort = {
       saveCardDocument: vi.fn(() => cardSave.promise),
       createCardDocument: vi.fn(() => cardSave.promise),
-      removeCardDocument: vi.fn(async () => true),
       inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
-      hasTrashedCardDocument: vi.fn(async () => false),
     }
     const actions = renderActions(
       repository,
@@ -128,6 +126,7 @@ describe('ProjectConversationProvider 项目切换守卫', () => {
     let accepted!: ReturnType<ProjectConversationActions['acceptProposal']>
     act(() => { accepted = actions.current.acceptProposal(proposalId, 'FinalCard') })
     await waitFor(() => expect(files.createCardDocument).toHaveBeenCalledTimes(1))
+    expect(isCardPersistenceBlocked('/mods/a', 'FinalCard')).toBe(true)
     let switchSettled = false
     const prepare = actions.current.prepareForProjectSwitch().then(result => {
       switchSettled = true
@@ -138,6 +137,7 @@ describe('ProjectConversationProvider 项目切换守卫', () => {
 
     cardSave.resolve({ ok: true })
     await expect(accepted).resolves.toEqual({ ok: true })
+    expect(isCardPersistenceBlocked('/mods/a', 'FinalCard')).toBe(false)
     await expect(prepare).resolves.toBe(true)
   })
 
@@ -384,9 +384,7 @@ function successfulCardFiles(): ProposalCardPersistencePort {
   return {
     saveCardDocument: vi.fn(async () => ({ ok: true as const })),
     createCardDocument: vi.fn(async () => ({ ok: true as const })),
-    removeCardDocument: vi.fn(async () => true),
     inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
-    hasTrashedCardDocument: vi.fn(async () => false),
   }
 }
 

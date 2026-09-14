@@ -21,13 +21,11 @@ export type ProposalCardPersistenceResult =
 export interface ProposalCardPersistencePort {
   saveCardDocument(projectRoot: string, document: CardDocument): Promise<{ ok: true } | { ok: false; error: string }>
   createCardDocument(projectRoot: string, document: CardDocument): Promise<{ ok: true } | { ok: false; error: string }>
-  removeCardDocument(projectRoot: string, cardId: string): Promise<boolean>
   inspectCardDocument(projectRoot: string, cardId: string): Promise<
     | { status: 'missing' }
     | { status: 'found'; document: CardDocument }
     | { status: 'occupied'; error: string }
   >
-  hasTrashedCardDocument(projectRoot: string, cardId: string): Promise<boolean>
 }
 
 export interface ProposalCardApplication {
@@ -70,8 +68,6 @@ export function createProposalCardApplication(
 const defaultProposalCardPersistencePort: ProposalCardPersistencePort = {
   saveCardDocument: (projectRoot, document) => FileService.saveCardDocument(projectRoot, document),
   createCardDocument: (projectRoot, document) => FileService.createCardDocument(projectRoot, document),
-  removeCardDocument: (projectRoot, cardId) =>
-    FileService.removeFile(`${projectRoot}/.modstudio/cards/${cardId}.json`),
   async inspectCardDocument(projectRoot, cardId) {
     try {
       const entries = await FileService.loadCardDocuments(projectRoot)
@@ -87,21 +83,6 @@ const defaultProposalCardPersistencePort: ProposalCardPersistencePort = {
         status: 'occupied',
         error: `无法确认目标 CardDocument 是否存在：${error instanceof Error ? error.message : String(error)}`,
       }
-    }
-  },
-  async hasTrashedCardDocument(projectRoot, cardId) {
-    try {
-      const normalized = cardId.toLowerCase()
-      const entries = await FileService.listCardTrash(projectRoot)
-      return entries.some(entry => {
-        if (entry.result.status === 'editable') {
-          return entry.result.document.card.id.toLowerCase() === normalized
-        }
-        return entry.trashId.toLowerCase().startsWith(`${normalized}-`)
-      })
-    } catch {
-      // 无法确认回收站时按“已占用”处理，恢复路径绝不能覆盖或复活文件。
-      return true
     }
   },
 }
@@ -197,7 +178,6 @@ export async function persistProposalToCardCatalog(
   const next = input.proposal.operation === 'create'
     ? rekeyCreatedCardDocument(input.proposal.document, finalCardId)
     : input.proposal.document
-  let createdByThisAttempt = false
   if (input.proposal.operation === 'create') {
     const target = await inspectCard(files, projectRoot, finalCardId)
     if (target.status === 'occupied') return unchanged(target.error)
@@ -209,7 +189,6 @@ export async function persistProposalToCardCatalog(
     ? await createCard(files, projectRoot, next)
     : await saveCard(files, projectRoot, next)
   if (!saved.ok) return saved
-  createdByThisAttempt = input.proposal.operation === 'create'
 
   // 文件写入会让出事件循环。期间 CardEditor 仍可能提交编辑或删除 Card；
   // 此时不能用最初捕获的 base 回滚，否则会覆盖用户刚完成的修改。
@@ -225,11 +204,12 @@ export async function persistProposalToCardCatalog(
       : Boolean(latest))
   if (catalogChangedWhileSaving) {
     const restoreDocument = latestCatalog.sourceProjectRoot === projectRoot ? latest : before
-    const restored = restoreDocument
-      ? (await saveCard(files, projectRoot, restoreDocument)).ok
-      : createdByThisAttempt
-        ? await removeCard(files, projectRoot, finalCardId)
-        : true
+    if (!restoreDocument && input.proposal.operation === 'create') {
+      // 创建文件已成为 accepted WAL 的恢复事实。不能按路径删除它，因为
+      // 外部进程可能已替换同名文件；保留并要求重载进行内容核对。
+      return uncertain('Card 创建期间目录状态已变化，需重新加载核对已创建文件')
+    }
+    const restored = restoreDocument ? (await saveCard(files, projectRoot, restoreDocument)).ok : true
     if (!restored) {
       return uncertain('Card 保存期间项目状态已变化，且无法恢复最新磁盘状态')
     }
@@ -246,11 +226,10 @@ export async function persistProposalToCardCatalog(
       )
     : undefined
   const restoreDocument = current.sourceProjectRoot === projectRoot ? currentDocument : before
-  const rolledBack = restoreDocument
-    ? (await saveCard(files, projectRoot, restoreDocument)).ok
-    : createdByThisAttempt
-      ? await removeCard(files, projectRoot, finalCardId)
-      : true
+  if (!restoreDocument && input.proposal.operation === 'create') {
+    return uncertain(`Card 已落盘但目录应用失败（${applied.error}），需重新加载恢复`)
+  }
+  const rolledBack = restoreDocument ? (await saveCard(files, projectRoot, restoreDocument)).ok : true
   if (!rolledBack) {
     return uncertain(`Card 已写入但目录应用失败（${applied.error}），磁盘回滚也失败，状态不确定`)
   }
@@ -298,8 +277,6 @@ export async function reconcilePendingProposalTransition(
         return uncertain(`Card ID ${finalCardId} 已被其他 CardDocument 占用，未覆盖`)
       }
       activeCreateAlreadyMatches = true
-    } else if (await hasTrashedCard(files, projectRoot, finalCardId)) {
-      return { ok: true }
     }
   }
 
@@ -329,12 +306,13 @@ export async function reconcilePendingProposalTransition(
     ? transition.allowMissing
     : transition.previousRevision !== null && cardDocumentRevision(latestDocument) === transition.previousRevision
   if (!stillRecoverable) {
-    const restored = latestDocument
-      ? (await saveCard(files, projectRoot, latestDocument)).ok
-      : await removeCard(files, projectRoot, finalCardId)
-    return restored
-      ? { ok: true }
-      : uncertain('恢复 Card transition 期间项目状态变化，且无法恢复最新磁盘状态')
+    if (!latestDocument) {
+      // create 已落盘后不能凭路径删除：外部进程可能已经替换同名文件。
+      // 保留 WAL 与候选文件，重载时通过内容核对恢复，比误删用户文件安全。
+      return uncertain('恢复 Card transition 期间目录状态变化，需重新加载核对已创建文件')
+    }
+    const restored = (await saveCard(files, projectRoot, latestDocument)).ok
+    return restored ? { ok: true } : uncertain('恢复 Card transition 期间项目状态变化，且无法恢复最新磁盘状态')
   }
 
   const documents = latestDocument
@@ -349,9 +327,10 @@ export async function reconcilePendingProposalTransition(
     return { ok: true }
   }
 
-  const rolledBack = latestDocument
-    ? (await saveCard(files, projectRoot, latestDocument)).ok
-    : await removeCard(files, projectRoot, finalCardId)
+  if (!latestDocument) {
+    return uncertain(`Card transition 已落盘但目录应用失败，需重新加载恢复：${catalogErrorMessage(loaded.error)}`)
+  }
+  const rolledBack = (await saveCard(files, projectRoot, latestDocument)).ok
   return rolledBack
     ? unchanged(`Card transition 已回滚：${catalogErrorMessage(loaded.error)}`)
     : uncertain(`Card transition 目录应用失败且磁盘回滚失败：${catalogErrorMessage(loaded.error)}`)
@@ -409,18 +388,6 @@ async function createCard(
   }
 }
 
-async function removeCard(
-  files: ProposalCardPersistencePort,
-  projectRoot: string,
-  cardId: string,
-): Promise<boolean> {
-  try {
-    return await files.removeCardDocument(projectRoot, cardId)
-  } catch {
-    return false
-  }
-}
-
 async function inspectCard(
   files: ProposalCardPersistencePort,
   projectRoot: string,
@@ -433,18 +400,6 @@ async function inspectCard(
       status: 'occupied',
       error: `无法确认目标 CardDocument 是否存在：${error instanceof Error ? error.message : String(error)}`,
     }
-  }
-}
-
-async function hasTrashedCard(
-  files: ProposalCardPersistencePort,
-  projectRoot: string,
-  cardId: string,
-): Promise<boolean> {
-  try {
-    return await files.hasTrashedCardDocument(projectRoot, cardId)
-  } catch {
-    return true
   }
 }
 

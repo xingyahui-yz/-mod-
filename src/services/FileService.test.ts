@@ -131,7 +131,7 @@ describe('FileService conversation port', () => {
 
     expect(api.linkNoReplace).toHaveBeenCalledWith(
       expect.stringMatching(/^\/project\/\.modstudio\/cards\/Fireball\.json\.tmp-/),
-      '/project/.modstudio/cards/Fireball.json',
+      '/project/.modstudio/cards/.id-claims/fireball.claim',
     )
     expect(api.rename).not.toHaveBeenCalled()
     expect(api.remove).toHaveBeenCalledWith(expect.stringMatching(/Fireball\.json\.tmp-/))
