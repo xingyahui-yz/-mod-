@@ -18,6 +18,7 @@ import { CardData } from '../types'
 import { serializeCardDocument, type CardDocument } from '../card/cardDocument'
 import { createCardProposal } from '../card/cardAiProposal'
 import { acquireCardPersistenceBarrier } from '../card/cardPersistenceBarrier'
+import { clearCardPersistenceFailures } from '../card/cardPersistenceBarrier'
 
 // 重置 Card store；Card 文档而非 localStorage 承担持久化
 beforeEach(() => {
@@ -246,6 +247,31 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(screen.getByDisplayValue('新火球')).toBeTruthy()
   })
 
+  it('连续文本输入只重置自动保存窗口，到期仅写入最终草稿一次', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.endsWith('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    }) })
+    render(<CardEditor projectPath="/A" />)
+    const input = await screen.findByDisplayValue('火球')
+
+    fireEvent.change(input, { target: { value: '火' } })
+    fireEvent.change(input, { target: { value: '火球改' } })
+    fireEvent.change(input, { target: { value: '最终草稿' } })
+    expect(writeFile).not.toHaveBeenCalled()
+
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('最终草稿')
+  })
+
   it('现有 CardEditor 原位显示 Card 行为图并写回同一 CardDocument', () => {
     loadCards(seedCards)
     renderEditor()
@@ -322,6 +348,99 @@ describe('CardEditor 过滤 + 原始索引', () => {
 
     expect(writeFile).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeFile).mock.calls[0]?.[0]).toMatch(/NewCard\.json\.tmp-/)
+  })
+
+  it('新 Card 首次落盘完成前不发布到 Catalog，成功后只占用一次 ID', async () => {
+    const firstWrite = deferred<boolean>()
+    let created = false
+    const writeFile = vi.fn()
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValue(true)
+    const linkNoReplace = vi.fn(async (_source: string, target: string) => {
+      if (target.endsWith('/NewCard.json')) created = true
+      return { status: 'linked' as const }
+    })
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => created && path === '/A/.modstudio/cards'
+        ? [{ name: 'NewCard.json', path: '/A/.modstudio/cards/NewCard.json', isDirectory: false }]
+        : []),
+      writeFile,
+      linkNoReplace,
+    }) })
+
+    render(<CardEditor projectPath="/A" />)
+    fireEvent.click(await screen.findByRole('button', { name: '创建第一张卡牌' }))
+    fireEvent.change(screen.getByTestId('new-card-id-input'), { target: { value: 'NewCard' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认创建' }))
+    await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1), { timeout: 1000 })
+    expect(getCardCatalogView().documents).toHaveLength(0)
+    expect(writeFile).toHaveBeenCalledTimes(1)
+
+    await act(async () => { firstWrite.resolve(true); await Promise.resolve() })
+    expect(await screen.findByDisplayValue('My Card')).toBeTruthy()
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(linkNoReplace.mock.calls.filter(call => call[1].endsWith('/NewCard.json'))).toHaveLength(1)
+  })
+
+  it('批量导入的每张 Card 都先原子占用 ID 并落盘，不只保存最后选择项', async () => {
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    const linkNoReplace = vi.fn(async (_source: string, _target: string) => ({ status: 'linked' as const }))
+    const api = createCardEditorApi({
+      readDirectory: vi.fn(async () => []),
+      writeFile,
+      linkNoReplace,
+    })
+    installFileService({ api })
+    const rendered = render(<CardEditor projectPath="/A" />)
+    await screen.findByRole('button', { name: '创建第一张卡牌' })
+    const imported = new File([JSON.stringify([seedCards[0], seedCards[1]])], 'cards.json', {
+      type: 'application/json',
+    })
+    Object.defineProperty(imported, 'text', {
+      value: async () => JSON.stringify([seedCards[0], seedCards[1]]),
+    })
+
+    fireEvent.change(rendered.container.querySelector('input[type="file"]')!, {
+      target: { files: [imported] },
+    })
+    await waitFor(() => expect(getCardCatalogView().documents).toHaveLength(2))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+
+    expect(writeFile).toHaveBeenCalledTimes(2)
+    expect(linkNoReplace).toHaveBeenCalledTimes(4)
+    expect(linkNoReplace.mock.calls.map(call => call[1])).toEqual(expect.arrayContaining([
+      '/A/.modstudio/cards/.id-claims/fireball.claim',
+      '/A/.modstudio/cards/Fireball.json',
+      '/A/.modstudio/cards/.id-claims/shield.claim',
+      '/A/.modstudio/cards/Shield.json',
+    ]))
+  })
+
+  it('导入等待磁盘占用期间会 reservation 同 ID，手工创建不能发布分叉草稿', async () => {
+    const firstWrite = deferred<boolean>()
+    const writeFile = vi.fn(() => firstWrite.promise)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async () => []),
+      writeFile,
+    }) })
+    const rendered = render(<CardEditor projectPath="/A" />)
+    await screen.findByRole('button', { name: '创建第一张卡牌' })
+    const imported = new File([JSON.stringify([seedCards[0]])], 'cards.json', { type: 'application/json' })
+    Object.defineProperty(imported, 'text', { value: async () => JSON.stringify([seedCards[0]]) })
+    fireEvent.change(rendered.container.querySelector('input[type="file"]')!, {
+      target: { files: [imported] },
+    })
+    await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: '+ 新建卡牌' }))
+    fireEvent.change(screen.getByTestId('new-card-id-input'), { target: { value: 'Fireball' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认创建' }))
+    expect(await screen.findByText(/Card ID Fireball 正在被其他创建操作占用/)).toBeTruthy()
+    expect(getCardCatalogView().documents).toHaveLength(0)
+
+    await act(async () => { firstWrite.resolve(true); await Promise.resolve() })
+    await waitFor(() => expect(getCardCatalogView().documents).toHaveLength(1))
+    expect(getCardCatalogView().documents[0].card.name).toBe('火球')
   })
 
   it('项目 A 的迟到加载不会覆盖已经切换到的项目 B', async () => {
@@ -453,6 +572,75 @@ describe('CardEditor 过滤 + 原始索引', () => {
     expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('WAL 后继草稿')
   })
 
+  it('history WAL 失败后保持 Card 保存阻断，后继编辑不会伪装成已保存', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.endsWith('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    }) })
+
+    try {
+      render(<CardEditor projectPath="/A" />)
+      const input = await screen.findByDisplayValue('火球')
+      const lease = acquireCardPersistenceBarrier('/A', 'Fireball')
+      fireEvent.change(input, { target: { value: '不能落盘的事务状态' } })
+      act(() => lease.release('failed'))
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+
+      expect(writeFile).not.toHaveBeenCalled()
+      expect(screen.getByText('自动保存失败')).toBeTruthy()
+      fireEvent.change(screen.getByDisplayValue('不能落盘的事务状态'), { target: { value: '仍然阻断' } })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+      expect(writeFile).not.toHaveBeenCalled()
+    } finally {
+      clearCardPersistenceFailures('/A')
+    }
+  })
+
+  it('非当前 Card 的持久化事务进行中也会阻止批量生成', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const beta = cardDocument(seedCards[1])
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [
+            { name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false },
+            { name: 'Shield.json', path: '/A/.modstudio/cards/Shield.json', isDirectory: false },
+          ]
+        : []),
+      readFile: vi.fn(async (path: string) => {
+        if (path === '/A/.modstudio/cards/Fireball.json') return serializeCardDocument(alpha)
+        if (path === '/A/.modstudio/cards/Shield.json') return serializeCardDocument(beta)
+        return null
+      }),
+    }) })
+    const generateCardBatch = vi.spyOn(FileService, 'generateCardBatch')
+    let lease: ReturnType<typeof acquireCardPersistenceBarrier> | null = null
+
+    try {
+      const rendered = render(<CardEditor projectPath="/A" />)
+      const shield = await screen.findByText('护盾', { selector: '.card-name' })
+      fireEvent.click(within(shield.closest('.card-item') as HTMLElement).getByText('护盾'))
+      expect(getCardCatalogView().selectedCardId).toBe('Shield')
+
+      act(() => { lease = acquireCardPersistenceBarrier('/A', 'Fireball') })
+      const batchButton = within(rendered.container).getByTitle('逐张生成当前项目中的 Card')
+      expect((batchButton as HTMLButtonElement).disabled).toBe(false)
+      fireEvent.click(batchButton)
+
+      expect(await screen.findByText('仍有 Card 事务正在持久化，批量生成已暂停')).toBeTruthy()
+      expect(generateCardBatch).not.toHaveBeenCalled()
+    } finally {
+      if (lease) act(() => { lease?.release() })
+      generateCardBatch.mockRestore()
+    }
+  })
+
   it('history WAL barrier 释放后选中 Card 的延迟草稿只保存一次', async () => {
     const alpha = cardDocument(seedCards[0])
     const writeFile = vi.fn(async (_path: string, _content: string) => true)
@@ -477,6 +665,38 @@ describe('CardEditor 过滤 + 原始索引', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
     expect(writeFile).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('只写一次')
+  })
+
+  it('延迟保存写入期间再次编辑会继续追赶最新 Card 草稿', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const firstWrite = deferred<boolean>()
+    const writeFile = vi.fn()
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValue(true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.includes('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    }) })
+
+    render(<CardEditor projectPath="/A" />)
+    const input = await screen.findByDisplayValue('火球')
+    let lease!: ReturnType<typeof acquireCardPersistenceBarrier>
+    act(() => { lease = acquireCardPersistenceBarrier('/A', 'Fireball') })
+    fireEvent.change(input, { target: { value: '首个延迟草稿' } })
+    act(() => { lease.release() })
+    await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByDisplayValue('首个延迟草稿'), { target: { value: '写入期间的新草稿' } })
+    await act(async () => { firstWrite.resolve(true); await Promise.resolve() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+
+    expect(writeFile).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(writeFile).mock.calls[1]?.[1]).toContain('写入期间的新草稿')
   })
 
   it('rapid undo/redo 的中间提案快照不会让未来同内容手工编辑跳过保存', async () => {
@@ -584,6 +804,7 @@ function createCardEditorApi(overrides: Partial<FileService.ElectronAPI> = {}): 
     writeFile: vi.fn(async () => true),
     mkdir: vi.fn(async () => true),
     rename: vi.fn(async () => true),
+    linkNoReplace: vi.fn(async () => ({ status: 'linked' as const })),
     remove: vi.fn(async () => true),
     copyDirectory: vi.fn(),
     getUserDataPath: vi.fn(),

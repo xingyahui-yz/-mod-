@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ProjectConversation, type ConversationModel, type ConversationRequest } from './projectConversation'
 import type { ConversationDocument } from './conversationDocument'
 import type { ConversationRepository } from './conversationRepository'
@@ -53,7 +53,7 @@ describe('ProjectConversation', () => {
     const h = harness({ respond: () => new Promise(result => { resolve = result }) })
     await h.conversation.load()
     const sending = h.conversation.send('继续')
-    await Promise.resolve()
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
     await h.conversation.cancel()
     resolve({ success: true, content: '{"schemaVersion":1,"text":"太迟了","quickReplies":[],"proposals":[]}' })
     expect((await sending).ok).toBe(false)
@@ -173,7 +173,7 @@ describe('ProjectConversation', () => {
     const h = harness({ respond: () => new Promise(result => { resolve = result }) }, { failSaveCalls: [2] })
     await h.conversation.load()
     const sending = h.conversation.send('继续')
-    await Promise.resolve()
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
     await expect(h.conversation.cancel()).resolves.toMatchObject({ ok: false, code: 'persistence' })
     resolve({ success: true, content: '{"schemaVersion":1,"text":"太迟了","quickReplies":[],"proposals":[]}' })
     await expect(sending).resolves.toMatchObject({ ok: false, code: 'cancelled' })

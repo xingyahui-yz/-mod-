@@ -108,6 +108,9 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
   const cardDocumentRepository = createCardDocumentRepository({
     files: {
       readDirectory: path => api.readDirectory(path),
+      ...(api.readDirectoryResult
+        ? { readDirectoryResult: (path: string) => api.readDirectoryResult!(path) }
+        : {}),
       readFile: path => api.readFile(path),
       mkdir: path => api.mkdir(path),
       writeFile: (path, content) => api.writeFile(path, content),
@@ -121,7 +124,13 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
   const cardTrashRepository = createCardTrashRepository({
     files: {
       readDirectory: path => api.readDirectory(path),
+      ...(api.readDirectoryResult
+        ? { readDirectoryResult: (path: string) => api.readDirectoryResult!(path) }
+        : {}),
       readFile: path => api.readFile(path),
+      ...(api.readFileResult
+        ? { readFileResult: (path: string) => api.readFileResult!(path) }
+        : {}),
       mkdir: path => api.mkdir(path),
       rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
       linkNoReplace: (from, to) => api.linkNoReplace

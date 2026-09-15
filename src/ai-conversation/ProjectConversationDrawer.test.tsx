@@ -413,6 +413,31 @@ describe('ProjectConversationDrawer', () => {
     expect(screen.queryByText('这条迟到回复不可见。')).toBeNull()
   })
 
+  it('预保存阶段立即进入忙碌态，停止后不会调用 provider', async () => {
+    const firstSave = deferred<void>()
+    const repository = memoryRepository({ status: 'missing' })
+    const save = repository.save.bind(repository)
+    let call = 0
+    repository.save = vi.fn(async (projectRoot, document) => {
+      call += 1
+      if (call === 1) await firstSave.promise
+      return save(projectRoot, document)
+    })
+    const model = successModel('不应出现')
+    renderDrawer('/mods/quiet-depth', repository, model)
+    await screen.findByText('从项目目标开始')
+
+    fireEvent.change(screen.getByLabelText('发送给项目 AI 的消息'), { target: { value: '开始设计' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+    const stop = await screen.findByRole('button', { name: '停止' })
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).disabled).toBe(true)
+    fireEvent.click(stop)
+    firstSave.resolve()
+
+    expect(await screen.findByText('本次回复已取消')).toBeTruthy()
+    expect(model.respond).not.toHaveBeenCalled()
+  })
+
   it('隔离历史显示保真提示并禁用发送', async () => {
     const repository = memoryRepository({ status: 'quarantined', reason: '不支持的 schemaVersion', path: '/mods/p/.modstudio/ai/conversation.json.quarantine' })
     renderDrawer('/mods/p', repository, successModel('不会调用'))
@@ -431,6 +456,9 @@ describe('ProjectConversationDrawer', () => {
     expect(drawer.className).toContain('is-collapsed')
     fireEvent.click(screen.getByRole('button', { name: '展开项目 AI 对话' }))
     expect(drawer.className).toContain('is-open')
+    await waitFor(() => expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: '收起项目 AI 对话' }),
+    ))
   })
 
   it('无项目时入口禁用', () => {
@@ -633,6 +661,12 @@ function setNarrow(matches: boolean) {
     removeListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })))
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(next => { resolve = next })
+  return { promise, resolve }
 }
 
 function cardDocument(id: string, name: string): CardDocument {

@@ -19,6 +19,11 @@ export interface CardDocumentFileEntry {
 /** Card repository 所需的最小文件能力；不包含 C# parser。 */
 export interface CardDocumentFilePort {
   readDirectory(path: string): Promise<CardDocumentFileEntry[]>
+  readDirectoryResult?(path: string): Promise<
+    | { status: 'found'; value: CardDocumentFileEntry[] }
+    | { status: 'missing' }
+    | { status: 'error'; error: string }
+  >
   readFile(path: string): Promise<string | null>
   mkdir(path: string): Promise<boolean>
   writeFile(path: string, content: string): Promise<boolean>
@@ -51,11 +56,12 @@ export interface CardDocumentRepository {
 
 /** 将现有 FileService 接到 repository，不改变旧的 C# load/save 方法。 */
 export function createCardDocumentRepositoryFromFileService(
-  service: Pick<FileService, 'getProjectFiles' | 'readFile' | 'createDirectory' | 'writeFile' | 'renameFile' | 'linkFileNoReplace' | 'removeFile'>,
+  service: Pick<FileService, 'getProjectFiles' | 'readDirectoryResult' | 'readFile' | 'createDirectory' | 'writeFile' | 'renameFile' | 'linkFileNoReplace' | 'removeFile'>,
 ): CardDocumentRepository {
   return createCardDocumentRepository({
     files: {
       readDirectory: path => service.getProjectFiles(path),
+      readDirectoryResult: path => service.readDirectoryResult(path),
       readFile: path => service.readFile(path),
       mkdir: path => service.createDirectory(path),
       writeFile: (path, content) => service.writeFile(path, content),
@@ -77,6 +83,31 @@ function joinPath(...parts: string[]): string {
 
 function temporaryPath(target: string, id: string): string {
   return `${target}.tmp-${id}-${Math.random().toString(36).slice(2)}`
+}
+
+async function readDirectoryState(files: CardDocumentFilePort, path: string): Promise<
+  | { status: 'found'; value: CardDocumentFileEntry[] }
+  | { status: 'missing' }
+  | { status: 'error'; error: string }
+> {
+  if (files.readDirectoryResult) {
+    try {
+      const result = await files.readDirectoryResult(path)
+      return result.status === 'error'
+        ? { status: 'error', error: result.error }
+        : result
+    } catch (error) {
+      return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  try {
+    return { status: 'found', value: await files.readDirectory(path) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return message.includes('ENOENT') || message.includes('not found') || message.includes('不存在')
+      ? { status: 'missing' }
+      : { status: 'error', error: message }
+  }
 }
 
 export function createCardDocumentRepository(deps: { files: CardDocumentFilePort }): CardDocumentRepository {
@@ -107,16 +138,10 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
   return {
     async load(projectPath) {
       const cardsPath = joinPath(projectPath, CARDS_DIR)
-      let entries: CardDocumentFileEntry[]
-      try {
-        entries = await files.readDirectory(cardsPath)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (message.includes('ENOENT') || message.includes('not found') || message.includes('不存在')) {
-          return []
-        }
-        throw error
-      }
+      const directory = await readDirectoryState(files, cardsPath)
+      if (directory.status === 'missing') return []
+      if (directory.status === 'error') throw new Error(directory.error)
+      const entries = directory.value
 
       const cardEntries = entries
         .filter(entry => !entry.isDirectory && entry.name.toLowerCase().endsWith('.json'))
@@ -156,10 +181,9 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
       if (!await files.mkdir(cardsPath)) {
         return { ok: false, error: '无法创建 CardDocument 目录' }
       }
-      const occupied = await files.readDirectory(cardsPath)
-        .then(entries => entries.some(entry => !entry.isDirectory &&
-          entry.name.toLowerCase() === `${document.card.id}.json`.toLowerCase()))
-        .catch(() => true)
+      const initialDirectory = await readDirectoryState(files, cardsPath)
+      const occupied = initialDirectory.status !== 'found' || initialDirectory.value.some(entry =>
+        !entry.isDirectory && entry.name.toLowerCase() === `${document.card.id}.json`.toLowerCase())
       if (occupied) return { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
 
       const target = joinPath(cardsPath, `${document.card.id}.json`)
@@ -178,10 +202,10 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
       try {
         // 第一次扫描与 claim 之间可能已有竞争者完成创建；持有归一化
         // claim 后必须再扫一次，才能把大小写不同的目标也纳入原子边界。
-        const occupiedAfterClaim = await files.readDirectory(cardsPath)
-          .then(entries => entries.some(entry => !entry.isDirectory &&
-            entry.name.toLowerCase() === `${document.card.id}.json`.toLowerCase()))
-          .catch(() => true)
+        const directoryAfterClaim = await readDirectoryState(files, cardsPath)
+        const occupiedAfterClaim = directoryAfterClaim.status !== 'found' ||
+          directoryAfterClaim.value.some(entry => !entry.isDirectory &&
+            entry.name.toLowerCase() === `${document.card.id}.json`.toLowerCase())
         if (occupiedAfterClaim) {
           return { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
         }

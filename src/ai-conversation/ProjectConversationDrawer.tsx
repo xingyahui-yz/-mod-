@@ -106,7 +106,7 @@ export function ProjectConversationDrawer({
   useEffect(() => {
     const history = historyRef.current
     if (history) history.scrollTop = history.scrollHeight
-  }, [view.document?.turns.length, view.isRunning])
+  }, [view.document?.turns.length, view.isBusy])
 
   const projectDocuments = sourceProjectRoot === view.projectRoot ? documents : NO_CARD_DOCUMENTS
   const projectCurrentDocument = sourceProjectRoot === view.projectRoot ? currentDocument : null
@@ -155,7 +155,7 @@ export function ProjectConversationDrawer({
     view.loadStatus !== 'error' &&
     view.loadStatus !== 'quarantined' &&
     !view.persistenceError &&
-    !view.isRunning &&
+    !view.isBusy &&
     draft.trim(),
   )
   useEffect(() => {
@@ -272,6 +272,11 @@ export function ProjectConversationDrawer({
     setIsOpen(false)
   }
 
+  const openDrawer = () => {
+    setIsOpen(true)
+    requestAnimationFrame(() => closeButtonRef.current?.focus())
+  }
+
   const handleDrawerKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (!isOpen || !isNarrow) return
     if (event.key === 'Escape') {
@@ -295,7 +300,7 @@ export function ProjectConversationDrawer({
     }
   }
 
-  const railStatus = view.isRunning ? 'AI 正在回复' : hasUnread ? '有未读消息' : null
+  const railStatus = view.isBusy ? 'AI 正在处理' : hasUnread ? '有未读消息' : null
 
   return (
     <>
@@ -306,24 +311,24 @@ export function ProjectConversationDrawer({
         aria-label="项目 AI 对话"
         role={isOpen && isNarrow ? 'dialog' : undefined}
         aria-modal={isOpen && isNarrow ? true : undefined}
-        data-running={view.isRunning || undefined}
+        data-running={view.isBusy || undefined}
         onKeyDown={handleDrawerKeyDown}
       >
         {!isOpen ? (
           <button
             className="conversation-rail-button"
             ref={railButtonRef}
-            onClick={() => setIsOpen(true)}
+            onClick={openDrawer}
             disabled={!view.projectRoot}
             aria-label={view.projectRoot ? `展开项目 AI 对话${railStatus ? `，${railStatus}` : ''}` : '请先打开项目'}
             title={view.projectRoot ? '展开项目 AI 对话' : '请先打开项目'}
           >
             <span className="conversation-spark" aria-hidden="true">✦</span>
             <span className="conversation-rail-label">AI 对话</span>
-            {(view.isRunning || hasUnread) && (
+            {(view.isBusy || hasUnread) && (
               <span
-                className={`conversation-status-dot ${hasUnread && !view.isRunning ? 'has-unread' : ''}`}
-                aria-label={view.isRunning ? 'AI 正在回复' : '有未读 AI 回复'}
+                className={`conversation-status-dot ${hasUnread && !view.isBusy ? 'has-unread' : ''}`}
+                aria-label={view.isBusy ? 'AI 正在处理' : '有未读 AI 回复'}
               />
             )}
           </button>
@@ -338,9 +343,9 @@ export function ProjectConversationDrawer({
             </header>
 
             <div className="conversation-project-status">
-              <span className={`conversation-status-dot ${view.isRunning ? 'is-active' : ''}`} aria-hidden="true" />
+              <span className={`conversation-status-dot ${view.isBusy ? 'is-active' : ''}`} aria-hidden="true" />
               <span>{view.projectRoot ? projectName(view.projectRoot) : '未打开项目'}</span>
-              {view.isRunning && <strong>回复中</strong>}
+              {view.isBusy && <strong>处理中</strong>}
             </div>
 
             <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label="对话历史">
@@ -350,13 +355,14 @@ export function ProjectConversationDrawer({
                   key={turn.id}
                   turn={turn}
                   isLatest={turn.id === latestTurnId}
-                  isRunning={view.isRunning}
+                  isRunning={view.isBusy}
+                  persistenceBlocked={Boolean(view.persistenceError)}
                   selectedQuickReply={selectedQuickReply}
                   onSelectQuickReply={selectQuickReply}
                   onRetry={retryTurn}
                 />
               ))}
-              {view.isRunning && (
+              {view.isBusy && (
                 <div className="conversation-message assistant is-running" aria-label="AI 正在回复">
                   <span /><span /><span />
                 </div>
@@ -374,7 +380,7 @@ export function ProjectConversationDrawer({
               )}
             </div>
 
-            {(view.persistenceError || actionError || (view.lastError && !view.isRunning)) && (
+            {(view.persistenceError || actionError || (view.lastError && !view.isBusy)) && (
               <div className="conversation-error" role="alert">
                 {view.persistenceError ?? actionError ?? view.lastError}
               </div>
@@ -402,7 +408,7 @@ export function ProjectConversationDrawer({
                 <select
                   aria-label="添加 Card 上下文"
                   value=""
-                  disabled={!isCardCatalogReady || availableDocuments.length === 0 || view.isRunning}
+                  disabled={!isCardCatalogReady || availableDocuments.length === 0 || view.isBusy}
                   onChange={event => {
                     if (event.target.value) setAttachmentIds(ids => [...ids, event.target.value])
                   }}
@@ -431,9 +437,9 @@ export function ProjectConversationDrawer({
                   placeholder={composerPlaceholder(view.loadStatus, isCardCatalogReady)}
                   aria-label="发送给项目 AI 的消息"
                   rows={3}
-                  disabled={!isCardCatalogReady || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.isRunning}
+                  disabled={!isCardCatalogReady || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.isBusy}
                 />
-                {view.isRunning ? (
+                {view.isBusy ? (
                   <button type="button" className="conversation-send-button is-cancel" onClick={() => void actions.cancel()}>
                     停止
                   </button>
@@ -480,6 +486,7 @@ function ConversationTurnView({
   turn,
   isLatest,
   isRunning,
+  persistenceBlocked,
   selectedQuickReply,
   onSelectQuickReply,
   onRetry,
@@ -487,12 +494,13 @@ function ConversationTurnView({
   turn: ConversationTurn
   isLatest: boolean
   isRunning: boolean
+  persistenceBlocked: boolean
   selectedQuickReply: ConversationQuickReplySelection | null
   onSelectQuickReply: (turnId: string, id: string, label: string) => void
   onRetry: (turnId: string) => void
 }) {
   const latestAttempt = turn.attempts.at(-1)
-  const canRetry = Boolean(isLatest && !isRunning && latestAttempt && RETRIABLE_STATUSES.has(latestAttempt.status))
+  const canRetry = Boolean(isLatest && !isRunning && !persistenceBlocked && latestAttempt && RETRIABLE_STATUSES.has(latestAttempt.status))
   return (
     <article className="conversation-turn" data-turn-id={turn.id}>
       <div className="conversation-message user">

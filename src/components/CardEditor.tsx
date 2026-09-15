@@ -15,19 +15,23 @@ import { Toast } from './Toast'
 import { useTransientMessage } from '../hooks/useTransientMessage'
 import * as FileService from '../services/FileService'
 import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
-import { appendNode, connect, disconnect, moveNode, removeNode } from '../node-editor/graph'
+import { appendNode, connect, createEmptyGraph, disconnect, moveNode, removeNode } from '../node-editor/graph'
 import type { NodeGraph } from '../node-editor/types'
 import { effectsForEntity, triggersForEntity, EFFECT_KINDS } from '../shared/kinds'
-import { serializeCardDocument } from '../card/cardDocument'
+import { CURRENT_CARD_SCHEMA_VERSION, serializeCardDocument, type CardDocument } from '../card/cardDocument'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocumentLoadEntry } from '../card/cardRepository'
 import type { CardTrashEntry } from '../card/cardTrash'
 import type { BatchGenerationReport } from '../card/cardBatchGeneration'
 import {
+  clearCardPersistenceFailures,
+  hasCardPersistenceFailure,
   isCardPersistenceBlocked,
   subscribeCardPersistenceBarrier,
   waitForCardPersistenceBarrier,
 } from '../card/cardPersistenceBarrier'
+import { registerProjectCardFlusher } from '../card/cardPersistenceCoordinator'
+import { reserveCardId } from '../card/cardIdReservation'
 
 interface CardEditorProps {
   projectPath: string | null
@@ -73,6 +77,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const proposalManagedSnapshots = useRef(new Map<string, string>())
   const deferredAutosaveTokens = useRef(new Map<string, number>())
   const persistedSnapshots = useRef(new Map<string, string>())
+  const persistedCardKeys = useRef(new Set<string>())
+  const failedTransactionKeys = useRef(new Set<string>())
+  const editorPersistenceTails = useRef(new Map<string, Promise<void>>())
+  const editorPersistenceErrors = useRef(new Map<string, string>())
+  const pendingUnmountFlush = useRef<(() => Promise<boolean>) | null>(null)
   const activeProjectRef = useRef<string | null>(projectPath)
   const loadedProjectRef = useRef<string | null>(null)
   const loadGenerationRef = useRef(0)
@@ -104,6 +113,69 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   const isActiveCatalogProject = (projectRoot: string) =>
     activeProjectRef.current === projectRoot && getCardCatalogView().sourceProjectRoot === projectRoot
+
+  const cardPersistenceKey = (projectRoot: string, cardId: string) =>
+    `${projectRoot}\0${cardId.toLowerCase()}`
+
+  /**
+   * CardEditor 的所有源文档写入共享这一条逐 Card 队列。首次写入必须走
+   * no-replace create；只有本实例已加载或已成功创建的路径才能走 save。
+   */
+  const persistCardDocument = (
+    projectRoot: string,
+    document: CardDocument,
+  ): ReturnType<typeof FileService.saveCardDocument> => {
+    const key = cardPersistenceKey(projectRoot, document.card.id)
+    const previous = editorPersistenceTails.current.get(key) ?? Promise.resolve()
+    const persist = async () => {
+      const transactionPersisted = await waitForCardPersistenceBarrier(projectRoot, document.card.id)
+      if (!transactionPersisted) {
+        failedTransactionKeys.current.add(key)
+        const error = 'Card 事务持久化失败，请重新加载项目后重试'
+        editorPersistenceErrors.current.set(key, error)
+        return { ok: false as const, error }
+      }
+      const activeCatalog = isActiveCatalogProject(projectRoot)
+      const latest = activeCatalog
+        ? getCardCatalogView().documents.find(candidate => candidate.card.id === document.card.id)
+        : document
+      if (!latest) return { ok: false as const, error: 'Card 已从当前项目移除' }
+      const latestSnapshot = serializeCardDocument(latest)
+      if (proposalManagedSnapshots.current.get(document.card.id) === latestSnapshot) {
+        persistedCardKeys.current.add(key)
+      }
+      const saved = persistedCardKeys.current.has(key)
+        ? await FileService.saveCardDocument(projectRoot, latest)
+        : await FileService.createCardDocument(projectRoot, latest)
+      if (saved.ok) {
+        editorPersistenceErrors.current.delete(key)
+        persistedCardKeys.current.add(key)
+        if (activeCatalog) {
+          persistedSnapshots.current.set(latest.card.id, latestSnapshot)
+        }
+      } else editorPersistenceErrors.current.set(key, saved.error)
+      return saved
+    }
+    const result = previous.then(persist, persist)
+    const tail = result.then(() => undefined, () => undefined)
+    editorPersistenceTails.current.set(key, tail)
+    void tail.then(() => {
+      if (editorPersistenceTails.current.get(key) === tail) editorPersistenceTails.current.delete(key)
+    })
+    return result
+  }
+
+  const drainEditorPersistence = async (projectRoot: string): Promise<void> => {
+    const prefix = `${projectRoot}\0`
+    while (true) {
+      const pending = [...editorPersistenceTails.current]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([, tail]) => tail)
+      if (pending.length === 0) return
+      await Promise.all(pending)
+      if (![...editorPersistenceTails.current.keys()].some(key => key.startsWith(prefix))) return
+    }
+  }
 
   useEffect(() => setGraphError(null), [selectedCardId])
 
@@ -154,34 +226,63 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         deferredAutosaveTokens.current.set(cardId, token)
         // 选择可继续切到其他 Card；因此不能只依赖当前 selector 在 barrier
         // 释放时重渲染。这里保存该 Card 的最新目录投影，并用 token 合并多次编辑。
-        void waitForCardPersistenceBarrier(projectToSave, cardId).then(async () => {
-          if (deferredAutosaveTokens.current.get(cardId) !== token ||
-            activeProjectRef.current !== projectToSave ||
-            getCardCatalogView().sourceProjectRoot !== projectToSave) return
-          const latest = getCardCatalogView().documents.find(candidate => candidate.card.id === cardId)
-          if (!latest) {
-            deferredAutosaveTokens.current.delete(cardId)
+        void (async () => {
+          const transactionPersisted = await waitForCardPersistenceBarrier(projectToSave, cardId)
+          if (!transactionPersisted) {
+            if (deferredAutosaveTokens.current.get(cardId) === token) {
+              deferredAutosaveTokens.current.delete(cardId)
+              failedTransactionKeys.current.add(cardPersistenceKey(projectToSave, cardId))
+              if (getCardCatalogView().selectedCardId === cardId) setAutosaveState('error')
+            }
             return
           }
-          const latestSnapshot = serializeCardDocument(latest)
-          if (proposalManagedSnapshots.current.get(cardId) === latestSnapshot) {
-            proposalManagedSnapshots.current.delete(cardId)
-            deferredAutosaveTokens.current.delete(cardId)
-            persistedSnapshots.current.set(cardId, latestSnapshot)
-            return
-          }
-          const result = await FileService.saveCardDocument(projectToSave, latest)
-          if (activeProjectRef.current !== projectToSave ||
-            getCardCatalogView().sourceProjectRoot !== projectToSave) return
-          deferredAutosaveTokens.current.delete(cardId)
-          if (getCardCatalogView().selectedCardId === cardId) {
-            if (result.ok) {
+          while (deferredAutosaveTokens.current.get(cardId) === token &&
+            activeProjectRef.current === projectToSave &&
+            getCardCatalogView().sourceProjectRoot === projectToSave) {
+            const latest = getCardCatalogView().documents.find(candidate => candidate.card.id === cardId)
+            if (!latest) {
+              deferredAutosaveTokens.current.delete(cardId)
+              return
+            }
+            const latestSnapshot = serializeCardDocument(latest)
+            if (proposalManagedSnapshots.current.get(cardId) === latestSnapshot) {
+              proposalManagedSnapshots.current.delete(cardId)
+              deferredAutosaveTokens.current.delete(cardId)
+              persistedCardKeys.current.add(cardPersistenceKey(projectToSave, cardId))
               persistedSnapshots.current.set(cardId, latestSnapshot)
-              setAutosaveState('saved')
-            } else {
-              setAutosaveState('error')
+              return
+            }
+            const result = await persistCardDocument(projectToSave, latest)
+            if (deferredAutosaveTokens.current.get(cardId) !== token ||
+              activeProjectRef.current !== projectToSave ||
+              getCardCatalogView().sourceProjectRoot !== projectToSave) return
+            if (!result.ok) {
+              deferredAutosaveTokens.current.delete(cardId)
+              if (getCardCatalogView().selectedCardId === cardId) setAutosaveState('error')
+              return
+            }
+            const afterSave = getCardCatalogView().documents.find(candidate => candidate.card.id === cardId)
+            if (!afterSave || serializeCardDocument(afterSave) === latestSnapshot) {
+              deferredAutosaveTokens.current.delete(cardId)
+              if (getCardCatalogView().selectedCardId === cardId) setAutosaveState('saved')
+              return
+            }
+            // 写入期间又有编辑：保持 token，并按正常 autosave 窗口合并后继输入，
+            // 然后继续追赶同一 Card，即使此时用户已经切换选择。
+            if (getCardCatalogView().selectedCardId === cardId) setAutosaveState('pending')
+            await new Promise(resolve => setTimeout(resolve, 500))
+            const nextTransactionPersisted = await waitForCardPersistenceBarrier(projectToSave, cardId)
+            if (!nextTransactionPersisted) {
+              deferredAutosaveTokens.current.delete(cardId)
+              failedTransactionKeys.current.add(cardPersistenceKey(projectToSave, cardId))
+              if (getCardCatalogView().selectedCardId === cardId) setAutosaveState('error')
+              return
             }
           }
+        })().catch(() => {
+          if (deferredAutosaveTokens.current.get(cardId) !== token) return
+          deferredAutosaveTokens.current.delete(cardId)
+          if (getCardCatalogView().selectedCardId === cardId) setAutosaveState('error')
         })
       }
       setAutosaveState('pending')
@@ -193,8 +294,15 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
 
+    if (failedTransactionKeys.current.has(cardPersistenceKey(projectPath, currentDocument.card.id)) ||
+      hasCardPersistenceFailure(projectPath, currentDocument.card.id)) {
+      setAutosaveState('error')
+      return
+    }
+
     if (proposalManagedSnapshots.current.get(currentDocument.card.id) === snapshot) {
       proposalManagedSnapshots.current.delete(currentDocument.card.id)
+      persistedCardKeys.current.add(cardPersistenceKey(projectPath, currentDocument.card.id))
       persistedSnapshots.current.set(currentDocument.card.id, snapshot)
       setAutosaveState('saved')
       return
@@ -207,32 +315,65 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     const projectToSave = projectPath
     const flush = async () => {
       setAutosaveState('saving')
-      const result = await FileService.saveCardDocument(projectToSave, documentToSave)
-      if (activeProjectRef.current !== projectToSave || loadedProjectRef.current !== projectToSave) return
+      const result = await persistCardDocument(projectToSave, documentToSave)
+      if (activeProjectRef.current !== projectToSave || loadedProjectRef.current !== projectToSave) return result.ok
       if (result.ok) {
-        persistedSnapshots.current.set(documentToSave.card.id, snapshot)
         setAutosaveState('saved')
+        return true
       } else {
         setAutosaveState('error')
+        return false
       }
     }
     autosaveTimer.current = setTimeout(() => {
       autosaveTimer.current = null
       autosaveCardId.current = null
+      pendingUnmountFlush.current = null
       void flush()
     }, 500)
     autosaveCardId.current = documentToSave.card.id
+    pendingUnmountFlush.current = flush
 
     return () => {
       if (autosaveTimer.current) {
         clearTimeout(autosaveTimer.current)
         autosaveTimer.current = null
         autosaveCardId.current = null
-        // 不等待 Promise，先启动写入；Electron 文件端口会自行完成原子写。
-        void flush()
+        const switchedCard = getCardCatalogView().selectedCardId !== documentToSave.card.id
+        const switchedProject = activeProjectRef.current !== projectToSave
+        if (switchedCard || switchedProject) {
+          pendingUnmountFlush.current = null
+          // 不等待 Promise，先启动写入；项目切换守卫会等待全局文件队列。
+          void flush()
+        }
       }
     }
   }, [projectPath, currentDocument, cardPersistenceBlocked])
+
+  useEffect(() => () => {
+    const flush = pendingUnmountFlush.current
+    pendingUnmountFlush.current = null
+    if (flush) void flush()
+  }, [])
+
+  useEffect(() => {
+    if (!projectPath) return
+    return registerProjectCardFlusher(projectPath, async () => {
+      if (autosaveTimer.current) {
+        clearTimeout(autosaveTimer.current)
+        autosaveTimer.current = null
+        autosaveCardId.current = null
+      }
+      const flush = pendingUnmountFlush.current
+      pendingUnmountFlush.current = null
+      if (flush) await flush()
+      await drainEditorPersistence(projectPath)
+      const prefix = `${projectPath}\0`
+      const error = [...editorPersistenceErrors.current]
+        .find(([key]) => key.startsWith(prefix))?.[1]
+      return error ? { ok: false, error } : { ok: true }
+    })
+  }, [projectPath])
 
   // 当项目路径变化时，加载现有卡牌
   useEffect(() => {
@@ -262,6 +403,20 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     // 项目切换先清空旧项目投影，避免加载失败时串出上一项目的 Card。
     cardCatalogActions.clear()
     try {
+      // 快速 A→B→A 时，先等 A 上一轮 cleanup 写入真正完成，再以磁盘
+      // 为权威重建 ownership；否则会把已存在文件误当成首次 create。
+      await drainEditorPersistence(projectToLoad)
+      if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return
+      const projectKeyPrefix = `${projectToLoad}\0`
+      for (const key of persistedCardKeys.current) {
+        if (key.startsWith(projectKeyPrefix)) persistedCardKeys.current.delete(key)
+      }
+      for (const key of failedTransactionKeys.current) {
+        if (key.startsWith(projectKeyPrefix)) failedTransactionKeys.current.delete(key)
+      }
+      for (const key of editorPersistenceErrors.current.keys()) {
+        if (key.startsWith(projectKeyPrefix)) editorPersistenceErrors.current.delete(key)
+      }
       const entries = await FileService.loadCardDocuments(projectToLoad)
       if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return
       const editableDocuments = entries
@@ -272,10 +427,14 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       setRecoveryEntries(invalidEntries)
       const loaded = cardCatalogActions.loadDocuments(editableDocuments, projectToLoad)
       if (!loaded.ok) throw new Error(`Card 目录状态无效：${loaded.error}`)
+      clearCardPersistenceFailures(projectToLoad)
       persistedSnapshots.current = new Map(editableDocuments.map(document => [
         document.card.id,
         serializeCardDocument(document),
       ]))
+      for (const document of editableDocuments) {
+        persistedCardKeys.current.add(cardPersistenceKey(projectToLoad, document.card.id))
+      }
       loadedProjectRef.current = projectToLoad
       const nextTrashEntries = await FileService.listCardTrash(projectToLoad)
       if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return
@@ -303,7 +462,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       showLoadMessage('error', `恢复失败：${result.reason}`)
       return
     }
-    showLoadMessage('success', `已恢复 Card ${result.cardId}`)
+    showLoadMessage(result.warning ? 'error' : 'success',
+      result.warning ? `已恢复 Card ${result.cardId}；${result.warning}` : `已恢复 Card ${result.cardId}`)
     await loadExistingCards(operationProject)
   }
 
@@ -322,6 +482,10 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   const handleBatchGenerate = async () => {
     if (!projectPath || cardPersistenceBlocked || !isActiveCatalogProject(projectPath)) return
+    if (cards.some(card => isCardPersistenceBlocked(projectPath, card.id))) {
+      showSaveMessage('error', '仍有 Card 事务正在持久化，批量生成已暂停')
+      return
+    }
     const operationProject = projectPath
     setSaving(true)
     setBatchReport(null)
@@ -414,7 +578,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     const document = getCardCatalogView().documents.find(item => item.card.id === cardId)
     if (!document) return
     // 删除前先 flush 权威 CardDocument，再把文档和活动 C# 一起移入回收站。
-    const saved = await FileService.saveCardDocument(operationProject, document)
+    const saved = await persistCardDocument(operationProject, document)
     if (!isActiveCatalogProject(operationProject)) return
     if (!saved.ok) {
       showLoadMessage('error', `删除失败：${saved.error}`)
@@ -427,6 +591,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
     cardCatalogActions.removeCard(cardId)
+    persistedCardKeys.current.delete(cardPersistenceKey(operationProject, cardId))
+    persistedSnapshots.current.delete(cardId)
   }
 
   const openCreateCard = () => {
@@ -435,17 +601,55 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     setShowCreateIdDialog(true)
   }
 
-  const confirmCreateCard = () => {
+  const confirmCreateCard = async () => {
     if (!isValidCardId(newCardId)) {
       setErrors(['Card ID 必须是以英文字母开头的 PascalCase ASCII 标识符'])
       return
     }
-    const created = cardCatalogActions.createCard({ ...createDefaultCard(), id: newCardId })
-    if (!created.ok) {
+    if (getCardCatalogView().cards.some(card => card.id.toLowerCase() === newCardId.toLowerCase())) {
       setErrors([`Card ID ${newCardId} 已存在，请确认一个新的 ID`])
       return
     }
-    setShowCreateIdDialog(false)
+    const card = { ...createDefaultCard(), id: newCardId }
+    const document: CardDocument = {
+      schemaVersion: CURRENT_CARD_SCHEMA_VERSION,
+      card,
+      graph: createEmptyGraph(card.id, 'card'),
+      generation: { lastGeneratedFingerprint: null },
+    }
+    if (!projectPath) {
+      const created = cardCatalogActions.createCardDocument(document)
+      if (!created.ok) setErrors([`Card ID ${newCardId} 已存在，请确认一个新的 ID`])
+      else setShowCreateIdDialog(false)
+      return
+    }
+    if (!isActiveCatalogProject(projectPath)) return
+    const reservation = reserveCardId(projectPath, card.id)
+    if (!reservation) {
+      setErrors([`Card ID ${newCardId} 正在被其他创建操作占用`])
+      return
+    }
+    setSaving(true)
+    try {
+      const saved = await FileService.createCardDocument(projectPath, document)
+      if (!isActiveCatalogProject(projectPath)) return
+      if (!saved.ok) {
+        setErrors([saved.error])
+        return
+      }
+      const created = cardCatalogActions.createCardDocument(document)
+      if (!created.ok) {
+        setErrors([`Card ID ${newCardId} 的磁盘与目录状态不一致，请重新加载项目`])
+        await loadExistingCards(projectPath)
+        return
+      }
+      persistedCardKeys.current.add(cardPersistenceKey(projectPath, card.id))
+      persistedSnapshots.current.set(card.id, serializeCardDocument(document))
+      setShowCreateIdDialog(false)
+    } finally {
+      reservation.release()
+      if (isActiveCatalogProject(projectPath)) setSaving(false)
+    }
   }
 
   const addTrigger = (event: string) => {
@@ -503,7 +707,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     setErrors([])
     try {
       // 先保存源数据，再显式生成 C#；自动保存不会触发此路径。
-      const saved = await FileService.saveCardDocument(operationProject, documentToGenerate)
+      const saved = await persistCardDocument(operationProject, documentToGenerate)
       if (!isActiveCatalogProject(operationProject)) return
       if (!saved.ok) {
         setErrors([saved.error])
@@ -563,12 +767,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     setErrors([])
 
     try {
-      const result = await FileService.saveCardDocument(operationProject, documentToSave)
+      const result = await persistCardDocument(operationProject, documentToSave)
 
       if (!isActiveCatalogProject(operationProject)) return
 
       if (result.ok) {
-        persistedSnapshots.current.set(documentToSave.card.id, serializeCardDocument(documentToSave))
         setAutosaveState('saved')
         showSaveMessage('success', `已保存到 ${result.path}`)
       } else {
@@ -599,7 +802,13 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         <h2>🃏 卡牌编辑器</h2>
         <div className="header-actions">
           {loadingCards && <span className="loading-text">加载中...</span>}
-          <CardIOButtons />
+          <CardIOButtons
+            projectPath={projectPath}
+            onDocumentPersisted={document => {
+              if (projectPath) persistedCardKeys.current.add(cardPersistenceKey(projectPath, document.card.id))
+              persistedSnapshots.current.set(document.card.id, serializeCardDocument(document))
+            }}
+          />
           {autosaveState === 'pending' && <span className="loading-text">草稿待保存</span>}
           {autosaveState === 'saving' && <span className="loading-text">自动保存中...</span>}
           {autosaveState === 'saved' && <span className="loading-text">草稿已保存</span>}
@@ -795,7 +1004,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
               </div>
 
               {/* 错误提示 */}
-              {errors.length > 0 && (
+              {errors.length > 0 && !showCreateIdDialog && (
                 <div className="error-box">
                   {errors.map((err, i) => (
                     <div key={i} className="error-item">⚠️ {err}</div>
@@ -900,6 +1109,13 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           <div className="card-id-dialog-body">
             <h3>确认 Card ID</h3>
             <p>Card ID 创建后不可修改，并决定文档、类名和 C# 文件名。</p>
+            {errors.length > 0 && (
+              <div className="error-box" role="alert">
+                {errors.map((error, index) => (
+                  <div key={index} className="error-item">⚠️ {error}</div>
+                ))}
+              </div>
+            )}
             <input
               value={newCardId}
               onChange={(event) => setNewCardId(event.target.value)}

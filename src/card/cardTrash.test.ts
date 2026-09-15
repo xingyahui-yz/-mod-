@@ -6,6 +6,8 @@ class MemoryFiles implements CardTrashFilePort {
   directories = new Set<string>()
   failRenameTo: string | null = null
   beforeLink: ((from: string, to: string) => void) | null = null
+  readDirectoryResult?: CardTrashFilePort['readDirectoryResult']
+  readFileResult?: CardTrashFilePort['readFileResult']
 
   async readDirectory(path: string): Promise<CardTrashFileEntry[]> {
     if (!this.directories.has(path) && ![...this.files.keys()].some(file => file.startsWith(`${path}/`))) {
@@ -94,17 +96,88 @@ describe('Card trash repository', () => {
     expect(files.files.get(`${project}/.modstudio/cards/Fireball.json`)).toBe(document)
   })
 
-  it('恢复产物失败时 CardDocument 补偿回回收站', async () => {
+  it('恢复产物失败时保留已恢复 CardDocument 与回收站副本，不按路径回删', async () => {
     const files = new MemoryFiles()
     files.files.set(`${project}/.modstudio/trash/cards/Fireball-1/card.json`, document)
     files.files.set(`${project}/.modstudio/trash/cards/Fireball-1/artifact.cs`, 'generated')
     files.directories.add(`${project}/.modstudio/trash/cards`)
     files.directories.add(`${project}/.modstudio/trash/cards/Fireball-1`)
     files.failRenameTo = `${project}/scripts/Cards/Fireball.cs`
+    files.beforeLink = (_from, to) => {
+      if (to === `${project}/scripts/Cards/Fireball.cs`) {
+        files.files.set(`${project}/.modstudio/cards/Fireball.json`, 'external replacement')
+      }
+    }
     const result = await createCardTrashRepository({ files }).restore(project, 'Fireball-1')
-    expect(result.status).toBe('failed')
+    expect(result).toEqual({
+      status: 'restored',
+      cardId: 'Fireball',
+      warning: 'CardDocument 已恢复；C# 产物恢复失败，回收站副本已保留',
+    })
+    expect(files.files.get(`${project}/.modstudio/cards/Fireball.json`)).toBe('external replacement')
     expect(files.files.get(`${project}/.modstudio/trash/cards/Fireball-1/card.json`)).toBe(document)
     expect(files.files.get(`${project}/.modstudio/trash/cards/Fireball-1/artifact.cs`)).toBe('generated')
+  })
+
+  it('活动目录读取失败时关闭恢复，不把 EACCES 当作空目录', async () => {
+    const files = new MemoryFiles()
+    const trashDocument = `${project}/.modstudio/trash/cards/Fireball-1/card.json`
+    files.files.set(trashDocument, document)
+    files.directories.add(`${project}/.modstudio/trash/cards/Fireball-1`)
+    files.readDirectoryResult = async path => path === `${project}/.modstudio/cards`
+      ? { status: 'error', error: 'EACCES' }
+      : { status: 'missing' }
+
+    const result = await createCardTrashRepository({ files }).restore(project, 'Fireball-1')
+
+    expect(result).toEqual({ status: 'failed', reason: '无法确认活动 Card 目录，回收站内容保留' })
+    expect(files.files.has(`${project}/.modstudio/cards/Fireball.json`)).toBe(false)
+    expect(files.files.get(trashDocument)).toBe(document)
+  })
+
+  it('删除时 C# 读取失败会关闭操作，不把 EACCES 当作没有产物', async () => {
+    const files = new MemoryFiles()
+    const sourceDocument = `${project}/.modstudio/cards/Fireball.json`
+    const sourceArtifact = `${project}/scripts/Cards/Fireball.cs`
+    files.files.set(sourceDocument, document)
+    files.files.set(sourceArtifact, 'generated')
+    files.readFileResult = async path => {
+      if (path === sourceDocument) return { status: 'found', value: document }
+      if (path === sourceArtifact) return { status: 'error', error: 'EACCES' }
+      return { status: 'missing' }
+    }
+
+    const result = await createCardTrashRepository({ files, idSuffix: () => '1' }).delete(project, 'Fireball')
+
+    expect(result).toEqual({ status: 'failed', reason: '无法确认 C# 产物，未删除 Card' })
+    expect(files.files.get(sourceDocument)).toBe(document)
+    expect(files.files.get(sourceArtifact)).toBe('generated')
+  })
+
+  it('恢复读回内容被替换时保留回收站权威副本并返回警告', async () => {
+    const files = new MemoryFiles()
+    const trashDocument = `${project}/.modstudio/trash/cards/Fireball-1/card.json`
+    const targetDocument = `${project}/.modstudio/cards/Fireball.json`
+    files.files.set(trashDocument, document)
+    files.directories.add(`${project}/.modstudio/trash/cards/Fireball-1`)
+    const readFile = files.readFile.bind(files)
+    files.readFile = async path => {
+      if (path === targetDocument) {
+        files.files.set(targetDocument, 'external replacement')
+        return 'external replacement'
+      }
+      return readFile(path)
+    }
+
+    const result = await createCardTrashRepository({ files }).restore(project, 'Fireball-1')
+
+    expect(result).toEqual({
+      status: 'restored',
+      cardId: 'Fireball',
+      warning: 'Card 文件已恢复但无法完成读回校验；回收站副本已保留，请核对活动目录',
+    })
+    expect(files.files.get(targetDocument)).toBe('external replacement')
+    expect(files.files.get(trashDocument)).toBe(document)
   })
 
   it('恢复占用 ID 时使用 no-replace，检查后出现的竞争文件不会被覆盖', async () => {

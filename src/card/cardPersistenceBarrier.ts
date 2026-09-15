@@ -3,13 +3,19 @@ type BarrierListener = () => void
 interface BarrierEntry {
   count: number
   listeners: Set<BarrierListener>
+  failed: boolean
 }
 
 export interface CardPersistenceBarrierLease {
-  release(): void
+  release(outcome?: 'persisted' | 'failed'): void
 }
 
 const barriersByProject = new Map<string, Map<string, BarrierEntry>>()
+const failedPersistenceKeys = new Set<string>()
+
+function persistenceKey(projectRoot: string, cardId: string): string {
+  return `${projectRoot}\0${normalizedCardId(cardId)}`
+}
 
 function normalizedCardId(cardId: string): string {
   return cardId.toLowerCase()
@@ -28,7 +34,7 @@ function entryFor(projectRoot: string, cardId: string): BarrierEntry {
   }
   let entry = projectEntries.get(normalizedId)
   if (!entry) {
-    entry = { count: 0, listeners: new Set() }
+    entry = { count: 0, listeners: new Set(), failed: false }
     projectEntries.set(normalizedId, entry)
   }
   return entry
@@ -61,16 +67,23 @@ export function acquireCardPersistenceBarrier(
 ): CardPersistenceBarrierLease {
   const entry = entryFor(projectRoot, cardId)
   const wasBlocked = entry.count > 0
+  if (!wasBlocked) entry.failed = false
   entry.count += 1
   if (!wasBlocked) notify(entry)
 
   let released = false
   return {
-    release() {
+    release(outcome = 'persisted') {
       if (released) return
       released = true
+      if (outcome === 'failed') entry.failed = true
       entry.count -= 1
-      if (entry.count === 0) notify(entry)
+      if (entry.count === 0) {
+        const key = persistenceKey(projectRoot, cardId)
+        if (entry.failed) failedPersistenceKeys.add(key)
+        else failedPersistenceKeys.delete(key)
+        notify(entry)
+      }
       removeUnusedEntry(projectRoot, cardId, entry)
     },
   }
@@ -79,6 +92,18 @@ export function acquireCardPersistenceBarrier(
 /** React useSyncExternalStore 可直接把这个布尔值作为稳定 snapshot。 */
 export function isCardPersistenceBlocked(projectRoot: string, cardId: string): boolean {
   return (findEntry(projectRoot, cardId)?.count ?? 0) > 0
+}
+
+/** 最近一次跨文件事务失败后保持为 true，直到项目成功重载。 */
+export function hasCardPersistenceFailure(projectRoot: string, cardId: string): boolean {
+  return failedPersistenceKeys.has(persistenceKey(projectRoot, cardId))
+}
+
+export function clearCardPersistenceFailures(projectRoot: string): void {
+  const prefix = `${projectRoot}\0`
+  for (const key of failedPersistenceKeys) {
+    if (key.startsWith(prefix)) failedPersistenceKeys.delete(key)
+  }
 }
 
 /** 只在 barrier 的可写/阻塞边界变化时通知，不暴露内部计数。 */
@@ -99,13 +124,16 @@ export function subscribeCardPersistenceBarrier(
 export function waitForCardPersistenceBarrier(
   projectRoot: string,
   cardId: string,
-): Promise<void> {
-  if (!isCardPersistenceBlocked(projectRoot, cardId)) return Promise.resolve()
+): Promise<boolean> {
+  if (!isCardPersistenceBlocked(projectRoot, cardId)) {
+    return Promise.resolve(!hasCardPersistenceFailure(projectRoot, cardId))
+  }
+  const entry = findEntry(projectRoot, cardId)!
   return new Promise(resolve => {
     const unsubscribe = subscribeCardPersistenceBarrier(projectRoot, cardId, () => {
       if (isCardPersistenceBlocked(projectRoot, cardId)) return
       unsubscribe()
-      resolve()
+      resolve(!entry.failed)
     })
   })
 }

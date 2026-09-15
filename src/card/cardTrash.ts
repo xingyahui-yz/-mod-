@@ -9,7 +9,17 @@ export interface CardTrashFileEntry {
 }
 export interface CardTrashFilePort {
   readDirectory(path: string): Promise<CardTrashFileEntry[]>
+  readDirectoryResult?(path: string): Promise<
+    | { status: 'found'; value: CardTrashFileEntry[] }
+    | { status: 'missing' }
+    | { status: 'error'; error: string }
+  >
   readFile(path: string): Promise<string | null>
+  readFileResult?(path: string): Promise<
+    | { status: 'found'; value: string }
+    | { status: 'missing' }
+    | { status: 'error'; error: string }
+  >
   mkdir(path: string): Promise<boolean>
   rename(from: string, to: string): Promise<boolean>
   linkNoReplace(from: string, to: string): Promise<{ status: 'linked' | 'exists' | 'failed' }>
@@ -29,7 +39,7 @@ export type CardTrashDeleteResult =
   | { status: 'failed'; reason: string }
 
 export type CardTrashRestoreResult =
-  | { status: 'restored'; cardId: string }
+  | { status: 'restored'; cardId: string; warning?: string }
   | { status: 'conflict'; cardId: string; reason: string }
   | { status: 'failed'; reason: string }
 
@@ -55,6 +65,70 @@ function isMissingDirectory(error: unknown): boolean {
   return message.includes('ENOENT') || message.includes('not found') || message.includes('不存在')
 }
 
+async function readDirectoryState(files: CardTrashFilePort, path: string): Promise<
+  | { status: 'found'; value: CardTrashFileEntry[] }
+  | { status: 'missing' }
+  | { status: 'error'; error: string }
+> {
+  if (files.readDirectoryResult) {
+    try {
+      const result = await files.readDirectoryResult(path)
+      return result.status === 'error'
+        ? { status: 'error', error: result.error }
+        : result
+    } catch (error) {
+      return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  try {
+    return { status: 'found', value: await files.readDirectory(path) }
+  } catch (error) {
+    return isMissingDirectory(error)
+      ? { status: 'missing' }
+      : { status: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function readFileState(files: CardTrashFilePort, path: string): Promise<
+  | { status: 'found'; value: string }
+  | { status: 'missing' }
+  | { status: 'error'; error: string }
+> {
+  if (files.readFileResult) {
+    try {
+      const result = await files.readFileResult(path)
+      return result.status === 'error' ? { status: 'error', error: result.error } : result
+    } catch (error) {
+      return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  try {
+    const value = await files.readFile(path)
+    return value === null ? { status: 'missing' } : { status: 'found', value }
+  } catch (error) {
+    return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function deactivateToStaging(
+  files: CardTrashFilePort,
+  activePath: string,
+  stagingPath: string,
+  expected: string,
+): Promise<boolean> {
+  if (!await files.rename(activePath, stagingPath).catch(() => false)) return false
+  const staged = await readFileState(files, stagingPath)
+  if (staged.status === 'found' && staged.value === expected) {
+    return files.remove(stagingPath).catch(() => false)
+  }
+  // rename 的线性化点若抓到了外部替换文件，绝不能删除它。仅在活动路径
+  // 仍为空时 no-replace 恢复；否则把 staging 留在回收站供人工核对。
+  const restored = await files.linkNoReplace(stagingPath, activePath)
+    .catch(() => ({ status: 'failed' as const }))
+  if (restored.status === 'linked') await files.remove(stagingPath).catch(() => false)
+  return false
+}
+
 function cardIdFromRaw(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const card = (value as Record<string, unknown>).card
@@ -68,8 +142,9 @@ function trashItemPath(trashRoot: string, trashId: string): string {
 }
 
 /**
- * Card 回收站仓库。删除和恢复都只移动文件，不重写文档内容；任何后续
- * 步骤失败都会尝试把已经移动的文件补偿回原位置。
+ * Card 回收站仓库。删除先用 no-replace hard link 建立完整回收站副本，
+ * 严格读回后才先停用 C#、再移除源文档；任意崩溃点都不会留下“源文档
+ * 已消失但活动 C# 仍被游戏加载”的状态。
  */
 export function createCardTrashRepository(
   deps: { files: CardTrashFilePort; idSuffix?: () => string },
@@ -86,50 +161,73 @@ export function createCardTrashRepository(
       const trashRoot = joinPath(projectPath, TRASH_DIR)
       const sourceDocument = joinPath(cardsRoot, `${cardId}.json`)
       const sourceArtifact = joinPath(artifactRoot, `${cardId}.cs`)
-      const document = await files.readFile(sourceDocument).catch(() => null)
-      if (document === null) return { status: 'failed', reason: 'CardDocument 不存在，未删除 Card' }
-      const artifact = await files.readFile(sourceArtifact).catch(() => null)
+      const documentRead = await readFileState(files, sourceDocument)
+      if (documentRead.status === 'error') return { status: 'failed', reason: '无法读取 CardDocument，未删除 Card' }
+      if (documentRead.status === 'missing') return { status: 'failed', reason: 'CardDocument 不存在，未删除 Card' }
+      const document = documentRead.value
+      const artifactRead = await readFileState(files, sourceArtifact)
+      if (artifactRead.status === 'error') return { status: 'failed', reason: '无法确认 C# 产物，未删除 Card' }
+      const artifact = artifactRead.status === 'found' ? artifactRead.value : null
 
       const trashId = `${cardId}-${suffix()}`
       const trashPath = trashItemPath(trashRoot, trashId)
       const trashDocument = joinPath(trashPath, 'card.json')
       const trashArtifact = joinPath(trashPath, 'artifact.cs')
+      const stagingDocument = joinPath(trashPath, 'active-document.staging')
+      const stagingArtifact = joinPath(trashPath, 'active-artifact.staging')
       if (!await files.mkdir(trashPath)) return { status: 'failed', reason: '无法创建 Card 回收站目录' }
 
-      if (!await files.rename(sourceDocument, trashDocument)) {
-        await files.remove(trashPath).catch(() => false)
-        return { status: 'failed', reason: '无法暂存 CardDocument，Card 保持活跃' }
+      const documentLink = await files.linkNoReplace(sourceDocument, trashDocument)
+        .catch(() => ({ status: 'failed' as const }))
+      if (documentLink.status !== 'linked') {
+        return { status: 'failed', reason: '无法原子建立 CardDocument 回收站副本，Card 保持活跃' }
       }
 
-      let artifactMoved = false
       if (artifact !== null) {
-        artifactMoved = await files.rename(sourceArtifact, trashArtifact)
-        if (!artifactMoved) {
-          await files.rename(trashDocument, sourceDocument).catch(() => false)
-          return { status: 'failed', reason: '无法暂存 C# 产物，Card 已补偿恢复' }
+        const artifactLink = await files.linkNoReplace(sourceArtifact, trashArtifact)
+          .catch(() => ({ status: 'failed' as const }))
+        if (artifactLink.status !== 'linked') {
+          return { status: 'failed', reason: '无法原子建立 C# 回收站副本，Card 保持活跃' }
         }
       }
 
-      // 删除只有在活动目录确认不再有任何可加载文件后才生效。
-      const activeDocument = await files.readFile(sourceDocument).catch(() => null)
-      const activeArtifact = artifactMoved ? await files.readFile(sourceArtifact).catch(() => null) : null
-      if (activeDocument !== null || activeArtifact !== null) {
-        if (artifactMoved) await files.rename(trashArtifact, sourceArtifact).catch(() => false)
-        await files.rename(trashDocument, sourceDocument).catch(() => false)
-        return { status: 'failed', reason: '活动目录仍存在 Card 文件，已补偿恢复' }
+      const copiedDocument = await readFileState(files, trashDocument)
+      const copiedArtifact = artifact !== null
+        ? await readFileState(files, trashArtifact)
+        : { status: 'missing' as const }
+      if (copiedDocument.status !== 'found' || copiedDocument.value !== document ||
+        (artifact !== null && (copiedArtifact.status !== 'found' || copiedArtifact.value !== artifact))) {
+        return { status: 'failed', reason: '回收站副本读回校验失败，Card 保持活跃' }
+      }
+
+      // 先把游戏会加载的活动 C# 原子移到本次 staging，再处理源文档。
+      // staging 读回内容不符时只做 no-replace 恢复，绝不按活动路径删除。
+      if (artifact !== null) {
+        if (!await deactivateToStaging(files, sourceArtifact, stagingArtifact, artifact)) {
+          return { status: 'failed', reason: '无法停用活动 C#，回收站副本保留' }
+        }
+        const artifactAfterRemove = await readFileState(files, sourceArtifact)
+        if (artifactAfterRemove.status !== 'missing') {
+          return { status: 'failed', reason: '活动 C# 删除状态不确定，回收站副本保留，请重新加载项目' }
+        }
+      }
+
+      if (!await deactivateToStaging(files, sourceDocument, stagingDocument, document)) {
+        return { status: 'failed', reason: '无法移除活动 CardDocument，回收站副本保留，请重新加载项目' }
+      }
+      const documentAfterRemove = await readFileState(files, sourceDocument)
+      if (documentAfterRemove.status !== 'missing') {
+        return { status: 'failed', reason: 'CardDocument 删除状态不确定，回收站副本保留，请重新加载项目' }
       }
       return { status: 'deleted', trashId, trashPath }
     },
 
     async list(projectPath) {
       const trashRoot = joinPath(projectPath, TRASH_DIR)
-      let entries: CardTrashFileEntry[]
-      try {
-        entries = await files.readDirectory(trashRoot)
-      } catch (error) {
-        if (isMissingDirectory(error)) return []
-        throw error
-      }
+      const directory = await readDirectoryState(files, trashRoot)
+      if (directory.status === 'missing') return []
+      if (directory.status === 'error') throw new Error(directory.error)
+      const entries = directory.value
 
       const folders = entries.filter(entry => entry.isDirectory).sort((a, b) => a.name.localeCompare(b.name))
       const result: CardTrashEntry[] = []
@@ -137,10 +235,14 @@ export function createCardTrashRepository(
         const folderPath = folder.path || trashItemPath(trashRoot, folder.name)
         const documentPath = joinPath(folderPath, 'card.json')
         const artifactPath = joinPath(folderPath, 'artifact.cs')
-        const raw = await files.readFile(documentPath).catch(() => null)
-        if (raw === null) continue
+        const documentRead = await readFileState(files, documentPath)
+        if (documentRead.status === 'error') throw new Error(documentRead.error)
+        if (documentRead.status === 'missing') continue
+        const raw = documentRead.value
         const parsed = parseCardDocumentJson(raw)
-        const artifact = await files.readFile(artifactPath).catch(() => null)
+        const artifactRead = await readFileState(files, artifactPath)
+        if (artifactRead.status === 'error') throw new Error(artifactRead.error)
+        const artifact = artifactRead.status === 'found' ? artifactRead.value : null
         result.push({
           trashId: folder.name,
           path: folderPath,
@@ -160,8 +262,10 @@ export function createCardTrashRepository(
       const trashPath = trashItemPath(trashRoot, trashId)
       const trashDocument = joinPath(trashPath, 'card.json')
       const trashArtifact = joinPath(trashPath, 'artifact.cs')
-      const raw = await files.readFile(trashDocument).catch(() => null)
-      if (raw === null) return { status: 'failed', reason: '回收站 CardDocument 不存在' }
+      const trashDocumentRead = await readFileState(files, trashDocument)
+      if (trashDocumentRead.status === 'error') return { status: 'failed', reason: '无法读取回收站 CardDocument' }
+      if (trashDocumentRead.status === 'missing') return { status: 'failed', reason: '回收站 CardDocument 不存在' }
+      const raw = trashDocumentRead.value
 
       let parsedRaw: unknown
       try {
@@ -176,7 +280,9 @@ export function createCardTrashRepository(
       const artifactRoot = joinPath(projectPath, ARTIFACTS_DIR)
       const targetDocument = joinPath(cardsRoot, `${cardId}.json`)
       const targetArtifact = joinPath(artifactRoot, `${cardId}.cs`)
-      const artifact = await files.readFile(trashArtifact).catch(() => null)
+      const trashArtifactRead = await readFileState(files, trashArtifact)
+      if (trashArtifactRead.status === 'error') return { status: 'failed', reason: '无法确认回收站 C# 产物' }
+      const artifact = trashArtifactRead.status === 'found' ? trashArtifactRead.value : null
       if (!await files.mkdir(cardsRoot)) return { status: 'failed', reason: '无法创建 CardDocument 目录' }
       if (artifact !== null && !await files.mkdir(artifactRoot)) return { status: 'failed', reason: '无法创建 C# 目录' }
 
@@ -188,13 +294,13 @@ export function createCardTrashRepository(
       }
       try {
         // 目录检查必须位于归一化 claim 内，才能同时排斥大小写变体的创建/恢复。
-        const activeEntries = await files.readDirectory(cardsRoot)
-          .catch(error => isMissingDirectory(error) ? [] as CardTrashFileEntry[] : null)
-        const artifactEntries = await files.readDirectory(artifactRoot)
-          .catch(error => isMissingDirectory(error) ? [] as CardTrashFileEntry[] : null)
-        if (activeEntries === null || artifactEntries === null) {
+        const activeDirectory = await readDirectoryState(files, cardsRoot)
+        const artifactDirectory = await readDirectoryState(files, artifactRoot)
+        if (activeDirectory.status === 'error' || artifactDirectory.status === 'error') {
           return { status: 'failed', reason: '无法确认活动 Card 目录，回收站内容保留' }
         }
+        const activeEntries = activeDirectory.status === 'found' ? activeDirectory.value : []
+        const artifactEntries = artifactDirectory.status === 'found' ? artifactDirectory.value : []
         const hasDocumentConflict = activeEntries.some(entry => !entry.isDirectory &&
           entry.name.toLowerCase() === `${cardId}.json`.toLowerCase())
         const hasArtifactConflict = artifactEntries.some(entry => !entry.isDirectory &&
@@ -215,19 +321,27 @@ export function createCardTrashRepository(
           const artifactLink = await files.linkNoReplace(trashArtifact, targetArtifact)
             .catch(() => ({ status: 'failed' as const }))
           if (artifactLink.status !== 'linked') {
-            await files.remove(targetDocument).catch(() => false)
-            return artifactLink.status === 'exists'
-              ? { status: 'conflict', cardId, reason: '活动目录已有同 ID C# 产物，恢复不会覆盖' }
-              : { status: 'failed', reason: '无法原子恢复 C# 产物，回收站内容保留' }
+            return {
+              status: 'restored',
+              cardId,
+              warning: artifactLink.status === 'exists'
+                ? 'CardDocument 已恢复；同名 C# 产物未覆盖，回收站副本已保留'
+                : 'CardDocument 已恢复；C# 产物恢复失败，回收站副本已保留',
+            }
           }
         }
 
-        const activeDocument = await files.readFile(targetDocument).catch(() => null)
-        const activeArtifact = artifact !== null ? await files.readFile(targetArtifact).catch(() => null) : null
-        if (activeDocument === null || (artifact !== null && activeArtifact === null)) {
-          if (artifact !== null && activeArtifact !== null) await files.remove(targetArtifact).catch(() => false)
-          await files.remove(targetDocument).catch(() => false)
-          return { status: 'failed', reason: '恢复后活动文件校验失败，已补偿回收站' }
+        const activeDocumentRead = await readFileState(files, targetDocument)
+        const activeArtifactRead = artifact !== null
+          ? await readFileState(files, targetArtifact)
+          : { status: 'missing' as const }
+        if (activeDocumentRead.status !== 'found' || activeDocumentRead.value !== raw ||
+          (artifact !== null && (activeArtifactRead.status !== 'found' || activeArtifactRead.value !== artifact))) {
+          return {
+            status: 'restored',
+            cardId,
+            warning: 'Card 文件已恢复但无法完成读回校验；回收站副本已保留，请核对活动目录',
+          }
         }
         // link 成功后再解除回收站目录项；若清理失败，活动 Card 已完整，保留的
         // hard-link 副本不会造成数据丢失，后续列表会以冲突方式保持可见。

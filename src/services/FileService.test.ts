@@ -137,6 +137,41 @@ describe('FileService conversation port', () => {
     expect(api.remove).toHaveBeenCalledWith(expect.stringMatching(/Fireball\.json\.tmp-/))
   })
 
+  it('Card 创建不会把 typed 目录权限错误降级为空目录', async () => {
+    const api = electronApi()
+    vi.mocked(api.readDirectoryResult!).mockResolvedValue({
+      status: 'error',
+      code: 'permission-denied',
+      error: 'EACCES',
+    })
+    const service = createFileService({ api })
+
+    await expect(service.createCardDocument('/project', cardDocument('Fireball', '火球')))
+      .resolves.toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
+    expect(api.writeFile).not.toHaveBeenCalled()
+    expect(api.linkNoReplace).not.toHaveBeenCalled()
+  })
+
+  it('Card 删除不会把 C# 权限错误降级成没有产物', async () => {
+    const api = electronApi()
+    const document = serializeCardDocument(cardDocument('Fireball', '火球'))
+    vi.mocked(api.readFileResult!).mockImplementation(async path => {
+      if (path.endsWith('/.modstudio/cards/Fireball.json')) return { status: 'found', value: document }
+      if (path.endsWith('/scripts/Cards/Fireball.cs')) {
+        return { status: 'error', code: 'permission-denied', error: 'EACCES' }
+      }
+      return { status: 'missing' }
+    })
+    const service = createFileService({ api })
+
+    await expect(service.deleteCardToTrash('/project', 'Fireball')).resolves.toEqual({
+      status: 'failed',
+      reason: '无法确认 C# 产物，未删除 Card',
+    })
+    expect(api.rename).not.toHaveBeenCalled()
+    expect(api.remove).not.toHaveBeenCalled()
+  })
+
   it('生成期间 Card 语义变化时不把旧源文档的指纹写回', async () => {
     const api = electronApi()
     const base = cardDocument('Fireball', '火球')

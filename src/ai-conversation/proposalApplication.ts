@@ -13,6 +13,7 @@ import {
   type ConversationCardProposal,
 } from './proposalLifecycle'
 import * as FileService from '../services/FileService'
+import { reserveCardId } from '../card/cardIdReservation'
 
 export type ProposalCardPersistenceResult =
   | { ok: true }
@@ -159,81 +160,91 @@ export async function persistProposalToCardCatalog(
   input: ProposalCardCommit,
   files: ProposalCardPersistencePort,
 ): Promise<ProposalCardPersistenceResult> {
-  const catalog = getCardCatalogView()
-  if (catalog.sourceProjectRoot !== projectRoot) {
-    return unchanged('当前 Card 目录不属于此项目，请重新打开项目后再接受提案')
-  }
-
-  const before = input.proposal.operation === 'update'
-    ? catalog.documents.find(document => document.card.id === input.proposal.targetCardId) ?? null
+  const reservation = input.proposal.operation === 'create'
+    ? reserveCardId(projectRoot, input.finalCardId.trim())
     : null
-  if (input.proposal.operation === 'update' && !before) {
-    return unchanged('目标 Card 不存在，请刷新提案状态')
+  if (input.proposal.operation === 'create' && !reservation) {
+    return unchanged(`Card ID ${input.finalCardId.trim()} 正在被其他创建操作占用`)
   }
-  if (before && cardDocumentRevision(before) !== input.proposal.baseRevision) {
-    return unchanged('目标 Card 已变化，此提案已过期')
-  }
-
-  const finalCardId = input.finalCardId.trim()
-  const next = input.proposal.operation === 'create'
-    ? rekeyCreatedCardDocument(input.proposal.document, finalCardId)
-    : input.proposal.document
-  if (input.proposal.operation === 'create') {
-    const target = await inspectCard(files, projectRoot, finalCardId)
-    if (target.status === 'occupied') return unchanged(target.error)
-    if (target.status === 'found') {
-      return unchanged(`Card ID ${finalCardId} 的磁盘文档已存在，未覆盖`)
+  try {
+    const catalog = getCardCatalogView()
+    if (catalog.sourceProjectRoot !== projectRoot) {
+      return unchanged('当前 Card 目录不属于此项目，请重新打开项目后再接受提案')
     }
-  }
-  const saved = input.proposal.operation === 'create'
-    ? await createCard(files, projectRoot, next)
-    : await saveCard(files, projectRoot, next)
-  if (!saved.ok) return saved
 
-  // 文件写入会让出事件循环。期间 CardEditor 仍可能提交编辑或删除 Card；
-  // 此时不能用最初捕获的 base 回滚，否则会覆盖用户刚完成的修改。
-  const latestCatalog = getCardCatalogView()
-  const latest = latestCatalog.sourceProjectRoot === projectRoot
-    ? latestCatalog.documents.find(document =>
-        document.card.id.toLowerCase() === finalCardId.toLowerCase(),
-      )
-    : undefined
-  const catalogChangedWhileSaving = latestCatalog.sourceProjectRoot !== projectRoot ||
-    (input.proposal.operation === 'update'
-      ? !latest || cardDocumentRevision(latest) !== input.proposal.baseRevision
-      : Boolean(latest))
-  if (catalogChangedWhileSaving) {
-    const restoreDocument = latestCatalog.sourceProjectRoot === projectRoot ? latest : before
+    const before = input.proposal.operation === 'update'
+      ? catalog.documents.find(document => document.card.id === input.proposal.targetCardId) ?? null
+      : null
+    if (input.proposal.operation === 'update' && !before) {
+      return unchanged('目标 Card 不存在，请刷新提案状态')
+    }
+    if (before && cardDocumentRevision(before) !== input.proposal.baseRevision) {
+      return unchanged('目标 Card 已变化，此提案已过期')
+    }
+
+    const finalCardId = input.finalCardId.trim()
+    const next = input.proposal.operation === 'create'
+      ? rekeyCreatedCardDocument(input.proposal.document, finalCardId)
+      : input.proposal.document
+    if (input.proposal.operation === 'create') {
+      const target = await inspectCard(files, projectRoot, finalCardId)
+      if (target.status === 'occupied') return unchanged(target.error)
+      if (target.status === 'found') {
+        return unchanged(`Card ID ${finalCardId} 的磁盘文档已存在，未覆盖`)
+      }
+    }
+    const saved = input.proposal.operation === 'create'
+      ? await createCard(files, projectRoot, next)
+      : await saveCard(files, projectRoot, next)
+    if (!saved.ok) return saved
+
+    // 文件写入会让出事件循环。期间 CardEditor 仍可能提交编辑或删除 Card；
+    // 此时不能用最初捕获的 base 回滚，否则会覆盖用户刚完成的修改。
+    const latestCatalog = getCardCatalogView()
+    const latest = latestCatalog.sourceProjectRoot === projectRoot
+      ? latestCatalog.documents.find(document =>
+          document.card.id.toLowerCase() === finalCardId.toLowerCase(),
+        )
+      : undefined
+    const catalogChangedWhileSaving = latestCatalog.sourceProjectRoot !== projectRoot ||
+      (input.proposal.operation === 'update'
+        ? !latest || cardDocumentRevision(latest) !== input.proposal.baseRevision
+        : Boolean(latest))
+    if (catalogChangedWhileSaving) {
+      const restoreDocument = latestCatalog.sourceProjectRoot === projectRoot ? latest : before
+      if (!restoreDocument && input.proposal.operation === 'create') {
+        // 创建文件已成为 accepted WAL 的恢复事实。不能按路径删除它，因为
+        // 外部进程可能已替换同名文件；保留并要求重载进行内容核对。
+        return uncertain('Card 创建期间目录状态已变化，需重新加载核对已创建文件')
+      }
+      const restored = restoreDocument ? (await saveCard(files, projectRoot, restoreDocument)).ok : true
+      if (!restored) {
+        return uncertain('Card 保存期间项目状态已变化，且无法恢复最新磁盘状态')
+      }
+      return unchanged('Card 保存期间项目状态已变化，请刷新提案后重试')
+    }
+
+    const applied = applyProposalToCardCatalog(projectRoot, input)
+    if (applied.ok) return { ok: true }
+
+    const current = getCardCatalogView()
+    const currentDocument = current.sourceProjectRoot === projectRoot
+      ? current.documents.find(document =>
+          document.card.id.toLowerCase() === finalCardId.toLowerCase(),
+        )
+      : undefined
+    const restoreDocument = current.sourceProjectRoot === projectRoot ? currentDocument : before
     if (!restoreDocument && input.proposal.operation === 'create') {
-      // 创建文件已成为 accepted WAL 的恢复事实。不能按路径删除它，因为
-      // 外部进程可能已替换同名文件；保留并要求重载进行内容核对。
-      return uncertain('Card 创建期间目录状态已变化，需重新加载核对已创建文件')
+      return uncertain(`Card 已落盘但目录应用失败（${applied.error}），需重新加载恢复`)
     }
-    const restored = restoreDocument ? (await saveCard(files, projectRoot, restoreDocument)).ok : true
-    if (!restored) {
-      return uncertain('Card 保存期间项目状态已变化，且无法恢复最新磁盘状态')
+    const rolledBack = restoreDocument ? (await saveCard(files, projectRoot, restoreDocument)).ok : true
+    if (!rolledBack) {
+      return uncertain(`Card 已写入但目录应用失败（${applied.error}），磁盘回滚也失败，状态不确定`)
     }
-    return unchanged('Card 保存期间项目状态已变化，请刷新提案后重试')
+    return unchanged(`Card 目录应用失败，磁盘已恢复：${applied.error}`)
+  } finally {
+    reservation?.release()
   }
-
-  const applied = applyProposalToCardCatalog(projectRoot, input)
-  if (applied.ok) return { ok: true }
-
-  const current = getCardCatalogView()
-  const currentDocument = current.sourceProjectRoot === projectRoot
-    ? current.documents.find(document =>
-        document.card.id.toLowerCase() === finalCardId.toLowerCase(),
-      )
-    : undefined
-  const restoreDocument = current.sourceProjectRoot === projectRoot ? currentDocument : before
-  if (!restoreDocument && input.proposal.operation === 'create') {
-    return uncertain(`Card 已落盘但目录应用失败（${applied.error}），需重新加载恢复`)
-  }
-  const rolledBack = restoreDocument ? (await saveCard(files, projectRoot, restoreDocument)).ok : true
-  if (!rolledBack) {
-    return uncertain(`Card 已写入但目录应用失败（${applied.error}），磁盘回滚也失败，状态不确定`)
-  }
-  return unchanged(`Card 目录应用失败，磁盘已恢复：${applied.error}`)
 }
 
 /**

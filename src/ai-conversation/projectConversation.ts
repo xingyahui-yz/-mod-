@@ -118,6 +118,8 @@ export class ProjectConversation {
   private requestSequence = 0
   private mutation = Promise.resolve()
   private pendingStarts = 0
+  private startSequence = 0
+  private cancelledStartSequence = 0
 
   constructor(
     readonly projectPath: string,
@@ -208,29 +210,48 @@ export class ProjectConversation {
   ): Promise<ProjectConversationResult> {
     const text = userText.trim()
     if (!text) return failure('invalid-input', '请输入消息')
+    if (this.hasActiveWork()) return failure('already-running', '已有轮次正在处理')
+    const startId = ++this.startSequence
     this.pendingStarts += 1
+    this.update({ ...this.snapshot })
     let started: Awaited<ReturnType<ProjectConversation['startNewTurn']>>
     try {
       started = await this.runMutation(() => this.startNewTurn(text, attachments, quickReplySelection))
     } finally {
       this.pendingStarts -= 1
+      this.update({ ...this.snapshot })
     }
-    return started.ok ? this.executeAttempt(started.value) : started
+    if (!started.ok) return started
+    if (startId <= this.cancelledStartSequence) {
+      const cancelled = await this.cancel()
+      return cancelled.ok ? failure('cancelled', '请求已取消') : cancelled
+    }
+    return this.executeAttempt(started.value)
   }
 
   async retryTurn(turnId: string): Promise<ProjectConversationResult> {
     if (!turnId.trim()) return failure('invalid-input', '轮次 ID 不能为空')
+    if (this.hasActiveWork()) return failure('already-running', '已有轮次正在处理')
+    const startId = ++this.startSequence
     this.pendingStarts += 1
+    this.update({ ...this.snapshot })
     let started: Awaited<ReturnType<ProjectConversation['startRetry']>>
     try {
       started = await this.runMutation(() => this.startRetry(turnId))
     } finally {
       this.pendingStarts -= 1
+      this.update({ ...this.snapshot })
     }
-    return started.ok ? this.executeAttempt(started.value) : started
+    if (!started.ok) return started
+    if (startId <= this.cancelledStartSequence) {
+      const cancelled = await this.cancel()
+      return cancelled.ok ? failure('cancelled', '请求已取消') : cancelled
+    }
+    return this.executeAttempt(started.value)
   }
 
   async cancel(): Promise<ProjectConversationResult> {
+    this.cancelledStartSequence = this.startSequence
     this.abortController?.abort()
     return this.runMutation(async () => {
       const document = this.snapshot.document

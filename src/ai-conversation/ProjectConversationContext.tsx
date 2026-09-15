@@ -26,6 +26,7 @@ import {
   useCardCatalog,
 } from '../card/cardCatalog'
 import { acquireCardPersistenceBarrier } from '../card/cardPersistenceBarrier'
+import { flushProjectCardChanges } from '../card/cardPersistenceCoordinator'
 import {
   pendingProposalCardTransition,
   type ConversationProposalRejectionFeedback,
@@ -41,6 +42,7 @@ export interface ProjectConversationView extends Omit<ProjectConversationSnapsho
   projectRoot: string | null
   loadStatus: Exclude<ProjectConversationSnapshot['loadStatus'], 'failed'> | 'no-project' | 'error'
   loadError: string | null
+  isBusy: boolean
 }
 
 export interface ProjectConversationActions {
@@ -141,10 +143,11 @@ export function ProjectConversationProvider({
       // 事件发出时立刻捕获对应快照；快速 undo/redo 会排队，但不能都保存成最后状态。
       const document = getCardCatalogView().documents.find(candidate => candidate.card.id === event.cardId)
       if (!document || !proposalApplication) {
-        persistenceLease.release()
+        persistenceLease.release('failed')
         operationGate.block('Card 历史状态无法定位对应文档，已停止继续操作')
         return
       }
+      let persisted = false
       void operationGate.run(async () => {
         if (operationGate.error) return
         const recorded = await conversation.recordProposalHistory(
@@ -157,18 +160,22 @@ export function ProjectConversationProvider({
           operationGate.block(recorded.error)
           return
         }
-        const persisted = await proposalApplication.persistHistoryCard(event, document)
-        if (!persisted.ok) {
-          operationGate.block(persisted.error)
+        const cardSaved = await proposalApplication.persistHistoryCard(event, document)
+        if (!cardSaved.ok) {
+          operationGate.block(cardSaved.error)
           return
         }
         const confirmed = await conversation.confirmProposalCardTransition(
           event.proposalId,
           event.transactionId,
         )
-        if (!confirmed.ok) operationGate.block(confirmed.error)
+        if (!confirmed.ok) {
+          operationGate.block(confirmed.error)
+          return
+        }
+        persisted = true
       }).catch(error => operationGate.block(operationErrorMessage(error)))
-        .finally(() => persistenceLease.release())
+        .finally(() => persistenceLease.release(persisted ? 'persisted' : 'failed'))
     })
   }, [conversation, operationGate, projectRoot, proposalApplication])
 
@@ -294,6 +301,7 @@ export function useProjectConversation<T>(selector: (view: ProjectConversationVi
     projectRoot,
     loadStatus,
     loadError: effectiveLoadError,
+    isBusy: conversation?.hasActiveWork() ?? false,
   }
   return selector(view)
 }
@@ -308,18 +316,37 @@ export function useProjectConversationActions(): ProjectConversationActions {
 
   const blockedResult = () => ({
     ok: false as const,
-    error: operationGate.error ?? '项目操作已停止，请重新打开项目完成恢复',
+    error: operationGate.error ?? (operationGate.isClosing
+      ? '项目正在切换，不能再开始新的操作'
+      : '项目操作已停止，请重新打开项目完成恢复'),
     code: 'persistence' as const,
   })
 
-  const runProposalMutation = (
+  const runProjectMutation = (
     operation: () => Promise<ProjectConversationResult>,
-  ): Promise<ProjectConversationResult> => operationGate.run(async () => {
-    if (operationGate.error) return blockedResult()
-    const result = await operation()
-    if (!result.ok && result.code === 'persistence') operationGate.block(result.error)
-    return result
-  })
+  ): Promise<ProjectConversationResult> => {
+    if (operationGate.isClosing) return Promise.resolve(blockedResult())
+    return operationGate.run(async () => {
+      if (operationGate.error) return blockedResult()
+      const result = await operation()
+      if (!result.ok && result.code === 'persistence') operationGate.block(result.error)
+      return result
+    })
+  }
+
+  const runOutsideProjectMutations = (
+    operation: () => Promise<ProjectConversationResult>,
+  ): Promise<ProjectConversationResult> => {
+    if (operationGate.error || operationGate.isClosing) return Promise.resolve(blockedResult())
+    if (operationGate.hasPending) {
+      return Promise.resolve({
+        ok: false,
+        error: 'Card 事务正在持久化，请完成后再发送',
+        code: 'already-running',
+      })
+    }
+    return operation()
+  }
 
   return useMemo(() => ({
     send: (
@@ -328,30 +355,31 @@ export function useProjectConversationActions(): ProjectConversationActions {
       quickReplySelection: ConversationQuickReplySelection | null = null,
     ) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
-      return conversation.send(userText, attachments, quickReplySelection)
+      return runOutsideProjectMutations(() => conversation.send(userText, attachments, quickReplySelection))
     },
     cancel: () => conversation
       ? conversation.cancel()
       : Promise.resolve({ ok: true as const }),
     retryTurn: (turnId: string) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
-      return conversation.retryTurn(turnId)
+      return runOutsideProjectMutations(() => conversation.retryTurn(turnId))
     },
     refreshProposal: (proposalId: string) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
-      return runProposalMutation(() => conversation.refreshProposal(proposalId))
+      return runProjectMutation(() => conversation.refreshProposal(proposalId))
     },
     acceptProposal: (proposalId: string, finalCardId: string) => {
       if (!conversation || !projectRoot || !proposalApplication) {
         return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
       }
+      if (operationGate.isClosing) return Promise.resolve(blockedResult())
       const proposal = conversation.getSnapshot().document?.proposals
         .find(candidate => candidate.id === proposalId)
       const cardId = proposal?.operation === 'update' ? proposal.targetCardId : finalCardId.trim()
       const persistenceLease = cardId
         ? acquireCardPersistenceBarrier(projectRoot, cardId)
         : null
-      return runProposalMutation(() => conversation.acceptProposal(
+      const result = runProjectMutation(() => conversation.acceptProposal(
         proposalId,
         finalCardId,
         async input => {
@@ -359,14 +387,21 @@ export function useProjectConversationActions(): ProjectConversationActions {
           if (!result.ok && result.certainty === 'uncertain') operationGate.block(result.error)
           return result
         },
-      )).finally(() => persistenceLease?.release())
+      ))
+      return result.then(value => {
+        persistenceLease?.release(value.ok ? 'persisted' : 'failed')
+        return value
+      }, error => {
+        persistenceLease?.release('failed')
+        throw error
+      })
     },
     rejectProposal: (
       proposalId: string,
       feedback: ConversationProposalRejectionFeedback | null = null,
     ) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
-      return runProposalMutation(() => conversation.rejectProposal(proposalId, feedback))
+      return runProjectMutation(() => conversation.rejectProposal(proposalId, feedback))
     },
     isRunning: () => (conversation?.hasActiveWork() ?? false) || operationGate.hasPending,
     prepareForProjectSwitch: async (confirmSwitch = () => window.confirm(
@@ -374,25 +409,45 @@ export function useProjectConversationActions(): ProjectConversationActions {
         ? '项目 AI 状态需要重新加载。仍要离开当前项目吗？未完成事务会在重新打开时恢复。'
         : 'AI 正在回复。要取消本轮并切换项目吗？',
     )) => {
-      await operationGate.drain()
-      let confirmed = false
-      if (operationGate.error) {
-        confirmed = confirmSwitch()
-        if (!confirmed) return false
+      if (!operationGate.beginClose()) return false
+      let maySwitch = false
+      try {
+        await operationGate.drain()
+        if (projectRoot) {
+          const cardsFlushed = await flushProjectCardChanges(projectRoot)
+          if (!cardsFlushed.ok) {
+            operationGate.block(cardsFlushed.error)
+            return false
+          }
+          // flush 期间仍可能收到 Card undo/redo 事件；再次 drain，确保离开前
+          // 它们也完成 WAL → Card → committed，不能留在旧项目后台运行。
+          await operationGate.drain()
+        }
+        let confirmed = false
+        if (operationGate.error) {
+          confirmed = confirmSwitch()
+          if (!confirmed) return false
+        }
+        // 运行请求的取消/终态保存失败时，磁盘是否记录终态尚不确定。
+        // 这类错误不能靠第二次点击绕过；只有重启/重新加载同项目才能恢复。
+        if (conversation?.getSnapshot().requiresReload && !operationGate.error) return false
+        if (!conversation?.hasActiveWork()) {
+          maySwitch = true
+          return true
+        }
+        if (!confirmed && !confirmSwitch()) return false
+        const result = await conversation.cancel()
+        await operationGate.drain()
+        const snapshot = conversation.getSnapshot()
+        maySwitch = result.ok &&
+          !snapshot.requiresReload &&
+          !conversation.hasActiveWork() &&
+          !operationGate.hasPending &&
+          (!operationGate.error || confirmed)
+        return maySwitch
+      } finally {
+        if (!maySwitch) operationGate.cancelClose()
       }
-      // 运行请求的取消/终态保存失败时，磁盘是否记录终态尚不确定。
-      // 这类错误不能靠第二次点击绕过；只有重启/重新加载同项目才能恢复。
-      if (conversation?.getSnapshot().requiresReload && !operationGate.error) return false
-      if (!conversation?.hasActiveWork()) return true
-      if (!confirmed && !confirmSwitch()) return false
-      const result = await conversation.cancel()
-      await operationGate.drain()
-      const snapshot = conversation.getSnapshot()
-      return result.ok &&
-        !snapshot.requiresReload &&
-        !conversation.hasActiveWork() &&
-        !operationGate.hasPending &&
-        (!operationGate.error || confirmed)
     },
   }), [conversation, projectRoot, proposalApplication, operationGate])
 }
@@ -409,11 +464,21 @@ class ProjectOperationGate {
   private tail: Promise<void> = Promise.resolve()
   private pending = 0
   private blockingError: string | null = null
+  private closing = false
 
   constructor(private readonly reportError: (error: string) => void) {}
 
   get error(): string | null { return this.blockingError }
   get hasPending(): boolean { return this.pending > 0 }
+  get isClosing(): boolean { return this.closing }
+
+  beginClose(): boolean {
+    if (this.closing) return false
+    this.closing = true
+    return true
+  }
+
+  cancelClose(): void { this.closing = false }
 
   block(error: string): void {
     if (this.blockingError) return
@@ -435,7 +500,11 @@ class ProjectOperationGate {
   }
 
   async drain(): Promise<void> {
-    await this.tail
+    while (true) {
+      const observed = this.tail
+      await observed
+      if (observed === this.tail) return
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   acquireCardPersistenceBarrier,
+  clearCardPersistenceFailures,
   isCardPersistenceBlocked,
   subscribeCardPersistenceBarrier,
   waitForCardPersistenceBarrier,
@@ -13,6 +14,8 @@ describe('Card persistence barrier', () => {
   afterEach(() => {
     for (const lease of leases) lease.release()
     leases.length = 0
+    clearCardPersistenceFailures('/mods/a')
+    clearCardPersistenceFailures('/mods/b')
   })
 
   const acquire = (projectRoot: string, cardId: string) => {
@@ -78,5 +81,14 @@ describe('Card persistence barrier', () => {
     second.release()
     await waiting
     expect(resumed).toBe(true)
+  })
+
+  it('失败结果在释放后保持，迟到等待者也必须等项目重载清除', async () => {
+    const lease = acquire('/mods/a', 'CardA')
+    lease.release('failed')
+
+    await expect(waitForCardPersistenceBarrier('/mods/a', 'CardA')).resolves.toBe(false)
+    clearCardPersistenceFailures('/mods/a')
+    await expect(waitForCardPersistenceBarrier('/mods/a', 'CardA')).resolves.toBe(true)
   })
 })
