@@ -103,6 +103,16 @@ describe('FileService conversation port', () => {
   it('同一项目同一 Card 的原子保存严格串行，后发写入不会抢先', async () => {
     const api = electronApi()
     const firstWrite = deferred<boolean>()
+    const persisted = serializeCardDocument(cardDocument('Fireball', '磁盘基线'))
+    vi.mocked(api.readDirectoryResult!).mockResolvedValue({
+      status: 'found',
+      value: [{
+        name: 'Fireball.json',
+        path: '/project/.modstudio/cards/Fireball.json',
+        isDirectory: false,
+      }],
+    })
+    vi.mocked(api.readFileResult!).mockResolvedValue({ status: 'found', value: persisted })
     vi.mocked(api.writeFile)
       .mockImplementationOnce(() => firstWrite.promise)
       .mockResolvedValue(true)
@@ -150,6 +160,27 @@ describe('FileService conversation port', () => {
       .resolves.toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
     expect(api.writeFile).not.toHaveBeenCalled()
     expect(api.linkNoReplace).not.toHaveBeenCalled()
+  })
+
+  it('Card 加载不会把 typed 文件权限错误降级为损坏文档', async () => {
+    const api = electronApi()
+    vi.mocked(api.readDirectoryResult!).mockResolvedValue({
+      status: 'found',
+      value: [{
+        name: 'Fireball.json',
+        path: '/project/.modstudio/cards/Fireball.json',
+        isDirectory: false,
+      }],
+    })
+    vi.mocked(api.readFileResult!).mockResolvedValue({
+      status: 'error',
+      code: 'permission-denied',
+      error: 'EACCES',
+    })
+    const service = createFileService({ api })
+
+    await expect(service.loadCardDocuments('/project')).rejects.toThrow('EACCES')
+    expect(api.readFile).not.toHaveBeenCalled()
   })
 
   it('Card 删除不会把 C# 权限错误降级成没有产物', async () => {

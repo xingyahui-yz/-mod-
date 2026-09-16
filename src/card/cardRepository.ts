@@ -25,6 +25,11 @@ export interface CardDocumentFilePort {
     | { status: 'error'; error: string }
   >
   readFile(path: string): Promise<string | null>
+  readFileResult?(path: string): Promise<
+    | { status: 'found'; value: string }
+    | { status: 'missing' }
+    | { status: 'error'; error: string }
+  >
   mkdir(path: string): Promise<boolean>
   writeFile(path: string, content: string): Promise<boolean>
   rename(from: string, to: string): Promise<boolean>
@@ -56,13 +61,14 @@ export interface CardDocumentRepository {
 
 /** 将现有 FileService 接到 repository，不改变旧的 C# load/save 方法。 */
 export function createCardDocumentRepositoryFromFileService(
-  service: Pick<FileService, 'getProjectFiles' | 'readDirectoryResult' | 'readFile' | 'createDirectory' | 'writeFile' | 'renameFile' | 'linkFileNoReplace' | 'removeFile'>,
+  service: Pick<FileService, 'getProjectFiles' | 'readDirectoryResult' | 'readFile' | 'readFileResult' | 'createDirectory' | 'writeFile' | 'renameFile' | 'linkFileNoReplace' | 'removeFile'>,
 ): CardDocumentRepository {
   return createCardDocumentRepository({
     files: {
       readDirectory: path => service.getProjectFiles(path),
       readDirectoryResult: path => service.readDirectoryResult(path),
       readFile: path => service.readFile(path),
+      readFileResult: path => service.readFileResult(path),
       mkdir: path => service.createDirectory(path),
       writeFile: (path, content) => service.writeFile(path, content),
       rename: (from, to) => service.renameFile(from, to),
@@ -110,6 +116,35 @@ async function readDirectoryState(files: CardDocumentFilePort, path: string): Pr
   }
 }
 
+async function readFileState(files: CardDocumentFilePort, path: string): Promise<
+  | { status: 'found'; value: string }
+  | { status: 'missing' }
+  | { status: 'error'; error: string }
+> {
+  if (files.readFileResult) {
+    try {
+      const result = await files.readFileResult(path)
+      return result.status === 'error' ? { status: 'error', error: result.error } : result
+    } catch (error) {
+      return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  try {
+    const value = await files.readFile(path)
+    return value === null ? { status: 'missing' } : { status: 'found', value }
+  } catch (error) {
+    return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+function matchingCardEntries(
+  entries: readonly CardDocumentFileEntry[],
+  cardId: string,
+): CardDocumentFileEntry[] {
+  const expected = `${cardId}.json`.toLowerCase()
+  return entries.filter(entry => !entry.isDirectory && entry.name.toLowerCase() === expected)
+}
+
 export function createCardDocumentRepository(deps: { files: CardDocumentFilePort }): CardDocumentRepository {
   const { files } = deps
 
@@ -149,10 +184,11 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
 
       return Promise.all(cardEntries.map(async entry => {
         const path = entry.path || joinPath(cardsPath, entry.name)
-        const content = await files.readFile(path).catch(() => null)
-        const result = content === null
-          ? { status: 'invalid' as const, reason: '无法读取 CardDocument', raw: null }
-          : parseCardDocumentJson(content)
+        const content = await readFileState(files, path)
+        if (content.status === 'error') throw new Error(content.error)
+        const result = content.status === 'missing'
+          ? { status: 'invalid' as const, reason: 'CardDocument 在目录扫描后消失', raw: null }
+          : parseCardDocumentJson(content.value)
         return { fileName: entry.name, path, result }
       }))
     },
@@ -162,15 +198,68 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
       if (invalid) return { ok: false, error: invalid }
 
       const cardsPath = joinPath(projectPath, CARDS_DIR)
-      const target = joinPath(cardsPath, `${document.card.id}.json`)
       if (!await files.mkdir(cardsPath)) {
         return { ok: false, error: '无法创建 CardDocument 目录' }
       }
 
-      if (!await atomicWrite(target, serializeCardDocument(document), document.card.id)) {
-        return { ok: false, error: '无法原子替换 CardDocument' }
+      // save 只能更新已经由本项目加载的唯一活动文件，不能退化成 create。
+      // 在写临时文件之前记录旧内容；持有 lowercase claim 后再次验证，避免
+      // 并发 create 或外部编辑在 rename 时被静默覆盖。
+      const initialDirectory = await readDirectoryState(files, cardsPath)
+      if (initialDirectory.status !== 'found') {
+        return { ok: false, error: initialDirectory.status === 'error' ? initialDirectory.error : 'CardDocument 不存在，不能覆盖保存' }
       }
-      return { ok: true, path: target }
+      const initialMatches = matchingCardEntries(initialDirectory.value, document.card.id)
+      if (initialMatches.length !== 1) {
+        return { ok: false, error: initialMatches.length === 0
+          ? 'CardDocument 不存在，不能覆盖保存'
+          : 'Card ID 存在大小写冲突，不能覆盖保存' }
+      }
+      const target = initialMatches[0].path || joinPath(cardsPath, initialMatches[0].name)
+      const initialContent = await readFileState(files, target)
+      if (initialContent.status !== 'found') {
+        return { ok: false, error: initialContent.status === 'error' ? initialContent.error : 'CardDocument 不存在，不能覆盖保存' }
+      }
+
+      const content = serializeCardDocument(document)
+      const temp = temporaryPath(target, document.card.id)
+      if (!await files.writeFile(temp, content)) {
+        await files.remove(temp).catch(() => false)
+        return { ok: false, error: '无法写入 CardDocument 临时文件' }
+      }
+      const claim = await acquireCardIdClaim(files, cardsPath, document.card.id, temp)
+      if (claim.status !== 'acquired') {
+        await files.remove(temp).catch(() => false)
+        return { ok: false, error: claim.status === 'occupied'
+          ? 'Card ID 正被其他写入占用'
+          : '无法原子占用 Card ID' }
+      }
+      try {
+        const currentDirectory = await readDirectoryState(files, cardsPath)
+        if (currentDirectory.status !== 'found') {
+          return { ok: false, error: currentDirectory.status === 'error' ? currentDirectory.error : 'CardDocument 保存前已消失' }
+        }
+        const currentMatches = matchingCardEntries(currentDirectory.value, document.card.id)
+        const currentTarget = currentMatches.length === 1
+          ? currentMatches[0].path || joinPath(cardsPath, currentMatches[0].name)
+          : null
+        if (currentTarget !== target) {
+          return { ok: false, error: 'CardDocument 保存期间目录已变化，未覆盖' }
+        }
+        const currentContent = await readFileState(files, target)
+        if (currentContent.status !== 'found' || currentContent.value !== initialContent.value) {
+          return { ok: false, error: currentContent.status === 'error'
+            ? currentContent.error
+            : 'CardDocument 保存期间被外部修改，未覆盖' }
+        }
+        if (!await files.rename(temp, target)) {
+          return { ok: false, error: '无法原子替换 CardDocument' }
+        }
+        return { ok: true, path: target }
+      } finally {
+        await claim.release()
+        await files.remove(temp).catch(() => false)
+      }
     },
 
     async create(projectPath, document) {

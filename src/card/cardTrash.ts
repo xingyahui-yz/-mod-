@@ -110,7 +110,22 @@ async function readFileState(files: CardTrashFilePort, path: string): Promise<
   }
 }
 
-async function deactivateToStaging(
+async function restoreStagedFile(
+  files: CardTrashFilePort,
+  activePath: string,
+  stagingPath: string,
+  expected: string,
+): Promise<boolean> {
+  const restored = await files.linkNoReplace(stagingPath, activePath)
+    .catch(() => ({ status: 'failed' as const }))
+  if (restored.status !== 'linked') return false
+  const active = await readFileState(files, activePath)
+  if (active.status !== 'found' || active.value !== expected) return false
+  await files.remove(stagingPath).catch(() => false)
+  return true
+}
+
+async function stageActiveFile(
   files: CardTrashFilePort,
   activePath: string,
   stagingPath: string,
@@ -118,14 +133,10 @@ async function deactivateToStaging(
 ): Promise<boolean> {
   if (!await files.rename(activePath, stagingPath).catch(() => false)) return false
   const staged = await readFileState(files, stagingPath)
-  if (staged.status === 'found' && staged.value === expected) {
-    return files.remove(stagingPath).catch(() => false)
-  }
+  if (staged.status === 'found' && staged.value === expected) return true
   // rename 的线性化点若抓到了外部替换文件，绝不能删除它。仅在活动路径
   // 仍为空时 no-replace 恢复；否则把 staging 留在回收站供人工核对。
-  const restored = await files.linkNoReplace(stagingPath, activePath)
-    .catch(() => ({ status: 'failed' as const }))
-  if (restored.status === 'linked') await files.remove(stagingPath).catch(() => false)
+  await restoreStagedFile(files, activePath, stagingPath, expected)
   return false
 }
 
@@ -201,24 +212,39 @@ export function createCardTrashRepository(
       }
 
       // 先把游戏会加载的活动 C# 原子移到本次 staging，再处理源文档。
-      // staging 读回内容不符时只做 no-replace 恢复，绝不按活动路径删除。
+      // 两者都安全停用前不清理 staging，以便后续失败时 no-replace 补偿恢复。
+      let artifactStaged = false
       if (artifact !== null) {
-        if (!await deactivateToStaging(files, sourceArtifact, stagingArtifact, artifact)) {
+        if (!await stageActiveFile(files, sourceArtifact, stagingArtifact, artifact)) {
           return { status: 'failed', reason: '无法停用活动 C#，回收站副本保留' }
         }
+        artifactStaged = true
         const artifactAfterRemove = await readFileState(files, sourceArtifact)
         if (artifactAfterRemove.status !== 'missing') {
+          await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
           return { status: 'failed', reason: '活动 C# 删除状态不确定，回收站副本保留，请重新加载项目' }
         }
       }
 
-      if (!await deactivateToStaging(files, sourceDocument, stagingDocument, document)) {
+      if (!await stageActiveFile(files, sourceDocument, stagingDocument, document)) {
+        if (artifactStaged && artifact !== null) {
+          await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
+        }
         return { status: 'failed', reason: '无法移除活动 CardDocument，回收站副本保留，请重新加载项目' }
       }
       const documentAfterRemove = await readFileState(files, sourceDocument)
       if (documentAfterRemove.status !== 'missing') {
+        await restoreStagedFile(files, sourceDocument, stagingDocument, document)
+        if (artifactStaged && artifact !== null) {
+          await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
+        }
         return { status: 'failed', reason: 'CardDocument 删除状态不确定，回收站副本保留，请重新加载项目' }
       }
+
+      // 活动文件已全部安全停用，删除在此刻成功。staging 只是额外可恢复副本，
+      // 清理失败时保留它，不得重新激活 Card 或把结果降级为半删除。
+      await files.remove(stagingDocument).catch(() => false)
+      if (artifactStaged) await files.remove(stagingArtifact).catch(() => false)
       return { status: 'deleted', trashId, trashPath }
     },
 

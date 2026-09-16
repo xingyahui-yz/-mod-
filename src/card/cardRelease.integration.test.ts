@@ -67,7 +67,7 @@ describe('v0.9 real filesystem release flow', () => {
     const repository = createCardDocumentRepository({ files })
     const document = makeDocument()
 
-    expect((await repository.save(project, document)).ok).toBe(true)
+    expect((await repository.create(project, document)).ok).toBe(true)
     const loaded = await repository.load(project)
     expect(loaded[0]?.result.status).toBe('editable')
     const generated = await generateCardArtifact(project, document, {

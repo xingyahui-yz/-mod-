@@ -389,7 +389,9 @@ export function useProjectConversationActions(): ProjectConversationActions {
         },
       ))
       return result.then(value => {
-        persistenceLease?.release(value.ok ? 'persisted' : 'failed')
+        // stale/ID 冲突等业务失败会把 accepted WAL 安全回滚为 pending，
+        // Card 文件没有不确定性；只有真正的 persistence 失败才保持粘性阻断。
+        persistenceLease?.release(value.ok || value.code !== 'persistence' ? 'persisted' : 'failed')
         return value
       }, error => {
         persistenceLease?.release('failed')

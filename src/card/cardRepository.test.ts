@@ -45,6 +45,13 @@ class MemoryFiles implements CardDocumentFilePort {
     return this.files.get(path) ?? null
   }
 
+  readFileResult: NonNullable<CardDocumentFilePort['readFileResult']> = async path => {
+    const value = this.files.get(path)
+    return value === undefined
+      ? { status: 'missing' as const }
+      : { status: 'found' as const, value }
+  }
+
   async mkdir(path: string) {
     this.directories.add(path)
     return true
@@ -100,12 +107,55 @@ describe('CardDocumentRepository', () => {
   it('保存先写临时文件，再原子 rename 到 Card ID 文件名', async () => {
     const files = new MemoryFiles()
     const repository = createCardDocumentRepository({ files })
+    files.files.set('/project/.modstudio/cards/IceBolt.json', JSON.stringify(makeDocument('IceBolt')))
     const result = await repository.save('/project', makeDocument('IceBolt'))
 
     expect(result).toEqual({ ok: true, path: '/project/.modstudio/cards/IceBolt.json' })
     expect(files.renameCalls).toHaveLength(1)
     expect(files.files.has('/project/.modstudio/cards/IceBolt.json')).toBe(true)
     expect([...files.files.keys()].some(path => path.includes('.tmp-'))).toBe(false)
+  })
+
+  it('保存不存在的 Card 不会退化成 create 或覆盖随后出现的文件', async () => {
+    const files = new MemoryFiles()
+    const repository = createCardDocumentRepository({ files })
+
+    await expect(repository.save('/project', makeDocument('Fireball'))).resolves.toEqual({
+      ok: false,
+      error: 'CardDocument 不存在，不能覆盖保存',
+    })
+    const created = await repository.create('/project', makeDocument('Fireball'))
+    expect(created.ok).toBe(true)
+    expect(JSON.parse(files.files.get('/project/.modstudio/cards/Fireball.json')!).card.name).toBe('Fireball')
+  })
+
+  it('保存取得 claim 前目标被外部替换时拒绝覆盖', async () => {
+    const files = new MemoryFiles()
+    const target = '/project/.modstudio/cards/Fireball.json'
+    files.files.set(target, JSON.stringify(makeDocument('Fireball')))
+    const external = makeDocument('Fireball')
+    external.card.name = '外部版本'
+    files.beforeLink = (_from, to) => {
+      if (to.endsWith('/.id-claims/fireball.claim')) {
+        files.files.set(target, JSON.stringify(external))
+      }
+    }
+
+    const local = makeDocument('Fireball')
+    local.card.name = '本地版本'
+    const result = await createCardDocumentRepository({ files }).save('/project', local)
+
+    expect(result).toEqual({ ok: false, error: 'CardDocument 保存期间被外部修改，未覆盖' })
+    expect(JSON.parse(files.files.get(target)!).card.name).toBe('外部版本')
+  })
+
+  it('文件权限错误会使整次加载失败，不伪装成损坏 Card', async () => {
+    const files = new MemoryFiles()
+    const target = '/project/.modstudio/cards/Fireball.json'
+    files.files.set(target, JSON.stringify(makeDocument('Fireball')))
+    files.readFileResult = async () => ({ status: 'error' as const, error: 'EACCES' })
+
+    await expect(createCardDocumentRepository({ files }).load('/project')).rejects.toThrow('EACCES')
   })
 
   it('rename 失败时不报告成功，并保留原活动文件', async () => {

@@ -19,6 +19,7 @@ import { serializeCardDocument, type CardDocument } from '../card/cardDocument'
 import { createCardProposal } from '../card/cardAiProposal'
 import { acquireCardPersistenceBarrier } from '../card/cardPersistenceBarrier'
 import { clearCardPersistenceFailures } from '../card/cardPersistenceBarrier'
+import { flushProjectCardChanges } from '../card/cardPersistenceCoordinator'
 
 // 重置 Card store；Card 文档而非 localStorage 承担持久化
 beforeEach(() => {
@@ -570,6 +571,69 @@ describe('CardEditor 过滤 + 原始索引', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
     expect(writeFile).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('WAL 后继草稿')
+  })
+
+  it('项目切换 flush 会等待非当前 Card 的 barrier 后继草稿落盘', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const writeFile = vi.fn(async (_path: string, _content: string) => true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.includes('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    }) })
+
+    render(<CardEditor projectPath="/A" />)
+    const input = await screen.findByDisplayValue('火球')
+    const lease = acquireCardPersistenceBarrier('/A', 'Fireball')
+    fireEvent.change(input, { target: { value: '切换前必须保存' } })
+    act(() => { cardCatalogActions.selectCard(null) })
+
+    let settled = false
+    const flushing = flushProjectCardChanges('/A').then(result => {
+      settled = true
+      return result
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    act(() => lease.release())
+    await expect(flushing).resolves.toEqual({ ok: true })
+    expect(writeFile).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('切换前必须保存')
+  })
+
+  it('项目切换 flush 写入期间的新编辑也会在离开前保存', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const firstWrite = deferred<boolean>()
+    const writeFile = vi.fn()
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValue(true)
+    installFileService({ api: createCardEditorApi({
+      readDirectory: vi.fn(async (path: string) => path === '/A/.modstudio/cards'
+        ? [{ name: 'Fireball.json', path: '/A/.modstudio/cards/Fireball.json', isDirectory: false }]
+        : []),
+      readFile: vi.fn(async (path: string) => path.includes('/Fireball.json')
+        ? serializeCardDocument(alpha)
+        : null),
+      writeFile,
+    }) })
+
+    render(<CardEditor projectPath="/A" />)
+    const input = await screen.findByDisplayValue('火球')
+    fireEvent.change(input, { target: { value: '切换首稿' } })
+    const flushing = flushProjectCardChanges('/A')
+    await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByDisplayValue('切换首稿'), { target: { value: '切换前最终稿' } })
+    firstWrite.resolve(true)
+
+    await expect(flushing).resolves.toEqual({ ok: true })
+    expect(writeFile).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(writeFile).mock.calls[1]?.[1]).toContain('切换前最终稿')
   })
 
   it('history WAL 失败后保持 Card 保存阻断，后继编辑不会伪装成已保存', async () => {

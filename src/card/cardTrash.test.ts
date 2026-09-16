@@ -5,6 +5,7 @@ class MemoryFiles implements CardTrashFilePort {
   files = new Map<string, string>()
   directories = new Set<string>()
   failRenameTo: string | null = null
+  failRemoveFor = new Set<string>()
   beforeLink: ((from: string, to: string) => void) | null = null
   readDirectoryResult?: CardTrashFilePort['readDirectoryResult']
   readFileResult?: CardTrashFilePort['readFileResult']
@@ -43,7 +44,12 @@ class MemoryFiles implements CardTrashFilePort {
     this.files.set(to, content)
     return { status: 'linked' } as const
   }
-  async remove(path: string) { this.files.delete(path); this.directories.delete(path); return true }
+  async remove(path: string) {
+    if (this.failRemoveFor.has(path)) return false
+    this.files.delete(path)
+    this.directories.delete(path)
+    return true
+  }
 }
 
 const project = '/project'
@@ -79,6 +85,75 @@ describe('Card trash repository', () => {
     expect(result.status).toBe('failed')
     expect(files.files.get(docPath)).toBe(document)
     expect(files.files.get(artifactPath)).toBe('generated')
+  })
+
+  it('CardDocument 暂存失败时补偿恢复已停用的 C#', async () => {
+    const files = new MemoryFiles()
+    const docPath = `${project}/.modstudio/cards/Fireball.json`
+    const artifactPath = `${project}/scripts/Cards/Fireball.cs`
+    const trashPath = `${project}/.modstudio/trash/cards/Fireball-1`
+    files.files.set(docPath, document)
+    files.files.set(artifactPath, 'generated')
+    files.failRenameTo = `${trashPath}/active-document.staging`
+
+    const result = await createCardTrashRepository({ files, idSuffix: () => '1' }).delete(project, 'Fireball')
+
+    expect(result.status).toBe('failed')
+    expect(files.files.get(docPath)).toBe(document)
+    expect(files.files.get(artifactPath)).toBe('generated')
+    expect(files.files.get(`${trashPath}/card.json`)).toBe(document)
+    expect(files.files.get(`${trashPath}/artifact.cs`)).toBe('generated')
+  })
+
+  it('补偿恢复遇到竞争文件时关闭删除并保留 staging', async () => {
+    const files = new MemoryFiles()
+    const docPath = `${project}/.modstudio/cards/Fireball.json`
+    const artifactPath = `${project}/scripts/Cards/Fireball.cs`
+    const trashPath = `${project}/.modstudio/trash/cards/Fireball-1`
+    const stagingDocument = `${trashPath}/active-document.staging`
+    const stagingArtifact = `${trashPath}/active-artifact.staging`
+    files.files.set(docPath, document)
+    files.files.set(artifactPath, 'generated')
+    const rename = files.rename.bind(files)
+    files.rename = async (from, to) => {
+      if (to === stagingDocument) {
+        files.files.set(artifactPath, 'external replacement')
+        return false
+      }
+      return rename(from, to)
+    }
+
+    const result = await createCardTrashRepository({ files, idSuffix: () => '1' }).delete(project, 'Fireball')
+
+    expect(result.status).toBe('failed')
+    expect(files.files.get(docPath)).toBe(document)
+    expect(files.files.get(artifactPath)).toBe('external replacement')
+    expect(files.files.get(stagingArtifact)).toBe('generated')
+    expect(files.files.get(`${trashPath}/card.json`)).toBe(document)
+    expect(files.files.get(`${trashPath}/artifact.cs`)).toBe('generated')
+  })
+
+  it('两个活动文件都安全停用后，staging 清理失败不会把删除降级为半删除', async () => {
+    const files = new MemoryFiles()
+    const docPath = `${project}/.modstudio/cards/Fireball.json`
+    const artifactPath = `${project}/scripts/Cards/Fireball.cs`
+    const trashPath = `${project}/.modstudio/trash/cards/Fireball-1`
+    const stagingDocument = `${trashPath}/active-document.staging`
+    const stagingArtifact = `${trashPath}/active-artifact.staging`
+    files.files.set(docPath, document)
+    files.files.set(artifactPath, 'generated')
+    files.failRemoveFor.add(stagingDocument)
+    files.failRemoveFor.add(stagingArtifact)
+
+    const result = await createCardTrashRepository({ files, idSuffix: () => '1' }).delete(project, 'Fireball')
+
+    expect(result).toMatchObject({ status: 'deleted', trashId: 'Fireball-1' })
+    expect(files.files.has(docPath)).toBe(false)
+    expect(files.files.has(artifactPath)).toBe(false)
+    expect(files.files.get(`${trashPath}/card.json`)).toBe(document)
+    expect(files.files.get(`${trashPath}/artifact.cs`)).toBe('generated')
+    expect(files.files.get(stagingDocument)).toBe(document)
+    expect(files.files.get(stagingArtifact)).toBe('generated')
   })
 
   it('恢复前按忽略大小写检查 ID 冲突，并支持无 C# Card 恢复', async () => {

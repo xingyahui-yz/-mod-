@@ -112,6 +112,9 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
         ? { readDirectoryResult: (path: string) => api.readDirectoryResult!(path) }
         : {}),
       readFile: path => api.readFile(path),
+      ...(api.readFileResult
+        ? { readFileResult: (path: string) => api.readFileResult!(path) }
+        : {}),
       mkdir: path => api.mkdir(path),
       writeFile: (path, content) => api.writeFile(path, content),
       rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),

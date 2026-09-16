@@ -11,7 +11,7 @@ import {
 import { cardCatalogActions, getCardCatalogView } from '../card/cardCatalog'
 import { cardDocumentRevision, createCardProposal } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
-import { isCardPersistenceBlocked } from '../card/cardPersistenceBarrier'
+import { hasCardPersistenceFailure, isCardPersistenceBlocked } from '../card/cardPersistenceBarrier'
 import type { ConversationCardProposal } from './proposalLifecycle'
 import { registerProjectCardFlusher } from '../card/cardPersistenceCoordinator'
 import {
@@ -247,6 +247,24 @@ describe('ProjectConversationProvider 提案动作', () => {
       position: { x: 18, y: 32 },
       data: { kind: 'addCardToHand', cardId: 'FinalCard' },
     })
+  })
+
+  it('创建提案遇到正常 ID 冲突不会把现有 Card 标成持久化失败', async () => {
+    const repository = repositoryWithSaves([])
+    const existing = cardDocument('FinalCard', '用户已有内容')
+    const candidate = cardDocument('DraftCard', '候选')
+    cardCatalogActions.loadDocuments([existing], '/mods/a')
+    const actions = renderActions(repository, proposalModel({ operation: 'create', document: candidate }))
+    await waitFor(() => expect(repository.load).toHaveBeenCalledTimes(1))
+    await act(async () => { await actions.current.send('创建 Card') })
+
+    const proposalId = repository.current!.proposals[0].id
+    await expect(actions.current.acceptProposal(proposalId, 'FinalCard')).resolves.toMatchObject({
+      ok: false,
+      code: 'duplicate-card-id',
+    })
+    expect(hasCardPersistenceFailure('/mods/a', 'FinalCard')).toBe(false)
+    expect(getCardCatalogView().currentCard?.description).toBe('用户已有内容')
   })
 
   it('接受 update 自动选中目标并只生成一个 Card 历史事务，undo/redo 同步提案状态', async () => {

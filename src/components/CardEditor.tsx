@@ -80,6 +80,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const persistedCardKeys = useRef(new Set<string>())
   const failedTransactionKeys = useRef(new Set<string>())
   const editorPersistenceTails = useRef(new Map<string, Promise<void>>())
+  const deferredAutosaveTasks = useRef(new Map<string, Promise<void>>())
   const editorPersistenceErrors = useRef(new Map<string, string>())
   const pendingUnmountFlush = useRef<(() => Promise<boolean>) | null>(null)
   const activeProjectRef = useRef<string | null>(projectPath)
@@ -171,9 +172,16 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       const pending = [...editorPersistenceTails.current]
         .filter(([key]) => key.startsWith(prefix))
         .map(([, tail]) => tail)
+        .concat([...deferredAutosaveTasks.current]
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([, task]) => task))
       if (pending.length === 0) return
       await Promise.all(pending)
-      if (![...editorPersistenceTails.current.keys()].some(key => key.startsWith(prefix))) return
+      const hasEditorWrite = [...editorPersistenceTails.current.keys()]
+        .some(key => key.startsWith(prefix))
+      const hasDeferredSave = [...deferredAutosaveTasks.current.keys()]
+        .some(key => key.startsWith(prefix))
+      if (!hasEditorWrite && !hasDeferredSave) return
     }
   }
 
@@ -226,7 +234,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         deferredAutosaveTokens.current.set(cardId, token)
         // 选择可继续切到其他 Card；因此不能只依赖当前 selector 在 barrier
         // 释放时重渲染。这里保存该 Card 的最新目录投影，并用 token 合并多次编辑。
-        void (async () => {
+        const taskKey = cardPersistenceKey(projectToSave, cardId)
+        const deferredTask = (async () => {
           const transactionPersisted = await waitForCardPersistenceBarrier(projectToSave, cardId)
           if (!transactionPersisted) {
             if (deferredAutosaveTokens.current.get(cardId) === token) {
@@ -283,6 +292,12 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           if (deferredAutosaveTokens.current.get(cardId) !== token) return
           deferredAutosaveTokens.current.delete(cardId)
           if (getCardCatalogView().selectedCardId === cardId) setAutosaveState('error')
+        })
+        deferredAutosaveTasks.current.set(taskKey, deferredTask)
+        void deferredTask.finally(() => {
+          if (deferredAutosaveTasks.current.get(taskKey) === deferredTask) {
+            deferredAutosaveTasks.current.delete(taskKey)
+          }
         })
       }
       setAutosaveState('pending')
@@ -359,19 +374,25 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   useEffect(() => {
     if (!projectPath) return
     return registerProjectCardFlusher(projectPath, async () => {
-      if (autosaveTimer.current) {
-        clearTimeout(autosaveTimer.current)
-        autosaveTimer.current = null
-        autosaveCardId.current = null
+      while (true) {
+        if (autosaveTimer.current) {
+          clearTimeout(autosaveTimer.current)
+          autosaveTimer.current = null
+          autosaveCardId.current = null
+        }
+        const flush = pendingUnmountFlush.current
+        pendingUnmountFlush.current = null
+        if (flush) await flush()
+        await drainEditorPersistence(projectPath)
+
+        // 上一次写入等待期间用户仍可能继续编辑，React effect 会重新放入
+        // timer/flush。循环到引用稳定，项目切换才能获得真正的保存边界。
+        if (autosaveTimer.current || pendingUnmountFlush.current) continue
+        const prefix = `${projectPath}\0`
+        const error = [...editorPersistenceErrors.current]
+          .find(([key]) => key.startsWith(prefix))?.[1]
+        return error ? { ok: false, error } : { ok: true }
       }
-      const flush = pendingUnmountFlush.current
-      pendingUnmountFlush.current = null
-      if (flush) await flush()
-      await drainEditorPersistence(projectPath)
-      const prefix = `${projectPath}\0`
-      const error = [...editorPersistenceErrors.current]
-        .find(([key]) => key.startsWith(prefix))?.[1]
-      return error ? { ok: false, error } : { ok: true }
     })
   }, [projectPath])
 
