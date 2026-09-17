@@ -45,7 +45,7 @@ export interface CardDocumentLoadEntry {
 
 export type CardDocumentSaveResult =
   | { ok: true; path: string }
-  | { ok: false; error: string }
+  | { ok: false; error: string; certainty?: 'unchanged' | 'uncertain' }
 
 export type CardDocumentMigrationSaveResult =
   | { status: 'migrated'; path: string; backupPath: string }
@@ -89,6 +89,10 @@ function joinPath(...parts: string[]): string {
 
 function temporaryPath(target: string, id: string): string {
   return `${target}.tmp-${id}-${Math.random().toString(36).slice(2)}`
+}
+
+function saveStagingPath(target: string, id: string): string {
+  return `${target}.save-staging-${id}-${Math.random().toString(36).slice(2)}`
 }
 
 async function readDirectoryState(files: CardDocumentFilePort, path: string): Promise<
@@ -148,6 +152,76 @@ function matchingCardEntries(
 export function createCardDocumentRepository(deps: { files: CardDocumentFilePort }): CardDocumentRepository {
   const { files } = deps
 
+  const restoreStagedFile = async (
+    staging: string,
+    target: string,
+    expected: string,
+  ): Promise<boolean> => {
+    const restored = await files.linkNoReplace(staging, target)
+      .catch(() => ({ status: 'failed' as const }))
+    if (restored.status !== 'linked') return false
+    const readBack = await readFileState(files, target)
+    if (readBack.status !== 'found' || readBack.value !== expected) return false
+    await files.remove(staging).catch(() => false)
+    return true
+  }
+
+  const recoverInterruptedSaveStaging = async (
+    cardsPath: string,
+    entries: readonly CardDocumentFileEntry[],
+  ): Promise<boolean> => {
+    const groups = new Map<string, { targetName: string; staging: CardDocumentFileEntry[] }>()
+    for (const entry of entries) {
+      if (entry.isDirectory) continue
+      const marker = entry.name.toLowerCase().indexOf('.json.save-staging-')
+      if (marker < 0) continue
+      const targetName = entry.name.slice(0, marker + '.json'.length)
+      const cardId = targetName.slice(0, -'.json'.length)
+      if (!isValidCardId(cardId)) continue
+      const key = targetName.toLowerCase()
+      const group = groups.get(key) ?? { targetName, staging: [] }
+      group.staging.push(entry)
+      groups.set(key, group)
+    }
+
+    let needsRescan = false
+    for (const [targetKey, group] of groups) {
+      const hasActive = entries.some(entry => !entry.isDirectory && entry.name.toLowerCase() === targetKey)
+      if (hasActive) continue
+      if (group.staging.length !== 1) {
+        throw new Error(`CardDocument 保存恢复存在 ${group.staging.length} 份候选，已停止加载`)
+      }
+      const stagingEntry = group.staging[0]
+      const staging = stagingEntry.path || joinPath(cardsPath, stagingEntry.name)
+      const target = joinPath(cardsPath, group.targetName)
+      const raw = await readFileState(files, staging)
+      if (raw.status !== 'found') {
+        throw new Error(raw.status === 'error'
+          ? `无法读取 CardDocument 保存恢复副本：${raw.error}`
+          : 'CardDocument 保存恢复副本已消失')
+      }
+      const parsed = parseCardDocumentJson(raw.value)
+      const expectedId = group.targetName.slice(0, -'.json'.length)
+      if (parsed.status !== 'editable' || parsed.document.card.id.toLowerCase() !== expectedId.toLowerCase()) {
+        throw new Error('CardDocument 保存恢复副本无效，已保真停止加载')
+      }
+      const restored = await files.linkNoReplace(staging, target)
+        .catch(() => ({ status: 'failed' as const }))
+      if (restored.status === 'failed') {
+        throw new Error('无法恢复中断的 CardDocument 保存')
+      }
+      needsRescan = true
+      if (restored.status === 'linked') {
+        const readBack = await readFileState(files, target)
+        if (readBack.status !== 'found' || readBack.value !== raw.value) {
+          throw new Error('CardDocument 保存恢复读回校验失败')
+        }
+        await files.remove(staging).catch(() => false)
+      }
+    }
+    return needsRescan
+  }
+
   const atomicWrite = async (target: string, content: string, id: string): Promise<boolean> => {
     const temp = temporaryPath(target, id)
     if (!await files.writeFile(temp, content)) {
@@ -176,7 +250,16 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
       const directory = await readDirectoryState(files, cardsPath)
       if (directory.status === 'missing') return []
       if (directory.status === 'error') throw new Error(directory.error)
-      const entries = directory.value
+      let entries = directory.value
+      if (await recoverInterruptedSaveStaging(cardsPath, entries)) {
+        const refreshed = await readDirectoryState(files, cardsPath)
+        if (refreshed.status !== 'found') {
+          throw new Error(refreshed.status === 'error'
+            ? refreshed.error
+            : 'CardDocument 保存恢复后目录消失')
+        }
+        entries = refreshed.value
+      }
 
       const cardEntries = entries
         .filter(entry => !entry.isDirectory && entry.name.toLowerCase().endsWith('.json'))
@@ -252,9 +335,48 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
             ? currentContent.error
             : 'CardDocument 保存期间被外部修改，未覆盖' }
         }
-        if (!await files.rename(temp, target)) {
-          return { ok: false, error: '无法原子替换 CardDocument' }
+        // 直接 rename(temp, target) 会在最后一次读取与 rename 之间
+        // 静默覆盖外部编辑器的原子替换。先把当前目标移到唯一
+        // staging，校验它确实是先前观察到的版本，再用
+        // linkNoReplace 发布新版本；任何竞争者都只会让发布失败。
+        const staging = saveStagingPath(target, document.card.id)
+        if (!await files.rename(target, staging)) {
+          return { ok: false, error: '无法安全隔离旧 CardDocument，未覆盖保存' }
         }
+        const staged = await readFileState(files, staging)
+        if (staged.status !== 'found') {
+          const restored = await restoreStagedFile(staging, target, initialContent.value)
+          return restored
+            ? { ok: false, error: 'CardDocument 保存前校验失败，已恢复原文件' }
+            : {
+                ok: false,
+                error: 'CardDocument 保存前校验失败且恢复结果不确定，请重新加载项目',
+                certainty: 'uncertain',
+              }
+        }
+        if (staged.value !== initialContent.value) {
+          const restored = await restoreStagedFile(staging, target, staged.value)
+          return restored
+            ? { ok: false, error: 'CardDocument 保存期间被外部修改，未覆盖' }
+            : {
+                ok: false,
+                error: 'CardDocument 保存期间被外修改且恢复结果不确定，请重新加载项目',
+                certainty: 'uncertain',
+              }
+        }
+        const published = await files.linkNoReplace(temp, target)
+          .catch(() => ({ status: 'failed' as const }))
+        if (published.status !== 'linked') {
+          const restored = await restoreStagedFile(staging, target, staged.value)
+          return restored
+            ? { ok: false, error: '无法发布新 CardDocument，已恢复原文件' }
+            : {
+                ok: false,
+                error: '无法发布新 CardDocument 且恢复结果不确定，请重新加载项目',
+                certainty: 'uncertain',
+              }
+        }
+        await files.remove(staging).catch(() => false)
         return { ok: true, path: target }
       } finally {
         await claim.release()

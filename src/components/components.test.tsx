@@ -842,11 +842,47 @@ describe('CardEditor 过滤 + 原始索引', () => {
       expect(getCardCatalogView().sourceProjectRoot).toBe('/B')
       expect(getCardCatalogView().currentCard?.name).toBe('B 项目火球')
     })
-    expect(mockApi.rename).toHaveBeenCalledWith(expect.stringMatching(/^\/A\//), '/A/.modstudio/cards/Fireball.json')
+    expect(mockApi.rename).toHaveBeenCalledWith(
+      '/A/.modstudio/cards/Fireball.json',
+      expect.stringMatching(/^\/A\/\.modstudio\/cards\/Fireball\.json\.save-staging-/),
+    )
     expect(mockApi.rename).not.toHaveBeenCalledWith(
       '/A/.modstudio/cards/Fireball.json',
       expect.stringContaining('/.modstudio/trash/'),
     )
+  })
+
+  it('删除补偿结果不确定时重新加载项目事实，不保留伪活跃投影', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const load = vi.spyOn(FileService, 'loadCardDocuments').mockResolvedValue([{
+      fileName: 'Fireball.json',
+      path: '/A/.modstudio/cards/Fireball.json',
+      result: { status: 'editable', document: alpha },
+    }])
+    const save = vi.spyOn(FileService, 'saveCardDocument').mockResolvedValue({
+      ok: true,
+      path: '/A/.modstudio/cards/Fireball.json',
+    })
+    const remove = vi.spyOn(FileService, 'deleteCardToTrash').mockResolvedValue({
+      status: 'failed',
+      reason: '补偿失败，需重新加载',
+      certainty: 'uncertain',
+    })
+    const listTrash = vi.spyOn(FileService, 'listCardTrash').mockResolvedValue([])
+    try {
+      render(<CardEditor projectPath="/A" />)
+      const cardName = await screen.findByText('火球', { selector: '.card-name' })
+      fireEvent.click(within(cardName.closest('.card-item') as HTMLElement).getByRole('button', { name: '×' }))
+
+      await waitFor(() => expect(remove).toHaveBeenCalledWith('/A', 'Fireball'))
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+      expect(await screen.findByText('火球', { selector: '.card-name' })).toBeTruthy()
+    } finally {
+      load.mockRestore()
+      save.mockRestore()
+      remove.mockRestore()
+      listTrash.mockRestore()
+    }
   })
 })
 

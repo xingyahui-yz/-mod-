@@ -36,7 +36,7 @@ export interface CardTrashEntry {
 
 export type CardTrashDeleteResult =
   | { status: 'deleted'; trashId: string; trashPath: string }
-  | { status: 'failed'; reason: string }
+  | { status: 'failed'; reason: string; certainty?: 'unchanged' | 'uncertain' }
 
 export type CardTrashRestoreResult =
   | { status: 'restored'; cardId: string; warning?: string }
@@ -130,14 +130,28 @@ async function stageActiveFile(
   activePath: string,
   stagingPath: string,
   expected: string,
-): Promise<boolean> {
-  if (!await files.rename(activePath, stagingPath).catch(() => false)) return false
+): Promise<
+  | { status: 'staged' }
+  | { status: 'failed'; certainty: 'unchanged' | 'uncertain' }
+> {
+  if (!await files.rename(activePath, stagingPath).catch(() => false)) {
+    return { status: 'failed', certainty: 'unchanged' }
+  }
   const staged = await readFileState(files, stagingPath)
-  if (staged.status === 'found' && staged.value === expected) return true
+  if (staged.status === 'found' && staged.value === expected) return { status: 'staged' }
   // rename 的线性化点若抓到了外部替换文件，绝不能删除它。仅在活动路径
   // 仍为空时 no-replace 恢复；否则把 staging 留在回收站供人工核对。
-  await restoreStagedFile(files, activePath, stagingPath, expected)
-  return false
+  const restored = await restoreStagedFile(files, activePath, stagingPath, expected)
+  return { status: 'failed', certainty: restored ? 'unchanged' : 'uncertain' }
+}
+
+function deleteFailure(
+  reason: string,
+  certainty: 'unchanged' | 'uncertain' = 'unchanged',
+): CardTrashDeleteResult {
+  return certainty === 'uncertain'
+    ? { status: 'failed', reason, certainty }
+    : { status: 'failed', reason }
 }
 
 function cardIdFromRaw(value: unknown): string | null {
@@ -215,30 +229,39 @@ export function createCardTrashRepository(
       // 两者都安全停用前不清理 staging，以便后续失败时 no-replace 补偿恢复。
       let artifactStaged = false
       if (artifact !== null) {
-        if (!await stageActiveFile(files, sourceArtifact, stagingArtifact, artifact)) {
-          return { status: 'failed', reason: '无法停用活动 C#，回收站副本保留' }
+        const staged = await stageActiveFile(files, sourceArtifact, stagingArtifact, artifact)
+        if (staged.status === 'failed') {
+          return deleteFailure('无法停用活动 C#，回收站副本保留', staged.certainty)
         }
         artifactStaged = true
         const artifactAfterRemove = await readFileState(files, sourceArtifact)
         if (artifactAfterRemove.status !== 'missing') {
-          await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
-          return { status: 'failed', reason: '活动 C# 删除状态不确定，回收站副本保留，请重新加载项目' }
+          const restored = await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
+          return deleteFailure(
+            '活动 C# 删除状态不确定，回收站副本保留，请重新加载项目',
+            restored ? 'unchanged' : 'uncertain',
+          )
         }
       }
 
-      if (!await stageActiveFile(files, sourceDocument, stagingDocument, document)) {
-        if (artifactStaged && artifact !== null) {
+      const documentStaged = await stageActiveFile(files, sourceDocument, stagingDocument, document)
+      if (documentStaged.status === 'failed') {
+        const artifactRestored = !artifactStaged || artifact === null ||
           await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
-        }
-        return { status: 'failed', reason: '无法移除活动 CardDocument，回收站副本保留，请重新加载项目' }
+        return deleteFailure(
+          '无法移除活动 CardDocument，回收站副本保留，请重新加载项目',
+          documentStaged.certainty === 'uncertain' || !artifactRestored ? 'uncertain' : 'unchanged',
+        )
       }
       const documentAfterRemove = await readFileState(files, sourceDocument)
       if (documentAfterRemove.status !== 'missing') {
-        await restoreStagedFile(files, sourceDocument, stagingDocument, document)
-        if (artifactStaged && artifact !== null) {
+        const documentRestored = await restoreStagedFile(files, sourceDocument, stagingDocument, document)
+        const artifactRestored = !artifactStaged || artifact === null ||
           await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
-        }
-        return { status: 'failed', reason: 'CardDocument 删除状态不确定，回收站副本保留，请重新加载项目' }
+        return deleteFailure(
+          'CardDocument 删除状态不确定，回收站副本保留，请重新加载项目',
+          documentRestored && artifactRestored ? 'unchanged' : 'uncertain',
+        )
       }
 
       // 活动文件已全部安全停用，删除在此刻成功。staging 只是额外可恢复副本，

@@ -125,7 +125,7 @@ describe('Card trash repository', () => {
 
     const result = await createCardTrashRepository({ files, idSuffix: () => '1' }).delete(project, 'Fireball')
 
-    expect(result.status).toBe('failed')
+    expect(result).toMatchObject({ status: 'failed', certainty: 'uncertain' })
     expect(files.files.get(docPath)).toBe(document)
     expect(files.files.get(artifactPath)).toBe('external replacement')
     expect(files.files.get(stagingArtifact)).toBe('generated')

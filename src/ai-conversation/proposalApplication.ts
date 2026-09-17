@@ -20,13 +20,18 @@ export type ProposalCardPersistenceResult =
   | { ok: false; error: string; certainty: 'unchanged' | 'uncertain' }
 
 export interface ProposalCardPersistencePort {
-  saveCardDocument(projectRoot: string, document: CardDocument): Promise<{ ok: true } | { ok: false; error: string }>
-  createCardDocument(projectRoot: string, document: CardDocument): Promise<{ ok: true } | { ok: false; error: string }>
+  saveCardDocument(projectRoot: string, document: CardDocument): Promise<
+    { ok: true } | { ok: false; error: string; certainty?: 'unchanged' | 'uncertain' }
+  >
+  createCardDocument(projectRoot: string, document: CardDocument): Promise<
+    { ok: true } | { ok: false; error: string; certainty?: 'unchanged' | 'uncertain' }
+  >
   inspectCardDocument(projectRoot: string, cardId: string): Promise<
     | { status: 'missing' }
     | { status: 'found'; document: CardDocument }
     | { status: 'occupied'; error: string }
   >
+  listTrashedCardDocuments?(projectRoot: string, cardId: string): Promise<readonly CardDocument[]>
 }
 
 export interface ProposalCardApplication {
@@ -85,6 +90,13 @@ const defaultProposalCardPersistencePort: ProposalCardPersistencePort = {
         error: `无法确认目标 CardDocument 是否存在：${error instanceof Error ? error.message : String(error)}`,
       }
     }
+  },
+  async listTrashedCardDocuments(projectRoot, cardId) {
+    const entries = await FileService.listCardTrash(projectRoot)
+    return entries.flatMap(entry => entry.result.status === 'editable' &&
+      entry.result.document.card.id.toLowerCase() === cardId.toLowerCase()
+      ? [entry.result.document]
+      : [])
   },
 }
 
@@ -289,6 +301,18 @@ export async function reconcilePendingProposalTransition(
       }
       activeCreateAlreadyMatches = true
     }
+    if (!activeCreateAlreadyMatches && files.listTrashedCardDocuments) {
+      let trashed: readonly CardDocument[]
+      try {
+        trashed = await files.listTrashedCardDocuments(projectRoot, finalCardId)
+      } catch (error) {
+        return uncertain(`无法确认 Card ${finalCardId} 的回收站状态：${error instanceof Error ? error.message : String(error)}`)
+      }
+      // accepted WAL 之后若同一候选已在回收站，说明项目
+      // 实际状态已删除它。只匹配完整内容，避免历史同 ID
+      // 回收站条目阻止一份新的建议。
+      if (trashed.some(document => sameDocument(document, desired))) return { ok: true }
+    }
   }
 
   const canRecover = current === undefined
@@ -378,7 +402,9 @@ async function saveCard(
     const result = await files.saveCardDocument(projectRoot, document)
     return result.ok
       ? { ok: true }
-      : unchanged(`CardDocument 保存失败：${result.error}`)
+      : result.certainty === 'uncertain'
+        ? uncertain(`CardDocument 保存失败：${result.error}`)
+        : unchanged(`CardDocument 保存失败：${result.error}`)
   } catch (error) {
     return uncertain(`CardDocument 保存异常：${error instanceof Error ? error.message : String(error)}`)
   }
@@ -393,7 +419,9 @@ async function createCard(
     const result = await files.createCardDocument(projectRoot, document)
     return result.ok
       ? { ok: true }
-      : unchanged(`CardDocument 创建失败：${result.error}`)
+      : result.certainty === 'uncertain'
+        ? uncertain(`CardDocument 创建失败：${result.error}`)
+        : unchanged(`CardDocument 创建失败：${result.error}`)
   } catch (error) {
     return uncertain(`CardDocument 创建异常：${error instanceof Error ? error.message : String(error)}`)
   }

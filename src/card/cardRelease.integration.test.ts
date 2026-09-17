@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { appendNode, connect, createEmptyGraph } from '../node-editor/graph'
-import type { CardDocument } from './cardDocument'
+import { serializeCardDocument, type CardDocument } from './cardDocument'
 import { createCardDocumentRepository } from './cardRepository'
 import { generateCardArtifact } from './cardGeneration'
 import { createCardTrashRepository } from './cardTrash'
@@ -130,6 +130,23 @@ describe('v0.9 real filesystem release flow', () => {
     const loaded = await repository.load(project)
     expect(loaded).toHaveLength(1)
     expect(loaded[0]?.result.status).toBe('editable')
+  })
+
+  it('真实文件系统重启会恢复 save 中断后的 staging CardDocument', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'mod-studio-card-save-recovery-'))
+    projects.push(project)
+    const cardsRoot = join(project, '.modstudio/cards')
+    const target = join(cardsRoot, 'ReleaseCard.json')
+    const staging = `${target}.save-staging-ReleaseCard-crash`
+    await mkdir(cardsRoot, { recursive: true })
+    await writeFile(staging, serializeCardDocument(makeDocument()), 'utf8')
+
+    const loaded = await createCardDocumentRepository({ files: realFiles() }).load(project)
+
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0]?.result.status).toBe('editable')
+    expect(await readFile(target, 'utf8')).toContain('"id": "ReleaseCard"')
+    await expect(readFile(staging, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('真实文件系统并发恢复大小写不同的逻辑同 ID 时也只有一个成功', async () => {

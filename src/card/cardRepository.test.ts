@@ -28,6 +28,7 @@ class MemoryFiles implements CardDocumentFilePort {
   failWrite = false
   linkResult: 'linked' | 'exists' | 'failed' = 'linked'
   beforeLink: ((from: string, to: string) => void) | null = null
+  beforeRename: ((from: string, to: string) => void) | null = null
 
   async readDirectory(path: string) {
     const prefix = `${path}/`
@@ -64,6 +65,7 @@ class MemoryFiles implements CardDocumentFilePort {
   }
 
   async rename(from: string, to: string) {
+    this.beforeRename?.(from, to)
     if (this.failRename) return false
     const content = this.files.get(from)
     if (content === undefined) return false
@@ -149,6 +151,27 @@ describe('CardDocumentRepository', () => {
     expect(JSON.parse(files.files.get(target)!).card.name).toBe('外部版本')
   })
 
+  it('最后一次校验后目标被外部替换时仍不覆盖', async () => {
+    const files = new MemoryFiles()
+    const target = '/project/.modstudio/cards/Fireball.json'
+    files.files.set(target, JSON.stringify(makeDocument('Fireball')))
+    const external = makeDocument('Fireball')
+    external.card.name = '最后时刻的外部版本'
+    let replaced = false
+    files.beforeRename = () => {
+      if (replaced) return
+      replaced = true
+      files.files.set(target, JSON.stringify(external))
+    }
+
+    const local = makeDocument('Fireball')
+    local.card.name = '本地版本'
+    const result = await createCardDocumentRepository({ files }).save('/project', local)
+
+    expect(result).toMatchObject({ ok: false })
+    expect(JSON.parse(files.files.get(target)!).card.name).toBe('最后时刻的外部版本')
+  })
+
   it('文件权限错误会使整次加载失败，不伪装成损坏 Card', async () => {
     const files = new MemoryFiles()
     const target = '/project/.modstudio/cards/Fireball.json'
@@ -156,6 +179,21 @@ describe('CardDocumentRepository', () => {
     files.readFileResult = async () => ({ status: 'error' as const, error: 'EACCES' })
 
     await expect(createCardDocumentRepository({ files }).load('/project')).rejects.toThrow('EACCES')
+  })
+
+  it('重启加载会恢复被中断的 save staging，不丢失旧 CardDocument', async () => {
+    const files = new MemoryFiles()
+    const cards = '/project/.modstudio/cards'
+    const target = `${cards}/Fireball.json`
+    const staging = `${target}.save-staging-Fireball-crash`
+    files.files.set(staging, JSON.stringify(makeDocument('Fireball')))
+
+    const loaded = await createCardDocumentRepository({ files }).load('/project')
+
+    expect(loaded).toHaveLength(1)
+    expect(loaded[0].result.status).toBe('editable')
+    expect(files.files.get(target)).toBeDefined()
+    expect(files.files.has(staging)).toBe(false)
   })
 
   it('rename 失败时不报告成功，并保留原活动文件', async () => {

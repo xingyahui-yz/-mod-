@@ -609,6 +609,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     if (!isActiveCatalogProject(operationProject)) return
     if (removed.status !== 'deleted') {
       showLoadMessage('error', `删除失败：${removed.reason}`)
+      if (removed.certainty === 'uncertain') {
+        // 补偿失败时内存目录已不能代表活动文件。立即以磁盘
+        // 和回收站重建投影，不让 UI 继续显示一张可能已经停用的 Card。
+        await loadExistingCards(operationProject)
+      }
       return
     }
     cardCatalogActions.removeCard(cardId)

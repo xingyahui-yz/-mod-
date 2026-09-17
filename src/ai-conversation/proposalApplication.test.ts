@@ -160,6 +160,29 @@ describe('提案应用边界', () => {
     expect(files.saveCardDocument).toHaveBeenCalledTimes(1)
   })
 
+  it('Card repository 报告恢复不确定时向上保留 uncertain，不伪装成未变更', async () => {
+    const document = cardDocument('CardA')
+    cardCatalogActions.loadDocuments([document], '/mods/a')
+    const files = persistencePort({
+      save: { ok: false, error: '恢复结果不确定', certainty: 'uncertain' },
+    })
+    const application = createProposalCardApplication('/mods/a', files)
+
+    await expect(application.persistHistoryCard({
+      type: 'proposal-status-changed',
+      sourceProjectRoot: '/mods/a',
+      cardId: 'CardA',
+      proposalId: 'proposal-a',
+      transactionId: 'proposal-a',
+      status: 'reverted',
+      source: 'undo',
+    }, document)).resolves.toEqual({
+      ok: false,
+      error: 'CardDocument 保存失败：恢复结果不确定',
+      certainty: 'uncertain',
+    })
+  })
+
   it('创建提案不会覆盖磁盘上未载入的同 ID CardDocument', async () => {
     cardCatalogActions.loadDocuments([], '/mods/a')
     const proposal = createProposal(cardDocument('DraftCard'))
@@ -222,6 +245,18 @@ describe('提案应用边界', () => {
     expect(created.card.id).toBe('FinalCard')
     expect(created.graph).toMatchObject({ id: 'graph-FinalCard', entityId: 'FinalCard' })
     expect(files.createCardDocument).toHaveBeenCalledWith('/mods/a', created)
+  })
+
+  it('未 committed 的 create 已有同内容回收站事实时不复活 Card', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
+    const trashed = rekeyCreatedCardDocument(proposal.document, 'FinalCard')
+    const files = persistencePort()
+    files.listTrashedCardDocuments = vi.fn(async () => [trashed])
+
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
+    expect(files.createCardDocument).not.toHaveBeenCalled()
+    expect(getCardCatalogView().documents).toHaveLength(0)
   })
 
   it('已 committed 的 create 后续被用户删除时不会被旧 accepted 记录复活', async () => {
@@ -375,7 +410,7 @@ function acceptedCreateProposal(document: CardDocument, finalCardId: string): Co
 }
 
 function persistencePort(options: {
-  save?: { ok: true } | { ok: false; error: string }
+  save?: { ok: true } | { ok: false; error: string; certainty?: 'unchanged' | 'uncertain' }
 } = {}): ProposalCardPersistencePort {
   return {
     saveCardDocument: vi.fn(async () => options.save ?? { ok: true as const }),
