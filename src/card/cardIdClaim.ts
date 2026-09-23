@@ -49,18 +49,20 @@ function token(prefix: string): string {
 const defaultSessionId = token('session')
 
 /** 当前 renderer session 内仍在执行的 owner；用于避免 load/recovery 偷走本进程活锁。 */
-const activeOwners = new Map<string, Set<string>>()
+const activeOwners = new Map<string, Map<string, number>>()
 
 function markActiveOwner(claimPath: string, serialized: string): void {
-  const owners = activeOwners.get(claimPath) ?? new Set<string>()
-  owners.add(serialized)
+  const owners = activeOwners.get(claimPath) ?? new Map<string, number>()
+  owners.set(serialized, (owners.get(serialized) ?? 0) + 1)
   activeOwners.set(claimPath, owners)
 }
 
 function unmarkActiveOwner(claimPath: string, serialized: string): void {
   const owners = activeOwners.get(claimPath)
   if (!owners) return
-  owners.delete(serialized)
+  const count = owners.get(serialized) ?? 0
+  if (count <= 1) owners.delete(serialized)
+  else owners.set(serialized, count - 1)
   if (owners.size === 0) activeOwners.delete(claimPath)
 }
 
@@ -156,7 +158,7 @@ async function recoverClaimPath(
   if (!record || record.normalizedCardId !== expectedNormalizedCardId) return 'failed'
 
   const serialized = serializeClaim(record)
-  if (record.sessionId === sessionId && activeOwners.get(claimPath)?.has(serialized)) {
+  if (record.sessionId === sessionId && (activeOwners.get(claimPath)?.get(serialized) ?? 0) > 0) {
     return 'active'
   }
 

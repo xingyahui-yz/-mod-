@@ -160,7 +160,7 @@ describe('Card ID claim', () => {
     })
     expect(next.status).toBe('acquired')
   })
-  it("并发 claim 输家不能清除赢家的活动 owner 标记", async () => {
+  it("重复 operationId 的并发 claim 输家不能清除赢家的活动 owner 标记", async () => {
     const files = new MemoryClaimFiles()
     files.files.set(source, "pending document")
     const claim = cardsRoot + "/.id-claims/fireball.claim"
@@ -181,9 +181,11 @@ describe('Card ID claim', () => {
     let releaseWinnerLink!: () => void
     const winnerPublished = new Promise<void>(resolve => { signalWinnerPublished = resolve })
     const continueWinnerLink = new Promise<void>(resolve => { releaseWinnerLink = resolve })
+    let firstLink = true
     files.linkNoReplace = async (from, to) => {
       const result = await originalLink(from, to)
-      if (to === claim && from.includes("winner-operation")) {
+      if (to === claim && firstLink) {
+        firstLink = false
         signalWinnerPublished()
         await continueWinnerLink
       }
@@ -196,7 +198,7 @@ describe('Card ID claim', () => {
     })
     const loserPromise = acquireCardIdClaim(files, cardsRoot, "Fireball", source, {
       sessionId: "current-session",
-      operationId: "loser-operation",
+      operationId: "winner-operation",
     })
     await bothOwnerReads
     await winnerPublished
