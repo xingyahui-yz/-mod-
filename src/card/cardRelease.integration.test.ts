@@ -162,6 +162,7 @@ describe('v0.9 real filesystem release flow', () => {
     await mkdir(cardsRoot, { recursive: true })
     await writeFile(staging, serializeCardDocument(previous), 'utf8')
     await writeFile(target, serializeCardDocument(published), 'utf8')
+    await writeFile(join(cardsRoot, "ReleaseCard.json.tmp-ReleaseCard-crash"), serializeCardDocument(published), 'utf8')
     const repository = createCardDocumentRepository({ files: realFiles() })
 
     const firstLoad = await repository.load(project)

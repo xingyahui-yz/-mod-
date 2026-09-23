@@ -255,9 +255,9 @@ describe('提案应用边界', () => {
     const files = persistencePort()
     files.listTrashedCardDocuments = vi.fn(async () => [trashed])
 
-    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
-    expect(files.createCardDocument).toHaveBeenCalledWith('/mods/a', trashed)
-    expect(getCardCatalogView().documents).toEqual([trashed])
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toMatchObject({ ok: false, certainty: 'uncertain', error: expect.stringContaining('无法确认是否应恢复创建') })
+    expect(files.createCardDocument).not.toHaveBeenCalled()
+    expect(getCardCatalogView().documents).toEqual([])
   })
 
   it('未 committed 的 create 只有同时命中本事务 receipt 与回收站事实才尊重后继删除', async () => {

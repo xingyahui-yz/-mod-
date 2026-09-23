@@ -173,7 +173,7 @@ npm run test:watch
 | v0.1-v0.8 | ✅ 已完成 | 节点编辑器、Relic 模块、项目文件服务、AI 结构化输出与架构加深 |
 | v0.9 | ✅ 已完成 | Card 单一文档模型、行为图、自动保存、显式生成、迁移/恢复、回收站、批量生成、测试预检与 Electron release gate |
 | CardCatalog | ✅ 已完成 | Card 文档唯一权威、逐 Card 历史、文本/拖动事务合并与 revision-safe AI/生成操作 |
-| **v0.10** | 🛠️ 实施中 | 对话骨架已通过双重门禁；逐 Card 提案补强创建恢复收据、Card ID claim 回收及 uncertain 写入保护，当前工作树 648 项首轮测试和双 TypeScript 检查通过，待打包与新固定点独立复检；后续为上下文智能与历史治理 |
+| **v0.10** | 🛠️ 实施中 | 对话骨架已通过双重门禁；逐 Card 提案补强创建恢复收据、Card ID claim 回收及 uncertain 写入保护，当前提交点 649 项测试、双 TypeScript 检查与正式打包通过，正在独立复检；后续为上下文智能与历史治理 |
 | 后续 | 📋 计划 | Relic 接入 Card 同等级项目生命周期，再扩展 Character / Potion / Event / Enemy / Buff / UI |
 | v1.0+ | 📋 计划 | Steam Workshop 发布流程 |
 

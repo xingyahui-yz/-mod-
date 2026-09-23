@@ -213,6 +213,16 @@ export function createCardDocumentRepository(deps: {
           activeParsed.document.card.id.toLowerCase() !== expectedId.toLowerCase()) {
           throw new Error('活动 CardDocument 无法证明已发布，已保留 save staging 并停止加载')
         }
+        const tempPrefix = (group.targetName + '.tmp-' + expectedId + '-').toLowerCase()
+        const pendingTemps = entries.filter(entry => !entry.isDirectory && entry.name.toLowerCase().startsWith(tempPrefix))
+        if (group.staging.length !== 1 || pendingTemps.length !== 1) {
+          throw new Error("无法证明本次 CardDocument 已发布，已保留 save staging 并停止加载")
+        }
+        const pendingTempPath = pendingTemps[0].path || joinPath(cardsPath, pendingTemps[0].name)
+        const pendingTemp = await readFileState(files, pendingTempPath)
+        if (pendingTemp.status !== 'found' || pendingTemp.value !== activeBefore.value) {
+          throw new Error("活动 CardDocument 与待发布版本不一致，已保留 save staging 并停止加载")
+        }
 
         // target 已存在且严格验证为同 ID 可编辑文档，说明 linkNoReplace 已越过
         // 发布线性化点。此时 staging 是旧版本而非恢复源；先原子改名为 load
@@ -237,6 +247,7 @@ export function createCardDocumentRepository(deps: {
           await files.remove(publishedResidue).catch(() => false)
           needsRescan = true
         }
+        await files.remove(pendingTempPath).catch(() => false)
         continue
       }
       if (group.staging.length !== 1) {
@@ -458,7 +469,9 @@ export function createCardDocumentRepository(deps: {
         throw error
       }
       const released = await claim.release()
-      await files.remove(temp).catch(() => false)
+      if (operationResult.ok || operationResult.certainty !== "uncertain") {
+        await files.remove(temp).catch(() => false)
+      }
       if (released.status === 'failed') {
         return {
           ok: false,

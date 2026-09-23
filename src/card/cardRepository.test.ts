@@ -199,6 +199,32 @@ describe('CardDocumentRepository', () => {
     expect(files.files.has(staging)).toBe(false)
   })
 
+  it("外部竞争目标不能让重启恢复误删原 Card save staging", async () => {
+    const files = new MemoryFiles()
+    const target = "/project/.modstudio/cards/Fireball.json"
+    const original = makeDocument("Fireball")
+    const external = makeDocument("Fireball")
+    external.card.name = "外部竞争版本"
+    files.files.set(target, JSON.stringify(original))
+    files.beforeLink = (_from, to) => {
+      if (to === target) files.files.set(target, JSON.stringify(external))
+    }
+    const local = makeDocument("Fireball")
+    local.card.name = "本地候选版本"
+
+    const saved = await createCardDocumentRepository({ files }).save("/project", local)
+    expect(saved).toMatchObject({ ok: false, certainty: "uncertain" })
+    const staging = [...files.files.keys()].find(path => path.includes(".save-staging-"))
+    expect(staging).toBeDefined()
+    expect(files.files.get(staging!)).toBe(JSON.stringify(original))
+    expect([...files.files.keys()].some(path => path.includes(".tmp-"))).toBe(true)
+
+    await expect(createCardDocumentRepository({ files }).load("/project"))
+      .rejects.toThrow("活动 CardDocument 与待发布版本不一致")
+    expect(files.files.get(target)).toBe(JSON.stringify(external))
+    expect(files.files.get(staging!)).toBe(JSON.stringify(original))
+  })
+
   it('活动 Card 无法验证时不会把 save staging 误判为已发布残留', async () => {
     const files = new MemoryFiles()
     const cards = '/project/.modstudio/cards'

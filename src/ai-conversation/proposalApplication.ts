@@ -352,6 +352,20 @@ export async function reconcilePendingProposalTransition(
           return uncertain(`无法确认 Card ${finalCardId} 的回收站状态：${error instanceof Error ? error.message : String(error)}`)
         }
         if (trashed.some(document => sameDocument(document, desired))) return { ok: true }
+      } else {
+        // 创建与 receipt 写入之间存在崩溃窗口。同内容回收项可能是本次创建后被删除，不能自动复活。
+        if (!files.listTrashedCardDocuments) {
+          return uncertain("无法确认 Card " + finalCardId + " 的回收站状态")
+        }
+        let trashed: readonly CardDocument[]
+        try {
+          trashed = await files.listTrashedCardDocuments(projectRoot, finalCardId)
+        } catch (error) {
+          return uncertain("无法确认 Card " + finalCardId + " 的回收站状态：" + (error instanceof Error ? error.message : String(error)))
+        }
+        if (trashed.some(document => sameDocument(document, desired))) {
+          return uncertain("Card " + finalCardId + " 同内容已在回收站，无法确认是否应恢复创建")
+        }
       }
     }
   }
