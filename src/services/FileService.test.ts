@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { appendNode, connect, createEmptyGraph } from '../node-editor/graph'
+import { serializeCardDocument, type CardDocument } from '../card/cardDocument'
 import { createConversationFilePort, createFileService, type ElectronAPI } from './FileService'
 
 function electronApi(): ElectronAPI {
@@ -11,6 +13,7 @@ function electronApi(): ElectronAPI {
     readFileResult: vi.fn().mockResolvedValue({ status: 'missing' }),
     writeFile: vi.fn().mockResolvedValue(true),
     rename: vi.fn().mockResolvedValue(true),
+    linkNoReplace: vi.fn().mockResolvedValue({ status: 'linked' }),
     remove: vi.fn().mockResolvedValue(true),
     mkdir: vi.fn().mockResolvedValue(true),
     copyDirectory: vi.fn().mockResolvedValue(true),
@@ -96,4 +99,174 @@ describe('FileService conversation port', () => {
     await expect(service.getProjectFiles('/p')).resolves.toEqual([raw[1], raw[0]])
     expect(raw[0].name).toBe('z.txt')
   })
+
+  it('同一项目同一 Card 的原子保存严格串行，后发写入不会抢先', async () => {
+    const api = electronApi()
+    const firstWrite = deferred<boolean>()
+    const persisted = serializeCardDocument(cardDocument('Fireball', '磁盘基线'))
+    const target = '/project/.modstudio/cards/Fireball.json'
+    const disk = new Map([[target, persisted]])
+    vi.mocked(api.readDirectoryResult!).mockImplementation(async path => ({
+      status: 'found',
+      value: [...disk.keys()]
+        .filter(file => file.startsWith(`${path}/`) && !file.slice(path.length + 1).includes('/'))
+        .map(file => ({ name: file.slice(path.length + 1), path: file, isDirectory: false })),
+    }))
+    vi.mocked(api.readFile).mockImplementation(async path => disk.get(path) ?? null)
+    vi.mocked(api.readFileResult!).mockImplementation(async path => disk.has(path)
+      ? { status: 'found', value: disk.get(path)! }
+      : { status: 'missing' })
+    let writeIndex = 0
+    vi.mocked(api.writeFile).mockImplementation(async (path, content) => {
+      if (writeIndex++ === 0) await firstWrite.promise
+      disk.set(path, content)
+      return true
+    })
+    vi.mocked(api.linkNoReplace!).mockImplementation(async (from, to) => {
+      if (disk.has(to)) return { status: 'exists' }
+      const content = disk.get(from)
+      if (content === undefined) return { status: 'failed' }
+      disk.set(to, content)
+      return { status: 'linked' }
+    })
+    vi.mocked(api.rename!).mockImplementation(async (from, to) => {
+      const content = disk.get(from)
+      if (content === undefined) return false
+      disk.delete(from)
+      disk.set(to, content)
+      return true
+    })
+    vi.mocked(api.remove!).mockImplementation(async path => { disk.delete(path); return true })
+    const service = createFileService({ api })
+    const base = cardDocument('Fireball', '火球')
+    const latest = cardDocument('Fireball', '最终火球')
+
+    const first = service.saveCardDocument('/project', base)
+    const second = service.saveCardDocument('/project', latest)
+
+    await vi.waitFor(() => expect(api.writeFile).toHaveBeenCalledTimes(1))
+    firstWrite.resolve(true)
+    await expect(first).resolves.toMatchObject({ ok: true })
+    await expect(second).resolves.toMatchObject({ ok: true })
+    const documentWrites = vi.mocked(api.writeFile).mock.calls
+      .filter(call => call[0].includes('.json.tmp-'))
+    expect(documentWrites).toHaveLength(2)
+    expect(documentWrites[1]?.[1]).toContain('最终火球')
+  })
+
+  it('创建 Card 使用 fail-if-exists 原语并与同 ID 写入共用串行队列', async () => {
+    const api = electronApi()
+    const disk = new Map<string, string>()
+    vi.mocked(api.writeFile).mockImplementation(async (path, content) => { disk.set(path, content); return true })
+    vi.mocked(api.readFile).mockImplementation(async path => disk.get(path) ?? null)
+    vi.mocked(api.linkNoReplace!).mockResolvedValue({ status: 'exists' })
+    const service = createFileService({ api })
+
+    await expect(service.createCardDocument('/project', cardDocument('Fireball', '火球')))
+      .resolves.toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
+
+    expect(api.linkNoReplace).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/project\/\.modstudio\/cards\/\.id-claims\/fireball\.claim-owner-/),
+      '/project/.modstudio/cards/.id-claims/fireball.claim',
+    )
+    expect(api.rename).not.toHaveBeenCalled()
+    expect(api.remove).toHaveBeenCalledWith(expect.stringMatching(/Fireball\.json\.tmp-/))
+  })
+
+  it('Card 创建不会把 typed 目录权限错误降级为空目录', async () => {
+    const api = electronApi()
+    vi.mocked(api.readDirectoryResult!).mockResolvedValue({
+      status: 'error',
+      code: 'permission-denied',
+      error: 'EACCES',
+    })
+    const service = createFileService({ api })
+
+    await expect(service.createCardDocument('/project', cardDocument('Fireball', '火球')))
+      .resolves.toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
+    expect(api.writeFile).not.toHaveBeenCalled()
+    expect(api.linkNoReplace).not.toHaveBeenCalled()
+  })
+
+  it('Card 加载不会把 typed 文件权限错误降级为损坏文档', async () => {
+    const api = electronApi()
+    vi.mocked(api.readDirectoryResult!).mockResolvedValue({
+      status: 'found',
+      value: [{
+        name: 'Fireball.json',
+        path: '/project/.modstudio/cards/Fireball.json',
+        isDirectory: false,
+      }],
+    })
+    vi.mocked(api.readFileResult!).mockResolvedValue({
+      status: 'error',
+      code: 'permission-denied',
+      error: 'EACCES',
+    })
+    const service = createFileService({ api })
+
+    await expect(service.loadCardDocuments('/project')).rejects.toThrow('EACCES')
+    expect(api.readFile).not.toHaveBeenCalled()
+  })
+
+  it('Card 删除不会把 C# 权限错误降级成没有产物', async () => {
+    const api = electronApi()
+    const document = serializeCardDocument(cardDocument('Fireball', '火球'))
+    vi.mocked(api.readFileResult!).mockImplementation(async path => {
+      if (path.endsWith('/.modstudio/cards/Fireball.json')) return { status: 'found', value: document }
+      if (path.endsWith('/scripts/Cards/Fireball.cs')) {
+        return { status: 'error', code: 'permission-denied', error: 'EACCES' }
+      }
+      return { status: 'missing' }
+    })
+    const service = createFileService({ api })
+
+    await expect(service.deleteCardToTrash('/project', 'Fireball')).resolves.toEqual({
+      status: 'failed',
+      reason: '无法确认 C# 产物，未删除 Card',
+    })
+    expect(api.rename).not.toHaveBeenCalled()
+    expect(api.remove).not.toHaveBeenCalled()
+  })
+
+  it('生成期间 Card 语义变化时不把旧源文档的指纹写回', async () => {
+    const api = electronApi()
+    const base = cardDocument('Fireball', '火球')
+    const edited = cardDocument('Fireball', '生成期间已编辑')
+    let artifactReads = 0
+    vi.mocked(api.readDirectory).mockImplementation(async path => path === '/project/.modstudio/cards'
+      ? [{ name: 'Fireball.json', path: '/project/.modstudio/cards/Fireball.json', isDirectory: false }]
+      : [])
+    vi.mocked(api.readFile).mockImplementation(async path => {
+      if (path.endsWith('/Fireball.json')) return serializeCardDocument(edited)
+      if (path.endsWith('/Fireball.cs')) return artifactReads++ === 0 ? null : 'generated artifact'
+      return null
+    })
+    const service = createFileService({ api })
+
+    await expect(service.generateCardArtifact('/project', base)).resolves.toEqual({
+      status: 'failed',
+      reason: 'C# 已生成，但 CardDocument 指纹写回失败',
+    })
+    expect(vi.mocked(api.writeFile).mock.calls.some(([path]) =>
+      path.startsWith('/project/.modstudio/cards/Fireball.json.tmp-'))).toBe(false)
+  })
 })
+
+function cardDocument(id: string, name: string): CardDocument {
+  const trigger = appendNode(createEmptyGraph(id, 'card'), 'trigger', { x: 0, y: 0 }, { event: 'onPlay' })
+  const effect = appendNode(trigger.graph, 'effect', { x: 200, y: 0 }, { kind: 'drawCards', amount: 1 })
+  const linked = connect(effect.graph, { nodeId: trigger.node.id, port: 'out' }, { nodeId: effect.node.id, port: 'in' })
+  return {
+    schemaVersion: 2,
+    card: { id, name, cost: 1, type: 'Attack', rarity: 'Common', description: '', keywords: [] },
+    graph: linked.ok ? linked.graph : effect.graph,
+    generation: { lastGeneratedFingerprint: null },
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(next => { resolve = next })
+  return { promise, resolve }
+}

@@ -1,7 +1,7 @@
 # Mod Studio 领域模型（CONTEXT）
 
-> 最后更新：2026-08-27 · 来源：v0.5.2 → v0.9 实施 + 架构评审 + `/grill-with-docs`
-> 状态：v1.56 — 由项目所有者与协作 agent 通过开发迭代同步
+> 最后更新：2026-09-23 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
+> 状态：v1.93 — 由项目所有者与协作 agent 通过开发迭代同步
 
 ## 1. 项目目标（Goal）
 
@@ -212,7 +212,7 @@ MyMod/                          ← 用户项目根
     └── trash/                  ← Card 文档与生成产物的可恢复删除区
 ```
 
-## 6. 当前状态（截至 2026-09-06，v0.10 第一切片已完成双重门禁）
+## 6. 当前状态（截至 2026-09-23，v0.10 第二切片正在收口新一轮独立复检）
 
 ### 6.1 已实现
 
@@ -220,7 +220,7 @@ MyMod/                          ← 用户项目根
 - ✅ E1 卡牌：Card 文档、表单与行为图、逐 Card 编辑历史、草稿自动保存、显式生成、AI 完整提案、迁移/恢复、回收站、批量生成与游戏预检端到端闭环
 - ✅ E3 遗物（Relic）：表单 + 节点图 + Kind Registry（v0.5.2）+ 撤销 / 重做（v0.7）
 - ✅ 节点编辑器（自研）：v0.1 数据模型 → v0.7 历史栈 + 快捷键
-- ✅ 测试基础设施：**462 个**单元 / 集成 / 组件测试；Card 与对话真实文件流、Renderer/Electron 双重构建门禁已通过
+- ✅ 测试基础设施：**617 个**单元 / 集成 / 组件测试；Card 与对话真实文件流、Renderer/Electron 双重构建门禁已通过
 
 **技术栈与 CI**
 - ✅ Electron + React + TypeScript + Zustand 技术栈
@@ -232,12 +232,13 @@ MyMod/                          ← 用户项目根
 - ✅ 7 份 ADR（0001-0007），v0.9 Card 闭环已实现，v0.10 项目级 AI 对话边界已锁定
 - ✅ CardCatalog 以 Card 文档为唯一权威目录状态，逐 Card 历史和编辑事务已收口
 - ✅ v0.10 walking skeleton：项目级右侧对话抽屉、版本化 JSON、原子保存/崩溃恢复、取消/重试、快捷回答来源、显式 Card revision 附件及项目切换守卫
+- ✅ v0.10 逐 Card 提案：一轮零到多份 create/update、分区差异预览、接受时占 ID、拒绝二次确认、逐 Card 过期与 undo/redo provenance；跨文件 transition WAL 可恢复接受/撤销/重做，旧单次 AI 入口已删除
 - ✅ Git 仓库多远端，主线已同步到 GitHub
 
 ### 6.2 未实现（按优先级排序）
 
 **v0.10 当前主线**
-- 🛠️ Card AI 对话式迭代（多轮）：walking skeleton 已完成两遍独立门禁；继续交付逐 Card 提案、上下文智能与历史治理
+- 🛠️ Card AI 对话式迭代（多轮）：对话骨架与逐 Card 提案已实现；第二切片补强 create transaction receipt、单实例 Card ID claim 回收、Card 删除联合终检及 uncertain autosave 恢复。当前工作树第一遍为 52 个测试文件/651 项通过、renderer/node TypeScript、diff-check 与正式打包通过；正在对修复后的提交点做独立复检
 
 **后续待做**
 - ❌ Relic 接入与 Card 同等级的项目文档、生成安全和恢复生命周期
@@ -338,3 +339,15 @@ MyMod/                          ← 用户项目根
 | 2026-08-28 | v1.79 收紧对话 Card 上下文 — Card 全文必须显式附加并记录 ID/revision，当前 Card 仅建议且不得默认发送 | 用户 + Codex `/grill-with-docs` |
 | 2026-08-28 | v1.80 定义两级 Card 目录摘要 — 超预算时可见地降级为紧凑目录，附件优先且无法完整容纳时阻止发送 | 用户 + Codex `/grill-with-docs` |
 | 2026-08-31 | v1.81 确认 v0.10 实施计划 — 四个纵向切片分别交付对话骨架、Card 提案、上下文智能与历史治理 | 用户 + Codex `/grill-with-docs` |
+| 2026-09-09 | v1.82 同步 v0.10 第二切片 — 逐 Card 提案生命周期、预览/接受/拒绝、过期判定、Card 历史 provenance 与旧 AI 入口替换完成首轮门禁 | Codex + 协作 agent |
+| 2026-09-11 | v1.83 加固 Card 提案事务 — accepted/reverted/restored 先写对话 WAL、Card 落盘后追加 committed；启动仅恢复未确认 transition，实际项目合法后继优先 | Codex + 协作 agent |
+| 2026-09-14 | v1.84 加固提案并发与恢复边界 — 建议 ID 不占历史命名空间，活动/回收站文件优先于 create 恢复；Card autosave、生成指纹与 proposal WAL 共用逐 Card 串行写入及 revision 防护 | Codex + 协作 agent |
+| 2026-09-14 | v1.85 收口第二切片独立复检 — undo/redo 以 barrier 严格执行逐事件 WAL→Card→committed；创建与恢复使用 fail-if-exists 原子 ID 占用；预保存结果不确定时项目切换不可绕过 | Codex + 协作 agent |
+| 2026-09-14 | v1.86 补强 Card 文件竞争边界 — Card 创建/恢复以小写 claim 原子串行大小写变体；新建 Card 与事务期间后继草稿按 Card 串行追赶直至落盘；未提交 create 不再用无来源回收站记录冒充完成 | Codex + 协作 agent |
+| 2026-09-15 | v1.87 收口 Card 持久化竞态 — 创建入口共享 ID reservation，编辑器统一 create/save 队列并在切换前 drain；删除先完整备份再停用 C#；事务失败保持粘性阻断，发送预保存与项目切换均可线性取消 | Codex + 协作 agent |
+| 2026-09-16 | v1.88 加固 Card 存储故障边界 — 覆盖保存在小写 claim 内重验目标内容，typed 读取不再把权限错误当成损坏文档；回收站删除保留两份 staging 直到可补偿停用完成，项目切换会追赶非当前 Card 与写入期间的后续草稿 | Codex + 协作 agent |
+| 2026-09-17 | v1.89 封闭 Card 最终覆盖窗口 — 保存使用可恢复 staging 与 no-replace 发布，重启可恢复中断替换；未确认 create 对账优先尊重同内容回收站事实，删除补偿不确定时立即按磁盘重建投影 | Codex + 协作 agent |
+| 2026-09-23 | v1.93 用引用计数防止显式重复 operationId 的并发 acquire 互相清除活动 owner 标记 | Codex + 协作 agent |
+| 2026-09-23 | v1.92 修复 Card ID claim 并发 owner 标记竞态，并允许发布后读回失败的失效 claim 在后续操作中安全回收 | Codex + 协作 agent |
+| 2026-09-23 | v1.91 收紧 Card 崩溃恢复证明：保存恢复必须匹配唯一候选临时文件；accepted create 在缺少 receipt 且同内容已进入回收站时失败关闭，避免误删旧版本或复活用户删除 | Codex + 协作 agent |
+| 2026-09-23 | v1.90 补全 Card 恢复事务来源 — accepted create 使用可校验 transaction receipt 区分“尚未创建”与后续删除；Electron 单实例锁使 prior-session Card ID claim 可安全回收；删除在文档/C# 联合终检后才确认，uncertain autosave 冻结写入并按磁盘重载 | Codex + 协作 agent

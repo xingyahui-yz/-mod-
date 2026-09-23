@@ -1,4 +1,9 @@
 import type { ConversationQuickReply } from './conversationResponse'
+import {
+  parseConversationCardProposal,
+  referencedCardIds,
+  type ConversationCardProposal,
+} from './proposalLifecycle'
 
 export type ConversationAttemptStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export type ConversationAttemptFailureKind = 'cancelled' | 'timeout' | 'provider' | 'invalid-response' | 'persistence' | 'interrupted'
@@ -40,22 +45,27 @@ export interface ConversationTurn {
   createdAt: string
 }
 
-export interface ConversationDocumentV1 {
-  schemaVersion: 1
+export interface ConversationDocumentV2 {
+  schemaVersion: 2
   turns: ConversationTurn[]
+  proposals: ConversationCardProposal[]
   createdAt: string
   updatedAt: string
 }
 
+/** The only writable conversation document shape. Older versions exist only at the migration boundary. */
+export type ConversationDocument = ConversationDocumentV2
+
 export type ConversationDocumentParseResult =
-  | { ok: true; document: ConversationDocumentV1 }
+  | { ok: true; document: ConversationDocument }
   | { ok: false; reason: string; raw: unknown }
 
 export type ConversationDocumentMigrationResult =
-  | { ok: true; document: ConversationDocumentV1; migrated: boolean }
+  | { ok: true; document: ConversationDocument; migrated: boolean }
   | { ok: false; reason: string; raw: unknown }
 
-const DOCUMENT_KEYS = ['createdAt', 'schemaVersion', 'turns', 'updatedAt']
+const DOCUMENT_KEYS = ['createdAt', 'proposals', 'schemaVersion', 'turns', 'updatedAt']
+const V1_DOCUMENT_KEYS = ['createdAt', 'schemaVersion', 'turns', 'updatedAt']
 const LEGACY_DOCUMENT_KEYS = ['createdAt', 'projectPath', 'schemaVersion', 'turns', 'updatedAt']
 const TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'quickReplySelection', 'userText']
 const LEGACY_TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'userText']
@@ -70,57 +80,96 @@ const ATTEMPT_STATUSES: readonly ConversationAttemptStatus[] = ['running', 'comp
 const FAILURE_KINDS: readonly ConversationAttemptFailureKind[] = ['cancelled', 'timeout', 'provider', 'invalid-response', 'persistence', 'interrupted']
 const MAX_PERSISTED_ERROR_LENGTH = 500
 
-export function createConversationDocument(now: string): ConversationDocumentV1 {
-  return { schemaVersion: 1, turns: [], createdAt: now, updatedAt: now }
+export function createConversationDocument(now: string): ConversationDocument {
+  return { schemaVersion: 2, turns: [], proposals: [], createdAt: now, updatedAt: now }
 }
 
 export function parseConversationDocument(raw: unknown): ConversationDocumentParseResult {
   if (!isRecord(raw)) return invalid('文档必须是对象', raw)
-  if (Object.prototype.hasOwnProperty.call(raw, 'schemaVersion') && raw.schemaVersion !== 1) {
+  if (Object.prototype.hasOwnProperty.call(raw, 'schemaVersion') && raw.schemaVersion !== 2) {
     return invalid('不支持的 schemaVersion', raw)
   }
   if (!hasExactKeys(raw, DOCUMENT_KEYS)) return invalid('文档包含缺失或未知字段', raw)
-  if (!Array.isArray(raw.turns) || !isTimestamp(raw.createdAt) || !isTimestamp(raw.updatedAt)) return invalid('文档字段无效', raw)
+  if (!Array.isArray(raw.turns) || !Array.isArray(raw.proposals) ||
+    !isTimestamp(raw.createdAt) || !isTimestamp(raw.updatedAt)) return invalid('文档字段无效', raw)
 
-  const turns: ConversationTurn[] = []
-  const turnIds = new Set<string>()
-  const attemptIds = new Set<string>()
-  const running: Array<{ turnIndex: number; attemptIndex: number }> = []
-  for (const [turnIndex, inputTurn] of raw.turns.entries()) {
-    if (!isTurn(inputTurn)) return invalid('轮次字段无效', raw)
-    if (turnIds.has(inputTurn.id)) return invalid('轮次 ID 必须唯一', raw)
-    turnIds.add(inputTurn.id)
-    for (const [attemptIndex, attempt] of inputTurn.attempts.entries()) {
-      if (attemptIds.has(attempt.id)) return invalid('attempt ID 必须在文档内全局唯一', raw)
-      attemptIds.add(attempt.id)
-      if (attempt.status === 'running') running.push({ turnIndex, attemptIndex })
+  const turnsResult = parseTurns(raw.turns, raw)
+  if (!turnsResult.ok) return turnsResult
+
+  const proposals: ConversationCardProposal[] = []
+  const proposalAndEventIds = new Set<string>()
+  const pendingProposalTargets = new Set<string>()
+  for (const inputProposal of raw.proposals) {
+    const proposal = parseConversationCardProposal(inputProposal)
+    if (!proposal) return invalid('Card 提案或事件字段无效', raw)
+    if (proposalAndEventIds.has(proposal.id)) return invalid('提案和事件 ID 必须在文档内全局唯一', raw)
+    proposalAndEventIds.add(proposal.id)
+    for (const event of proposal.events) {
+      if (proposalAndEventIds.has(event.id)) return invalid('提案和事件 ID 必须在文档内全局唯一', raw)
+      proposalAndEventIds.add(event.id)
     }
-    turns.push(inputTurn)
+    if (proposal.events[0].at !== proposal.createdAt ||
+      proposal.events[proposal.events.length - 1].at !== proposal.updatedAt) {
+      return invalid('提案时间与事件历史不一致', raw)
+    }
+    if (!hasValidProposalTransactions(proposal)) return invalid('提案事务历史无效', raw)
+    if (proposal.status === 'pending') {
+      const targetKey = proposalTargetKey(proposal)
+      if (pendingProposalTargets.has(targetKey)) {
+        return invalid('同操作、同目标只能有一个 pending 提案', raw)
+      }
+      pendingProposalTargets.add(targetKey)
+    }
+    proposals.push(proposal)
   }
 
-  if (running.length > 1 || (running.length === 1 &&
-    (running[0].turnIndex !== turns.length - 1 || running[0].attemptIndex !== turns[turns.length - 1].attempts.length - 1))) {
-    return invalid('running attempt 只能是末轮的最后一次尝试', raw)
+  const proposalsById = new Map(proposals.map(proposal => [proposal.id, proposal]))
+  if (!hasValidProjectReferences(proposals)) {
+    return invalid('提案的项目 Card 引用验证记录无效', raw)
   }
-
-  for (const [turnIndex, turn] of turns.entries()) {
-    const lastAttempt = turn.attempts[turn.attempts.length - 1]
-    const hasAssistantResponse = turn.assistantText !== null && (turn.assistantText.trim().length > 0 || turn.quickReplies.length > 0)
-    if ((lastAttempt.status === 'completed') !== hasAssistantResponse) return invalid('助手响应与最后 attempt 状态不一致', raw)
-    if (turn.quickReplySelection && !isValidQuickReplySelection(turns, turnIndex, turn)) {
-      return invalid('快捷回答引用无效', raw)
+  for (const proposal of proposals) {
+    const sourceTurn = turnsResult.turns.find(turn => turn.id === proposal.provenance.turnId)
+    const sourceAttempt = sourceTurn?.attempts.find(attempt => attempt.id === proposal.provenance.attemptId)
+    if (!sourceAttempt || sourceAttempt.status !== 'completed') {
+      return invalid('提案 provenance 必须引用同一轮次中已完成的 attempt', raw)
+    }
+    for (const event of proposal.events) {
+      if (event.type !== 'superseded') continue
+      const replacement = proposalsById.get(event.byProposalId)
+      if (!replacement || replacement.id === proposal.id || proposalTargetKey(replacement) !== proposalTargetKey(proposal) ||
+        Date.parse(replacement.createdAt) < Date.parse(proposal.createdAt) ||
+        Date.parse(replacement.createdAt) > Date.parse(event.at)) {
+        return invalid('superseded 事件引用无效', raw)
+      }
     }
   }
+  if (hasSupersededCycle(proposalsById)) return invalid('superseded 事件引用形成循环', raw)
 
-  return { ok: true, document: raw as unknown as ConversationDocumentV1 }
+  return {
+    ok: true,
+    document: {
+      schemaVersion: 2,
+      turns: turnsResult.turns,
+      proposals,
+      createdAt: raw.createdAt,
+      updatedAt: raw.updatedAt,
+    },
+  }
 }
 
-/** Migrate the released bb5f191 v1 envelope into the current strict v1 shape. */
+/** Migrate strict PR1 v1 and the released bb5f191 v1 envelope into the current v2 shape. */
 export function migrateConversationDocument(raw: unknown): ConversationDocumentMigrationResult {
   const current = parseConversationDocument(raw)
   if (current.ok) return { ...current, migrated: false }
-  if (!isRecord(raw) || raw.schemaVersion !== 1 ||
-    !(hasExactKeys(raw, LEGACY_DOCUMENT_KEYS) || hasExactKeys(raw, DOCUMENT_KEYS)) || !Array.isArray(raw.turns)) return current
+  if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.turns)) return current
+
+  if (hasExactKeys(raw, V1_DOCUMENT_KEYS)) {
+    const strictV1Candidate: unknown = { ...raw, schemaVersion: 2, proposals: [] }
+    const parsed = parseConversationDocument(strictV1Candidate)
+    if (parsed.ok) return { ...parsed, migrated: true }
+  }
+
+  if (!(hasExactKeys(raw, LEGACY_DOCUMENT_KEYS) || hasExactKeys(raw, V1_DOCUMENT_KEYS))) return current
   if (Object.prototype.hasOwnProperty.call(raw, 'projectPath') && !isNonEmptyString(raw.projectPath)) return current
 
   const migratedTurns: ConversationTurn[] = []
@@ -156,8 +205,9 @@ export function migrateConversationDocument(raw: unknown): ConversationDocumentM
     })
   }
   const migrated: unknown = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     turns: migratedTurns,
+    proposals: [],
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   }
@@ -165,7 +215,7 @@ export function migrateConversationDocument(raw: unknown): ConversationDocumentM
   return parsed.ok ? { ...parsed, migrated: true } : parsed
 }
 
-export function interruptRunningAttempts(document: ConversationDocumentV1, now: string): ConversationDocumentV1 {
+export function interruptRunningAttempts(document: ConversationDocument, now: string): ConversationDocument {
   let changed = false
   const turns = document.turns.map(turn => ({
     ...turn,
@@ -182,6 +232,43 @@ export function interruptRunningAttempts(document: ConversationDocumentV1, now: 
     }),
   }))
   return changed ? { ...document, turns, updatedAt: now } : document
+}
+
+type TurnsParseResult =
+  | { ok: true; turns: ConversationTurn[] }
+  | { ok: false; reason: string; raw: unknown }
+
+function parseTurns(input: readonly unknown[], raw: unknown): TurnsParseResult {
+  const turns: ConversationTurn[] = []
+  const turnIds = new Set<string>()
+  const attemptIds = new Set<string>()
+  const running: Array<{ turnIndex: number; attemptIndex: number }> = []
+  for (const [turnIndex, inputTurn] of input.entries()) {
+    if (!isTurn(inputTurn)) return invalid('轮次字段无效', raw)
+    if (turnIds.has(inputTurn.id)) return invalid('轮次 ID 必须唯一', raw)
+    turnIds.add(inputTurn.id)
+    for (const [attemptIndex, attempt] of inputTurn.attempts.entries()) {
+      if (attemptIds.has(attempt.id)) return invalid('attempt ID 必须在文档内全局唯一', raw)
+      attemptIds.add(attempt.id)
+      if (attempt.status === 'running') running.push({ turnIndex, attemptIndex })
+    }
+    turns.push(inputTurn)
+  }
+
+  if (running.length > 1 || (running.length === 1 &&
+    (running[0].turnIndex !== turns.length - 1 || running[0].attemptIndex !== turns[turns.length - 1].attempts.length - 1))) {
+    return invalid('running attempt 只能是末轮的最后一次尝试', raw)
+  }
+
+  for (const [turnIndex, turn] of turns.entries()) {
+    const lastAttempt = turn.attempts[turn.attempts.length - 1]
+    const hasAssistantResponse = turn.assistantText !== null && (turn.assistantText.trim().length > 0 || turn.quickReplies.length > 0)
+    if ((lastAttempt.status === 'completed') !== hasAssistantResponse) return invalid('助手响应与最后 attempt 状态不一致', raw)
+    if (turn.quickReplySelection && !isValidQuickReplySelection(turns, turnIndex, turn)) {
+      return invalid('快捷回答引用无效', raw)
+    }
+  }
+  return { ok: true, turns }
 }
 
 function isTurn(input: unknown): input is ConversationTurn {
@@ -204,10 +291,7 @@ function isTurn(input: unknown): input is ConversationTurn {
     attachmentIds.add(inputAttachment.cardId)
   }
 
-  for (const inputAttempt of input.attempts) {
-    if (!isAttempt(inputAttempt)) return false
-  }
-  return true
+  return input.attempts.every(isAttempt)
 }
 
 function isAttempt(input: unknown): input is ConversationAttempt {
@@ -248,6 +332,48 @@ function isValidQuickReplySelection(turns: readonly ConversationTurn[], turnInde
   return reply !== undefined && turn.userText === reply.label
 }
 
+function hasValidProposalTransactions(proposal: ConversationCardProposal): boolean {
+  let transactionId: string | null = null
+  for (const event of proposal.events) {
+    if (event.type === 'accepted') transactionId = event.transactionId
+    if ((event.type === 'reverted' || event.type === 'restored') && event.transactionId !== transactionId) return false
+  }
+  return true
+}
+
+function proposalTargetKey(proposal: Pick<ConversationCardProposal, 'operation' | 'targetCardId'>): string {
+  return `${proposal.operation}:${proposal.targetCardId.toLowerCase()}`
+}
+
+function hasSupersededCycle(proposalsById: ReadonlyMap<string, ConversationCardProposal>): boolean {
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const visit = (proposalId: string): boolean => {
+    if (visiting.has(proposalId)) return true
+    if (visited.has(proposalId)) return false
+    visiting.add(proposalId)
+    const proposal = proposalsById.get(proposalId)
+    const superseded = proposal?.events.find(event => event.type === 'superseded')
+    if (superseded?.type === 'superseded' && visit(superseded.byProposalId)) return true
+    visiting.delete(proposalId)
+    visited.add(proposalId)
+    return false
+  }
+  return [...proposalsById.keys()].some(visit)
+}
+
+function hasValidProjectReferences(proposals: readonly ConversationCardProposal[]): boolean {
+  return proposals.every(proposal => {
+    const self = proposal.targetCardId.toLowerCase()
+    const actualReferences = new Set(referencedCardIds(proposal.document)
+      .map(cardId => cardId.toLowerCase())
+      .filter(cardId => cardId !== self))
+    const recordedReferences = new Set(proposal.projectReferences.map(reference => reference.cardId.toLowerCase()))
+    return actualReferences.size === recordedReferences.size &&
+      [...actualReferences].every(cardId => recordedReferences.has(cardId))
+  })
+}
+
 function inferLegacyFailureKind(attempt: Record<string, unknown>): ConversationAttemptFailureKind | null {
   if (FAILURE_KINDS.includes(attempt.failureKind as ConversationAttemptFailureKind)) return attempt.failureKind as ConversationAttemptFailureKind
   if (attempt.status === 'cancelled') return 'cancelled'
@@ -275,7 +401,7 @@ export function sanitizeConversationError(error: unknown): string {
     : `${message.slice(0, MAX_PERSISTED_ERROR_LENGTH - 1)}…`
 }
 
-function invalid(reason: string, raw: unknown): ConversationDocumentParseResult {
+function invalid(reason: string, raw: unknown): Extract<ConversationDocumentParseResult, { ok: false }> {
   return { ok: false, reason, raw }
 }
 

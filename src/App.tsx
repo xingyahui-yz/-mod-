@@ -7,15 +7,15 @@ import { TaskGuide } from './components/TaskGuide'
 import { Tutorial } from './components/Tutorial'
 import { SettingsModal } from './components/SettingsModal'
 import { GameLauncher } from './components/GameLauncher'
-import { AIGenerator } from './components/AIGenerator'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AboutModal } from './components/AboutModal'
 import { RelicEditor } from './relic/RelicEditor'
 import { ProjectConversationProvider, usePrepareForProjectSwitch } from './ai-conversation/ProjectConversationContext'
 import { ProjectConversationDrawer } from './ai-conversation/ProjectConversationDrawer'
+import { cardCatalogActions } from './card/cardCatalog'
 import * as FileService from './services/FileService'
 
-type Tab = 'cards' | 'relics' | 'files' | 'test' | 'ai'
+type Tab = 'cards' | 'relics' | 'files' | 'test'
 
 function App() {
   const projectRoot = useProjectStore(state => state.projectRoot)
@@ -61,6 +61,11 @@ function AppContent() {
     setShowTutorial(false)
   }
 
+  const handleOpenCardFromConversation = (cardId: string) => {
+    if (!cardCatalogActions.selectCard(cardId).ok) return
+    setActiveTab('cards')
+  }
+
   return (
     <div className="app">
       {/* 顶部栏 */}
@@ -96,12 +101,6 @@ function AppContent() {
           onClick={() => setActiveTab('relics')}
         >
           📜 遗物编辑器
-        </button>
-        <button
-          className={activeTab === 'ai' ? 'active' : ''}
-          onClick={() => setActiveTab('ai')}
-        >
-          ✨ AI生成（旧版）
         </button>
         <button
           className={activeTab === 'test' ? 'active' : ''}
@@ -156,26 +155,6 @@ function AppContent() {
           </div>
         )}
 
-        {/* AI生成 */}
-        {activeTab === 'ai' && (
-          <div className="ai-area">
-            <div className="legacy-ai-notice" role="status">
-              <strong>旧版单次生成</strong>
-              <span>项目级多轮对话已移至右侧抽屉；此入口将在提案能力对等后移除。</span>
-            </div>
-            <AIGenerator />
-            <div className="ai-tips">
-              <h4>💡 使用提示</h4>
-              <ul>
-                <li>描述越具体，生成的卡牌越符合你的需求</li>
-                <li>可以指定卡牌类型、效果、数值等</li>
-                <li>例如：「造成10点伤害的火系攻击牌」或「回复5点生命值的技能牌」</li>
-                <li>生成后点击卡牌可以添加到编辑器进一步修改</li>
-              </ul>
-            </div>
-          </div>
-        )}
-
         {/* 游戏测试 */}
         {activeTab === 'test' && (
           <div className="test-area">
@@ -216,7 +195,7 @@ function AppContent() {
           <FileBrowser browsePath={browsePath} onNavigate={navigateToDir} />
         )}
       </main>
-      <ProjectConversationDrawer />
+      <ProjectConversationDrawer onOpenCard={handleOpenCardFromConversation} />
       </div>
 
       {/* 任务引导 */}
@@ -398,51 +377,6 @@ function AppContent() {
           color: var(--text-primary);
         }
 
-        .ai-area {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          padding: 16px;
-          gap: 16px;
-          overflow-y: auto;
-        }
-
-        .legacy-ai-notice {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 10px 12px;
-          border: 1px solid color-mix(in srgb, var(--border) 72%, #7baed4 28%);
-          border-radius: 8px;
-          background: color-mix(in srgb, var(--bg-secondary) 92%, #7baed4 8%);
-          color: var(--text-secondary);
-          font-size: 12px;
-        }
-
-        .legacy-ai-notice strong {
-          flex: 0 0 auto;
-          color: var(--text-primary);
-        }
-
-        .ai-tips {
-          background: var(--bg-secondary);
-          border-radius: 8px;
-          padding: 16px;
-        }
-
-        .ai-tips h4 {
-          font-size: 14px;
-          font-weight: 600;
-          margin: 0 0 12px 0;
-        }
-
-        .ai-tips ul {
-          margin: 0;
-          padding-left: 20px;
-          font-size: 13px;
-          color: var(--text-secondary);
-          line-height: 1.8;
-        }
       `}</style>
     </div>
   )

@@ -11,6 +11,7 @@
  */
 import { createCardDocumentRepository, type CardDocumentLoadEntry, type CardDocumentSaveResult, type CardDocumentMigrationSaveResult } from '../card/cardRepository'
 import type { CardDocument } from '../card/cardDocument'
+import { cardDocumentRevision } from '../card/cardAiProposal'
 import { createCardTrashRepository, type CardTrashDeleteResult, type CardTrashEntry, type CardTrashRestoreResult } from '../card/cardTrash'
 import { buildPreflightEntries, evaluateCardPreflight, type CardPreflightOptions, type CardPreflightReport } from '../card/cardPreflight'
 import { generateCardArtifact as writeCardArtifact, type CardGenerationResult } from '../card/cardGeneration'
@@ -28,6 +29,7 @@ export type FileReadResult<T> =
   | { status: 'found'; value: T }
   | { status: 'missing' }
   | { status: 'error'; code: FileReadErrorCode; error: string }
+export type FileLinkNoReplaceResult = { status: 'linked' | 'exists' | 'failed' }
 
 export interface ModManifest {
   id: string
@@ -49,6 +51,7 @@ export interface ElectronAPI {
   writeFile: (filePath: string, content: string) => Promise<boolean>
   /** 原子替换所需的最小文件原语（旧测试/适配器可暂不提供）。 */
   rename?: (from: string, to: string) => Promise<boolean>
+  linkNoReplace?: (from: string, to: string) => Promise<FileLinkNoReplaceResult>
   remove?: (filePath: string) => Promise<boolean>
   mkdir: (dirPath: string) => Promise<boolean>
   copyDirectory: (src: string, dest: string) => Promise<boolean>
@@ -69,6 +72,7 @@ export interface FileService {
   readFileResult(filePath: string): Promise<FileReadResult<string>>
   writeFile(filePath: string, content: string): Promise<boolean>
   renameFile(from: string, to: string): Promise<boolean>
+  linkFileNoReplace(from: string, to: string): Promise<FileLinkNoReplaceResult>
   removeFile(filePath: string): Promise<boolean>
   createDirectory(dirPath: string): Promise<boolean>
   showInFolder(filePath: string): Promise<boolean>
@@ -76,6 +80,7 @@ export interface FileService {
   saveModManifest(projectPath: string, manifest: ModManifest): Promise<boolean>
   loadCardDocuments(projectPath: string): Promise<CardDocumentLoadEntry[]>
   saveCardDocument(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
+  createCardDocument(projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult>
   migrateCardDocument(projectPath: string, fileName: string): Promise<CardDocumentMigrationSaveResult>
   deleteCardToTrash(projectPath: string, cardId: string): Promise<CardTrashDeleteResult>
   listCardTrash(projectPath: string): Promise<CardTrashEntry[]>
@@ -103,21 +108,73 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
   const cardDocumentRepository = createCardDocumentRepository({
     files: {
       readDirectory: path => api.readDirectory(path),
+      ...(api.readDirectoryResult
+        ? { readDirectoryResult: (path: string) => api.readDirectoryResult!(path) }
+        : {}),
       readFile: path => api.readFile(path),
+      ...(api.readFileResult
+        ? { readFileResult: (path: string) => api.readFileResult!(path) }
+        : {}),
       mkdir: path => api.mkdir(path),
       writeFile: (path, content) => api.writeFile(path, content),
       rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
+      linkNoReplace: (from, to) => api.linkNoReplace
+        ? api.linkNoReplace(from, to)
+        : Promise.resolve({ status: 'failed' }),
       remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
     },
   })
   const cardTrashRepository = createCardTrashRepository({
     files: {
       readDirectory: path => api.readDirectory(path),
+      ...(api.readDirectoryResult
+        ? { readDirectoryResult: (path: string) => api.readDirectoryResult!(path) }
+        : {}),
       readFile: path => api.readFile(path),
+      ...(api.readFileResult
+        ? { readFileResult: (path: string) => api.readFileResult!(path) }
+        : {}),
       mkdir: path => api.mkdir(path),
+      writeFile: (path, content) => api.writeFile(path, content),
       rename: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
+      linkNoReplace: (from, to) => api.linkNoReplace
+        ? api.linkNoReplace(from, to)
+        : Promise.resolve({ status: 'failed' }),
       remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
     },
+  })
+  const cardSaveTails = new Map<string, Promise<void>>()
+  const enqueueCardWrite = <T>(
+    projectPath: string,
+    cardId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    const key = `${projectPath}\0${cardId.toLowerCase()}`
+    const previous = cardSaveTails.get(key) ?? Promise.resolve()
+    const result = previous.then(
+      operation,
+      operation,
+    )
+    const tail = result.then(() => undefined, () => undefined)
+    cardSaveTails.set(key, tail)
+    void tail.then(() => {
+      if (cardSaveTails.get(key) === tail) cardSaveTails.delete(key)
+    })
+    return result
+  }
+  const saveCardDocumentSerially = (projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult> =>
+    enqueueCardWrite(projectPath, document.card.id, () => cardDocumentRepository.save(projectPath, document))
+  const createCardDocumentSerially = (projectPath: string, document: CardDocument): Promise<CardDocumentSaveResult> =>
+    enqueueCardWrite(projectPath, document.card.id, () => cardDocumentRepository.create(projectPath, document))
+  const saveGeneratedDocumentIfCurrent = (
+    projectPath: string,
+    document: CardDocument,
+  ): Promise<boolean> => enqueueCardWrite(projectPath, document.card.id, async () => {
+    const loaded = await cardDocumentRepository.load(projectPath)
+    const current = loaded.find(entry => entry.fileName.toLowerCase() === `${document.card.id}.json`.toLowerCase())
+    if (!current || current.result.status !== 'editable' ||
+      cardDocumentRevision(current.result.document) !== cardDocumentRevision(document)) return false
+    return (await cardDocumentRepository.save(projectPath, document)).ok
   })
 
   return {
@@ -156,6 +213,10 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
 
     renameFile: (from, to) => api.rename ? api.rename(from, to) : Promise.resolve(false),
 
+    linkFileNoReplace: (from, to) => api.linkNoReplace
+      ? api.linkNoReplace(from, to)
+      : Promise.resolve({ status: 'failed' }),
+
     removeFile: (filePath) => api.remove ? api.remove(filePath) : Promise.resolve(false),
 
     createDirectory: (dirPath) => api.mkdir(dirPath),
@@ -185,15 +246,29 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
 
     loadCardDocuments: (projectPath) => cardDocumentRepository.load(projectPath),
 
-    saveCardDocument: (projectPath, document) => cardDocumentRepository.save(projectPath, document),
+    saveCardDocument: saveCardDocumentSerially,
 
-    migrateCardDocument: (projectPath, fileName) => cardDocumentRepository.migrateAndSave(projectPath, fileName),
+    createCardDocument: createCardDocumentSerially,
 
-    deleteCardToTrash: (projectPath, cardId) => cardTrashRepository.delete(projectPath, cardId),
+    migrateCardDocument: (projectPath, fileName) => enqueueCardWrite(
+      projectPath,
+      fileName.replace(/\.json$/i, ''),
+      () => cardDocumentRepository.migrateAndSave(projectPath, fileName),
+    ),
+
+    deleteCardToTrash: (projectPath, cardId) => enqueueCardWrite(
+      projectPath,
+      cardId,
+      () => cardTrashRepository.delete(projectPath, cardId),
+    ),
 
     listCardTrash: (projectPath) => cardTrashRepository.list(projectPath),
 
-    restoreCardFromTrash: (projectPath, trashId) => cardTrashRepository.restore(projectPath, trashId),
+    restoreCardFromTrash: (projectPath, trashId) => enqueueCardWrite(
+      projectPath,
+      trashId.split('-', 1)[0] ?? trashId,
+      () => cardTrashRepository.restore(projectPath, trashId),
+    ),
 
     async preflightCardProject(projectPath, options = {}) {
       const loaded = await cardDocumentRepository.load(projectPath)
@@ -244,7 +319,9 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
           remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
           readFile: path => api.readFile(path),
         },
-        saveDocument: async next => (await cardDocumentRepository.save(projectPath, next)).ok,
+        // 与 CardEditor autosave / AI proposal WAL 共用同一 Card 写入队列；
+        // 若生成期间语义内容已变化，则拒绝把旧源文档的指纹写回。
+        saveDocument: next => saveGeneratedDocumentIfCurrent(projectPath, next),
         allowExternalOverwrite: options.allowExternalOverwrite,
         backupExternalArtifact: options.allowExternalOverwrite
           ? async (path, content) => api.writeFile(`${path}.external-${Date.now()}.bak`, content)
@@ -279,7 +356,7 @@ export function createFileService(deps: { api: ElectronAPI }): FileService {
           remove: path => api.remove ? api.remove(path) : Promise.resolve(false),
           readFile: path => api.readFile(path),
         },
-        saveDocument: async next => (await cardDocumentRepository.save(projectPath, next)).ok,
+        saveDocument: next => saveGeneratedDocumentIfCurrent(projectPath, next),
         backupExternalArtifact: async (path, content) => api.writeFile(`${path}.external-${Date.now()}.bak`, content),
       })
     },
@@ -298,6 +375,7 @@ const noOpApi: ElectronAPI = {
   async readFile() { return null },
   async writeFile() { return false },
   async rename() { return false },
+  async linkNoReplace() { return { status: 'failed' } },
   async remove() { return false },
   async mkdir() { return false },
   async copyDirectory() { return false },
@@ -384,6 +462,8 @@ export const writeFile = (filePath: string, content: string) =>
   getDefaultService().writeFile(filePath, content)
 export const renameFile = (from: string, to: string) =>
   getDefaultService().renameFile(from, to)
+export const linkFileNoReplace = (from: string, to: string) =>
+  getDefaultService().linkFileNoReplace(from, to)
 export const removeFile = (filePath: string) =>
   getDefaultService().removeFile(filePath)
 export const createDirectory = (dirPath: string) =>
@@ -398,6 +478,8 @@ export const loadCardDocuments = (projectPath: string) =>
   getDefaultService().loadCardDocuments(projectPath)
 export const saveCardDocument = (projectPath: string, document: CardDocument) =>
   getDefaultService().saveCardDocument(projectPath, document)
+export const createCardDocument = (projectPath: string, document: CardDocument) =>
+  getDefaultService().createCardDocument(projectPath, document)
 
 export const migrateCardDocument = (projectPath: string, fileName: string) =>
   getDefaultService().migrateCardDocument(projectPath, fileName)

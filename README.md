@@ -2,7 +2,7 @@
 
 一款面向《杀戮尖塔 2》（STS2，Godot 4 + C# + RitsuLib）的桌面 Mod 开发工具。
 
-> 当前主线已完成 **Card 端到端编辑与生成安全闭环**，并提供可视化节点编辑器、多模型 AI 提案和一键游戏测试。v0.10 将继续完善项目级 Card AI 多轮对话。
+> 当前开发主线已贯通 **Card 端到端安全闭环**与项目级 AI 多轮对话；对话可一轮产生多张 Card 提案，由用户逐张预览和确认。
 
 ## ✨ 功能特性
 
@@ -23,14 +23,15 @@
 
 ### 工具与体验
 
-- 🤖 **AI Card 提案** — 支持 MiniMax、通义千问、文心一言、ChatGLM；完整候选先预览，确认后以一个可撤销事务应用
+- 🤖 **项目级 AI Card 对话** — 支持 MiniMax、通义千问、文心一言、ChatGLM；多轮历史、快捷回答、显式 Card 附件与多 Card 提案均绑定当前项目
+- ✅ **逐 Card 提案确认** — 创建/修改分别预览，接受时才写入项目；支持独立过期、不可恢复拒绝及 undo/redo 来源追踪
 - 📚 **新手教程** — 8 步交互式教程，零基础也能上手
 - 📋 **任务系统** — 完整的任务引导，从创建到测试
 - 🚀 **一键测试** — 自动启动游戏加载你的 Mod
 - 🎨 **主题切换** — 支持暗/亮主题
 - 🛡️ **错误边界** — 友好的错误处理
 - 💾 **本地项目源数据** — `.modstudio/cards/` 保存权威 Card 文档，`scripts/Cards/` 只保存可重新生成的 C# 产物
-- ✅ **自动化验证** — 当前完整测试套件 **367 项**，另有 TypeScript、Vite 构建与 Electron 手工 smoke gate
+- ✅ **自动化验证** — 当前完整测试套件 **617 项**，另有 Renderer/Electron 两套 TypeScript 检查与 Electron 完整构建门禁
 
 ## 🛠️ 技术栈
 
@@ -51,9 +52,9 @@ mod-studio/
 ├── src/
 │   ├── components/               # 通用 UI 组件
 │   │   ├── CardEditor.tsx        # 卡牌编辑器
-│   │   ├── AIGenerator.tsx       # AI 生成器
 │   │   ├── GameLauncher.tsx      # 游戏启动
 │   │   ├── Modal.tsx / Toast.tsx / Tutorial.tsx / ...
+│   ├── ai-conversation/          # 项目对话、提案生命周期、持久化与右侧抽屉
 │   ├── node-editor/              # 自研可视化节点编辑器
 │   │   ├── graph.ts              # 纯函数数据层（appendNode / connect / hasCycle / ...）
 │   │   ├── types.ts              # NodeGraph / Node / Edge / Port 类型
@@ -140,19 +141,24 @@ npm run test:watch
 
 ### 4. AI Card 提案
 
-当前版本在 AI 标签中配置 provider 和 API Key，输入自然语言要求后预览完整 Card 候选；只有确认才会应用到项目，且不会自动生成 C#。
+打开项目后，从右侧对话抽屉输入自然语言要求。一轮可以只返回文字，也可以生成多张相互独立的 Card 创建/修改提案：
 
-v0.10 的第一切片已接通项目级右侧对话抽屉、多轮历史、取消/重试、快捷回答、显式 Card 附件和版本化 JSON 恢复；旧 AI 标签暂时保留并标记为旧版。逐 Card 提案预览、接受/拒绝与过期判断将在下一切片完成，详见 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md)。
+1. 修改现有 Card 时，打开提案会定位目标 Card，并按属性、节点和连线展示“当前内容 ↔ 提案内容”。
+2. 创建新 Card 时，接受前只显示只读预览，不加入项目也不占用 ID；接受时确认最终 ID。
+3. 每张 Card 独立接受或经二次确认后永久拒绝。修改提案遇到新 revision 会单独过期，不阻塞同轮其他 Card。
+4. 接受修改作为一个 Card 历史事务；撤销后提案标记为 `reverted`，重做后恢复 `accepted`。接受提案不会自动生成 C#。
+5. 提案接受、撤销和重做使用可恢复的跨文件事务日志；异常退出后只续做尚未确认的最后一步，不会覆盖用户后续编辑或复活已删除 Card。
+
+多轮历史、取消/重试、快捷回答、显式 Card 附件和版本化 JSON 恢复已接通。旧单次 AI 标签及平行 LLM 入口已删除；后续切片将补齐 token 预算、一次自动补取、混合摘要与历史归档。详见 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md)。
 
 ### 5. 测试游戏
 切换到「🎮 游戏测试」标签，设置游戏路径，点击启动游戏测试。
 
 ## 🤖 AI 模型配置
 
-1. 打开 AI 标签
-2. 选择模型提供商
-3. 输入 API 密钥
-4. 开始生成卡牌
+1. 打开“设置”
+2. 选择模型提供商并输入 API Key
+3. 保存设置，在当前项目的右侧 AI 抽屉开始对话
 
 各模型获取 API 密钥：
 - MiniMax: https://www.minimax.chat/
@@ -167,7 +173,7 @@ v0.10 的第一切片已接通项目级右侧对话抽屉、多轮历史、取�
 | v0.1-v0.8 | ✅ 已完成 | 节点编辑器、Relic 模块、项目文件服务、AI 结构化输出与架构加深 |
 | v0.9 | ✅ 已完成 | Card 单一文档模型、行为图、自动保存、显式生成、迁移/恢复、回收站、批量生成、测试预检与 Electron release gate |
 | CardCatalog | ✅ 已完成 | Card 文档唯一权威、逐 Card 历史、文本/拖动事务合并与 revision-safe AI/生成操作 |
-| **v0.10** | 🛠️ 实施中 | walking skeleton 已通过两遍独立门禁；继续交付 Card 提案 → 上下文智能 → 历史治理三个堆叠切片 |
+| **v0.10** | 🛠️ 实施中 | 对话骨架已通过双重门禁；逐 Card 提案补强创建恢复收据、Card ID claim 回收及 uncertain 写入保护，当前提交点 651 项测试、双 TypeScript 检查与正式打包通过，正在独立复检；后续为上下文智能与历史治理 |
 | 后续 | 📋 计划 | Relic 接入 Card 同等级项目生命周期，再扩展 Character / Potion / Event / Enemy / Buff / UI |
 | v1.0+ | 📋 计划 | Steam Workshop 发布流程 |
 

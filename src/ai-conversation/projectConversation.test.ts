@@ -1,13 +1,20 @@
-import { describe, expect, it } from 'vitest'
-import { ProjectConversation, type ConversationModel } from './projectConversation'
-import type { ConversationDocumentV1 } from './conversationDocument'
+import { describe, expect, it, vi } from 'vitest'
+import { ProjectConversation, type ConversationModel, type ConversationRequest } from './projectConversation'
+import type { ConversationDocument } from './conversationDocument'
 import type { ConversationRepository } from './conversationRepository'
+import type { CardDocument } from '../card/cardDocument'
+import { cardDocumentRevision } from '../card/cardAiProposal'
 
 function harness(
   model: ConversationModel,
-  options: { initial?: ConversationDocumentV1 | null; failSaveCalls?: readonly number[]; failCertainty?: 'unchanged' | 'uncertain' } = {},
+  options: {
+    initial?: ConversationDocument | null
+    failSaveCalls?: readonly number[]
+    failCertainty?: 'unchanged' | 'uncertain'
+    projectDocuments?: () => readonly CardDocument[]
+  } = {},
 ) {
-  let saved: ConversationDocumentV1 | null = options.initial ? structuredClone(options.initial) : null
+  let saved: ConversationDocument | null = options.initial ? structuredClone(options.initial) : null
   let saveCall = 0
   const repository: ConversationRepository = {
     load: async () => saved ? { status: 'loaded', document: saved } : { status: 'missing' },
@@ -19,7 +26,14 @@ function harness(
     },
   }
   let id = 0
-  const conversation = new ProjectConversation('/p', repository, model, () => new Date('2026-09-01T00:00:00Z'), () => `id-${++id}`)
+  const conversation = new ProjectConversation(
+    '/p',
+    repository,
+    model,
+    () => new Date('2026-09-01T00:00:00Z'),
+    () => `id-${++id}`,
+    options.projectDocuments,
+  )
   return { conversation, saved: () => saved, saveCalls: () => saveCall }
 }
 
@@ -39,7 +53,7 @@ describe('ProjectConversation', () => {
     const h = harness({ respond: () => new Promise(result => { resolve = result }) })
     await h.conversation.load()
     const sending = h.conversation.send('继续')
-    await Promise.resolve()
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
     await h.conversation.cancel()
     resolve({ success: true, content: '{"schemaVersion":1,"text":"太迟了","quickReplies":[],"proposals":[]}' })
     expect((await sending).ok).toBe(false)
@@ -99,8 +113,9 @@ describe('ProjectConversation', () => {
   })
 
   it('恢复 running attempt 保存失败时诚实暴露并禁止发送', async () => {
-    const running: ConversationDocumentV1 = {
-      schemaVersion: 1,
+    const running: ConversationDocument = {
+      schemaVersion: 2,
+      proposals: [],
       createdAt: '2026-09-01T00:00:00Z',
       updatedAt: '2026-09-01T00:00:00Z',
       turns: [{
@@ -158,7 +173,7 @@ describe('ProjectConversation', () => {
     const h = harness({ respond: () => new Promise(result => { resolve = result }) }, { failSaveCalls: [2] })
     await h.conversation.load()
     const sending = h.conversation.send('继续')
-    await Promise.resolve()
+    await vi.waitFor(() => expect(resolve).toBeTypeOf('function'))
     await expect(h.conversation.cancel()).resolves.toMatchObject({ ok: false, code: 'persistence' })
     resolve({ success: true, content: '{"schemaVersion":1,"text":"太迟了","quickReplies":[],"proposals":[]}' })
     await expect(sending).resolves.toMatchObject({ ok: false, code: 'cancelled' })
@@ -239,7 +254,7 @@ describe('ProjectConversation', () => {
   it('hasActiveWork 同步覆盖尚未完成首次保存的 starting 状态', async () => {
     let resolveSave!: () => void
     let firstSave = true
-    let saved: ConversationDocumentV1 | null = null
+    let saved: ConversationDocument | null = null
     let resolveModel!: (value: { success: true; content: string }) => void
     let markModelStarted!: () => void
     const modelStarted = new Promise<void>(resolve => { markModelStarted = resolve })
@@ -287,9 +302,9 @@ describe('ProjectConversation', () => {
     expect(unchanged.conversation.getSnapshot().requiresReload).toBe(false)
   })
 
-  it('final save 已先线性化时，随后 cancel 不得覆盖 completed', async () => {
+  it('provider 已返回但最终保存未完成时，cancel 获胜且不展示 completed', async () => {
     let saveCall = 0
-    let saved: ConversationDocumentV1 | null = null
+    let saved: ConversationDocument | null = null
     let finalSaveStarted!: () => void
     const finalStarted = new Promise<void>(resolve => { finalSaveStarted = resolve })
     let releaseFinalSave!: () => void
@@ -308,14 +323,524 @@ describe('ProjectConversation', () => {
     const conversation = new ProjectConversation('/p', repository, {
       respond: async () => ({ success: true, content: '{"schemaVersion":1,"text":"已完成","quickReplies":[],"proposals":[]}' }),
     })
+    const visibleStatuses: string[] = []
+    conversation.subscribe(() => {
+      const turn = conversation.getSnapshot().document?.turns[0]
+      if (turn) visibleStatuses.push(`${turn.assistantText ?? 'null'}:${turn.attempts[0].status}`)
+    })
     await conversation.load()
     const sending = conversation.send('继续')
     await finalStarted
     const cancelling = conversation.cancel()
     releaseFinalSave()
-    await expect(sending).resolves.toEqual({ ok: true })
+    await expect(sending).resolves.toMatchObject({ ok: false, code: 'cancelled' })
     await expect(cancelling).resolves.toEqual({ ok: true })
-    expect(saveCall).toBe(2)
-    expect(saved!.turns[0]).toMatchObject({ assistantText: '已完成', attempts: [{ status: 'completed' }] })
+    expect(saveCall).toBe(3)
+    expect(saved!.turns[0]).toMatchObject({ assistantText: null, attempts: [{ status: 'cancelled' }] })
+    expect(visibleStatuses).not.toContain('已完成:completed')
+  })
+
+  it('每轮捕获当前 Card 目录，并只解析显式附件全文', async () => {
+    const fire = cardDocument('Fireball', '火球')
+    const frost = cardDocument('FrostArc', '霜弧')
+    const captured: ConversationRequest[] = []
+    const h = harness({
+      respond: async request => {
+        captured.push(request)
+        return { success: true, content: responseText('已读取') }
+      },
+    }, { projectDocuments: () => [fire, frost] })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('只看火球', [{
+      cardId: fire.card.id,
+      revision: cardDocumentRevision(fire),
+    }])).resolves.toEqual({ ok: true })
+
+    expect(captured[0].cardCatalog.map(card => card.id)).toEqual(['Fireball', 'FrostArc'])
+    expect(captured[0].resolvedAttachments).toEqual([{
+      cardId: 'Fireball',
+      revision: cardDocumentRevision(fire),
+      document: fire,
+    }])
+  })
+
+  it('拒绝大小写冲突的项目 Card ID，不向模型泄露模糊目录', async () => {
+    let responded = false
+    const h = harness({ respond: async () => {
+      responded = true
+      return { success: true, content: '{"schemaVersion":1,"text":"unused","quickReplies":[],"proposals":[]}' }
+    } }, {
+      projectDocuments: () => [cardDocument('FrostArc', '霜弧'), cardDocument('frostarc', '冲突霜弧')],
+    })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('继续')).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid-input',
+      error: '当前项目 Card ID 不唯一',
+    })
+    expect(responded).toBe(false)
+    expect(h.saveCalls()).toBe(0)
+  })
+
+  it('把同轮多个提案与完成回复原子保存，并逐 Card 判定请求期间过期', async () => {
+    const originalA = cardDocument('CardA', 'A0')
+    const originalB = cardDocument('CardB', 'B0')
+    let projectDocuments: CardDocument[] = [originalA, originalB]
+    const model: ConversationModel = {
+      respond: async request => {
+        projectDocuments = [originalA, cardDocument('CardB', 'B1')]
+        return {
+          success: true,
+          content: JSON.stringify({
+            schemaVersion: 1,
+            text: '三个候选已准备',
+            quickReplies: [],
+            proposals: [
+              updateProposal(originalA, request.cardCatalog.find(card => card.id === 'CardA')!.revision, 'A2'),
+              updateProposal(originalB, request.cardCatalog.find(card => card.id === 'CardB')!.revision, 'B2'),
+              { operation: 'create', document: cardDocument('NewCard', 'N') },
+            ],
+          }),
+        }
+      },
+    }
+    const h = harness(model, { projectDocuments: () => projectDocuments })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('同时调整', [
+      { cardId: 'CardA', revision: cardDocumentRevision(originalA) },
+      { cardId: 'CardB', revision: cardDocumentRevision(originalB) },
+    ])).resolves.toEqual({ ok: true })
+    expect(h.saved()?.turns[0]).toMatchObject({ assistantText: '三个候选已准备', attempts: [{ status: 'completed' }] })
+    expect(h.saved()?.proposals.map(proposal => [proposal.targetCardId, proposal.status])).toEqual([
+      ['CardA', 'pending'],
+      ['CardB', 'stale'],
+      ['NewCard', 'pending'],
+    ])
+  })
+
+  it('模型伪造 update 基线时整轮失败，不展示文字或部分提案', async () => {
+    const current = cardDocument('CardA', 'A0')
+    const h = harness({
+      respond: async () => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '不能展示',
+          quickReplies: [],
+          proposals: [updateProposal(current, 'forged-revision', 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('修改 A', [{
+      cardId: 'CardA',
+      revision: cardDocumentRevision(current),
+    }])).resolves.toMatchObject({ ok: false, code: 'invalid-response' })
+    expect(h.saved()?.turns[0]).toMatchObject({ assistantText: null, attempts: [{ status: 'failed', failureKind: 'invalid-response' }] })
+    expect(h.saved()?.proposals).toEqual([])
+  })
+
+  it('模型不能用不同大小写改写现有 Card ID', async () => {
+    const current = cardDocument('CardA', 'A0')
+    const wrongCase = cardDocument('carda', 'A1')
+    const h = harness({
+      respond: async request => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '不能展示',
+          quickReplies: [],
+          proposals: [updateProposal(wrongCase, request.cardCatalog[0].revision, 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('修改 A', [{
+      cardId: 'CardA',
+      revision: cardDocumentRevision(current),
+    }])).resolves.toMatchObject({ ok: false, code: 'invalid-response' })
+    expect(h.saved()?.proposals).toEqual([])
+  })
+
+  it('仅有目录摘要时拒绝 update 提案，整轮不展示', async () => {
+    const current = cardDocument('CardA', 'A0')
+    const h = harness({
+      respond: async request => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '不能展示',
+          quickReplies: [],
+          proposals: [updateProposal(current, request.cardCatalog[0].revision, 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('修改 A')).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid-response',
+      error: 'Card 提案缺少全文上下文：CardA',
+    })
+    expect(h.saved()?.turns[0]).toMatchObject({
+      assistantText: null,
+      attempts: [{ status: 'failed', failureKind: 'invalid-response' }],
+    })
+    expect(h.saved()?.proposals).toEqual([])
+  })
+
+  it('待确认的同目标候选已进入 prompt 时，允许不重复附加 Card 全文', async () => {
+    const current = cardDocument('CardA', 'A0')
+    let call = 0
+    const h = harness({
+      respond: async request => {
+        call += 1
+        return {
+          success: true,
+          content: JSON.stringify({
+            schemaVersion: 1,
+            text: call === 1 ? '第一版' : '第二版',
+            quickReplies: [],
+            proposals: [updateProposal(current, request.cardCatalog[0].revision, call === 1 ? 'A1' : 'A2')],
+          }),
+        }
+      },
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+    const attachment = [{ cardId: 'CardA', revision: cardDocumentRevision(current) }]
+
+    await expect(h.conversation.send('先做一版', attachment)).resolves.toEqual({ ok: true })
+    await expect(h.conversation.send('继续调整这个候选')).resolves.toEqual({ ok: true })
+    expect(h.saved()?.turns[1].assistantText).toBe('第二版')
+    expect(h.saved()?.proposals.map(proposal => proposal.status)).toEqual(['superseded', 'pending'])
+  })
+
+  it('待确认候选的 base 已过期时，不能替代当前 Card 的显式全文附件', async () => {
+    const original = cardDocument('CardA', 'A0')
+    let projectDocuments = [original]
+    let call = 0
+    const h = harness({
+      respond: async request => {
+        call += 1
+        const current = projectDocuments[0]
+        return {
+          success: true,
+          content: JSON.stringify({
+            schemaVersion: 1,
+            text: call === 1 ? '第一版' : '不应展示',
+            quickReplies: [],
+            proposals: [updateProposal(current, request.cardCatalog[0].revision, call === 1 ? 'A1' : 'A2')],
+          }),
+        }
+      },
+    }, { projectDocuments: () => projectDocuments })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('先做一版', [{
+      cardId: 'CardA',
+      revision: cardDocumentRevision(original),
+    }])).resolves.toEqual({ ok: true })
+    projectDocuments = [cardDocument('CardA', '用户已修改')]
+
+    await expect(h.conversation.send('继续调整这个候选')).resolves.toMatchObject({
+      ok: false,
+      code: 'invalid-response',
+      error: 'Card 提案缺少全文上下文：CardA',
+    })
+    expect(h.saved()?.turns[1].assistantText).toBeNull()
+  })
+
+  it('手动重试读取最新项目基线而不是失败尝试的旧 revision', async () => {
+    let projectDocuments = [cardDocument('CardA', 'A0')]
+    const revisions: string[] = []
+    let calls = 0
+    const h = harness({
+      respond: async request => {
+        revisions.push(request.cardCatalog[0].revision)
+        calls += 1
+        return calls === 1
+          ? { success: false, error: '超时', kind: 'timeout' }
+          : { success: true, content: responseText('重试完成') }
+      },
+    }, { projectDocuments: () => projectDocuments })
+    await h.conversation.load()
+    await h.conversation.send('调整 A')
+    projectDocuments = [cardDocument('CardA', 'A1')]
+    const turnId = h.conversation.getSnapshot().document!.turns[0].id
+
+    await expect(h.conversation.retryTurn(turnId)).resolves.toEqual({ ok: true })
+    expect(revisions).toEqual([
+      cardDocumentRevision(cardDocument('CardA', 'A0')),
+      cardDocumentRevision(cardDocument('CardA', 'A1')),
+    ])
+  })
+
+  it('接受 update 后持久化事务，并随同一事务 undo/redo 记录 reverted/accepted', async () => {
+    const current = cardDocument('CardA', 'A0')
+    const revision = cardDocumentRevision(current)
+    const h = harness({
+      respond: async () => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '修改好了',
+          quickReplies: [],
+          proposals: [updateProposal(current, revision, 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+    await h.conversation.send('修改 A', [{ cardId: 'CardA', revision }])
+    const proposal = h.saved()!.proposals[0]
+    const commits: string[] = []
+
+    await expect(h.conversation.acceptProposal(proposal.id, 'CardA', async input => {
+      await Promise.resolve()
+      commits.push(input.transactionId)
+      expect(input.proposal.id).toBe(proposal.id)
+      return { ok: true }
+    })).resolves.toEqual({ ok: true })
+    expect(commits).toEqual([proposal.id])
+    expect(h.saved()!.proposals[0].status).toBe('accepted')
+
+    await expect(h.conversation.recordProposalHistory(proposal.id, proposal.id, 'reverted', current)).resolves.toEqual({ ok: true })
+    expect(h.saved()!.proposals[0].status).toBe('reverted')
+    await expect(h.conversation.confirmProposalCardTransition(proposal.id, proposal.id)).resolves.toEqual({ ok: true })
+    await expect(h.conversation.recordProposalHistory(proposal.id, proposal.id, 'accepted', proposal.document)).resolves.toEqual({ ok: true })
+    expect(h.saved()!.proposals[0].status).toBe('accepted')
+    await expect(h.conversation.confirmProposalCardTransition(proposal.id, proposal.id)).resolves.toEqual({ ok: true })
+    expect(h.saved()!.proposals[0].events.map(event => event.type)).toEqual([
+      'proposed', 'accepted', 'committed', 'reverted', 'committed', 'restored', 'committed',
+    ])
+  })
+
+  it('接受前目标 Card 变化会持久化 stale，且不会调用 Card commit', async () => {
+    const original = cardDocument('CardA', 'A0')
+    let current = original
+    const h = harness({
+      respond: async () => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '修改好了',
+          quickReplies: [],
+          proposals: [updateProposal(original, cardDocumentRevision(original), 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+    await h.conversation.send('修改 A', [{
+      cardId: 'CardA',
+      revision: cardDocumentRevision(original),
+    }])
+    const proposalId = h.saved()!.proposals[0].id
+    current = cardDocument('CardA', '用户编辑')
+    let committed = false
+
+    await expect(h.conversation.acceptProposal(proposalId, 'CardA', () => {
+      committed = true
+      return { ok: true }
+    })).resolves.toMatchObject({ ok: false, code: 'stale-proposal' })
+    expect(committed).toBe(false)
+    expect(h.saved()!.proposals[0].status).toBe('stale')
+  })
+
+  it('Card commit 失败时把已保存的 accepted 补偿回 pending', async () => {
+    const current = cardDocument('CardA', 'A0')
+    const h = harness({
+      respond: async () => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '修改好了',
+          quickReplies: [],
+          proposals: [updateProposal(current, cardDocumentRevision(current), 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+    await h.conversation.send('修改 A', [{
+      cardId: 'CardA',
+      revision: cardDocumentRevision(current),
+    }])
+    const proposalId = h.saved()!.proposals[0].id
+
+    await expect(h.conversation.acceptProposal(proposalId, 'CardA', () => ({
+      ok: false,
+      error: 'Card 写入失败',
+    }))).resolves.toEqual({ ok: false, code: 'card-update-failed', error: 'Card 写入失败' })
+    expect(h.saved()!.proposals[0].status).toBe('pending')
+    expect(h.conversation.getSnapshot().document!.proposals[0].status).toBe('pending')
+  })
+
+  it('Card 异步 commit 结果不确定时保留 accepted 恢复日志并要求重载', async () => {
+    const current = cardDocument('CardA', 'A0')
+    const revision = cardDocumentRevision(current)
+    const h = harness({
+      respond: async () => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '修改好了',
+          quickReplies: [],
+          proposals: [updateProposal(current, revision, 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current] })
+    await h.conversation.load()
+    await h.conversation.send('修改 A', [{ cardId: 'CardA', revision }])
+    const proposalId = h.saved()!.proposals[0].id
+
+    await expect(h.conversation.acceptProposal(proposalId, 'CardA', async () => {
+      await Promise.resolve()
+      return { ok: false, error: 'Card 文档原子写入超时', certainty: 'uncertain' }
+    })).resolves.toEqual({
+      ok: false,
+      code: 'persistence',
+      error: 'Card 应用结果不确定：Card 文档原子写入超时',
+    })
+    expect(h.saveCalls()).toBe(3)
+    expect(h.saved()!.proposals[0].status).toBe('accepted')
+    expect(h.conversation.getSnapshot()).toMatchObject({
+      requiresReload: true,
+      persistenceError: 'Card 应用结果不确定：Card 文档原子写入超时',
+    })
+    expect(h.conversation.getSnapshot().document!.proposals[0].status).toBe('accepted')
+  })
+
+  it('Card 已应用但 committed 标记保存失败时保留 WAL 并要求重载', async () => {
+    const current = cardDocument('CardA', 'A0')
+    const revision = cardDocumentRevision(current)
+    const h = harness({
+      respond: async () => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '修改好了',
+          quickReplies: [],
+          proposals: [updateProposal(current, revision, 'A1')],
+        }),
+      }),
+    }, { projectDocuments: () => [current], failSaveCalls: [4] })
+    await h.conversation.load()
+    await h.conversation.send('修改 A', [{ cardId: 'CardA', revision }])
+    const proposalId = h.saved()!.proposals[0].id
+
+    await expect(h.conversation.acceptProposal(proposalId, 'CardA', () => ({ ok: true })))
+      .resolves.toMatchObject({ ok: false, code: 'persistence' })
+    expect(h.saved()!.proposals[0].events.map(event => event.type)).toEqual(['proposed', 'accepted'])
+    expect(h.conversation.getSnapshot()).toMatchObject({ requiresReload: true })
+  })
+
+  it('模型回复运行期间仍可记录 undo WAL，终态保存不会覆盖历史事件', async () => {
+    const base = cardDocument('CardA', 'A0')
+    const candidate = cardDocument('CardA', 'A1')
+    let projectDocument = base
+    let call = 0
+    let resolveSecond!: (value: { success: true; content: string }) => void
+    const h = harness({
+      respond: async () => {
+        call += 1
+        if (call === 1) {
+          return {
+            success: true as const,
+            content: JSON.stringify({
+              schemaVersion: 1,
+              text: '修改好了',
+              quickReplies: [],
+              proposals: [updateProposal(base, cardDocumentRevision(base), 'A1')],
+            }),
+          }
+        }
+        return new Promise(resolve => { resolveSecond = resolve })
+      },
+    }, { projectDocuments: () => [projectDocument] })
+    await h.conversation.load()
+    await h.conversation.send('修改 A', [{ cardId: 'CardA', revision: cardDocumentRevision(base) }])
+    const proposal = h.saved()!.proposals[0]
+    await h.conversation.acceptProposal(proposal.id, 'CardA', () => {
+      projectDocument = candidate
+      return { ok: true }
+    })
+
+    const sending = h.conversation.send('继续讨论')
+    await Promise.resolve()
+    await expect(h.conversation.recordProposalHistory(
+      proposal.id,
+      proposal.id,
+      'reverted',
+      base,
+    )).resolves.toEqual({ ok: true })
+    projectDocument = base
+    resolveSecond({ success: true, content: responseText('继续完成') })
+    await expect(sending).resolves.toEqual({ ok: true })
+
+    expect(h.saved()!.proposals[0].events.map(event => event.type)).toEqual([
+      'proposed', 'accepted', 'committed', 'reverted',
+    ])
+    expect(h.saved()!.turns.at(-1)?.assistantText).toBe('继续完成')
+  })
+
+  it('拒绝永久保存结构化原因，之后不能再接受', async () => {
+    const h = harness({
+      respond: async () => ({
+        success: true,
+        content: JSON.stringify({
+          schemaVersion: 1,
+          text: '新 Card',
+          quickReplies: [],
+          proposals: [{ operation: 'create', document: cardDocument('NewCard', 'N') }],
+        }),
+      }),
+    })
+    await h.conversation.load()
+    await h.conversation.send('创建')
+    const proposalId = h.saved()!.proposals[0].id
+
+    await expect(h.conversation.rejectProposal(proposalId, {
+      code: 'wrong-direction',
+      note: '不要使用这个机制',
+    })).resolves.toEqual({ ok: true })
+    expect(h.saved()!.proposals[0]).toMatchObject({
+      status: 'rejected',
+      events: [{ type: 'proposed' }, { type: 'rejected', feedback: { code: 'wrong-direction', note: '不要使用这个机制' } }],
+    })
+    await expect(h.conversation.acceptProposal(proposalId, 'NewCard', () => ({ ok: true })))
+      .resolves.toMatchObject({ ok: false, code: 'proposal-not-pending' })
   })
 })
+
+function responseText(text: string): string {
+  return JSON.stringify({ schemaVersion: 1, text, quickReplies: [], proposals: [] })
+}
+
+function cardDocument(id: string, description: string): CardDocument {
+  return {
+    schemaVersion: 2,
+    card: { id, name: id, cost: 1, type: 'Attack', rarity: 'Common', description, keywords: [] },
+    graph: {
+      id: `graph-${id}`,
+      entityId: id,
+      entityType: 'card',
+      version: '0.1.0',
+      nodes: [],
+      edges: [],
+      metadata: { createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z' },
+    },
+    generation: { lastGeneratedFingerprint: null },
+  }
+}
+
+function updateProposal(base: CardDocument, baseRevision: string, description: string) {
+  return {
+    operation: 'update' as const,
+    targetCardId: base.card.id,
+    baseRevision,
+    document: cardDocument(base.card.id, description),
+  }
+}

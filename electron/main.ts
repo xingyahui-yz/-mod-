@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import { join, resolve, isAbsolute } from 'path'
 import { existsSync } from 'fs'
-import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink } from 'fs/promises'
+import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink, link } from 'fs/promises'
 import { spawn } from 'child_process'
 
 type FileReadErrorCode = 'invalid-path' | 'permission-denied' | 'io'
@@ -118,6 +118,8 @@ async function readTextFileResult(filePath: string): Promise<FileReadResult<stri
 
 // ============ IPC 处理器 ============
 
+function registerIpcHandlers() {
+
 // 打开文件夹选择对话框
 ipcMain.handle('dialog:openDirectory', async () => {
   if (!mainWindow) return null
@@ -185,6 +187,25 @@ ipcMain.handle('fs:rename', async (_event, from: string, to: string) => {
   } catch (error) {
     console.error('Error renaming file:', error)
     return false
+  }
+})
+
+// 原子 fail-if-exists：Card ID 只在接受创建/恢复时占用，绝不覆盖竞争文件。
+ipcMain.handle('fs:linkNoReplace', async (_event, from: string, to: string) => {
+  if (!isPathSafe(from) || !isPathSafe(to)) {
+    console.error('Invalid path for no-replace link:', { from, to })
+    return { status: 'failed' as const }
+  }
+  try {
+    await link(from, to)
+    return { status: 'linked' as const }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error
+      ? String((error as { code?: unknown }).code)
+      : ''
+    if (code === 'EEXIST') return { status: 'exists' as const }
+    console.error('Error linking file without replacement:', code || 'unknown')
+    return { status: 'failed' as const }
   }
 })
 
@@ -326,19 +347,35 @@ ipcMain.handle('shell:showInFolder', async (_event, filePath: string) => {
     return false
   }
 })
+}
 
 // ============ 应用生命周期 ============
 
-app.whenReady().then(createWindow)
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  registerIpcHandlers()
 
-app.on('activate', () => {
-  if (mainWindow === null) {
-    createWindow()
-  }
-})
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    if (!mainWindow.isVisible()) mainWindow.show()
+    mainWindow.focus()
+  })
+
+  app.whenReady().then(createWindow)
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit()
+    }
+  })
+
+  app.on('activate', () => {
+    if (mainWindow === null) {
+      createWindow()
+    }
+  })
+}
