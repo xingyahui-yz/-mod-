@@ -20,6 +20,7 @@ import type {
   ConversationRepository,
   ConversationLoadResult,
 } from './conversationRepository'
+import type { ConversationPerformanceMetrics } from './conversationPerformance'
 import { parseConversationModelResponseText, type ConversationResponseV1 } from './conversationResponse'
 import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
 import { DEFAULT_CONVERSATION_CAPACITY_LIMITS, measureConversationCapacity, type ConversationCapacity, type ConversationCapacityLimits } from './conversationCapacity'
@@ -233,6 +234,10 @@ export class ProjectConversation {
         })
       }
     })
+  }
+
+  getPerformanceMetrics(): ConversationPerformanceMetrics | null {
+    return this.repository.getPerformanceMetrics?.() ?? null
   }
 
   listArchives(): Promise<ConversationArchiveListResult> {

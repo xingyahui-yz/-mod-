@@ -1,4 +1,6 @@
 import { CURRENT_CONVERSATION_SCHEMA_VERSION, createConversationDocument, migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
+import { createConversationPerformanceTracker, type ConversationPerformanceMetrics } from './conversationPerformance'
+import { measureConversationCapacity } from './conversationCapacity'
 
 export type ConversationFileRead<T> =
   | { status: 'found'; value: T }
@@ -66,6 +68,7 @@ export type ConversationQuarantineRestoreResult =
   | { ok: false; error: string; certainty: 'unchanged' | 'uncertain' }
 
 export interface ConversationRepository {
+  getPerformanceMetrics?(): ConversationPerformanceMetrics
   load(projectPath: string): Promise<ConversationLoadResult>
   save(projectPath: string, document: ConversationDocument): Promise<ConversationSaveResult>
   archiveAndReset(projectPath: string, document: ConversationDocument, resetAt: string): Promise<ConversationArchiveAndResetResult>
@@ -86,6 +89,7 @@ export function createConversationRepository(
   createId: () => string = () => crypto.randomUUID(),
 ): ConversationRepository {
   let transaction = Promise.resolve()
+  const performanceTracker = createConversationPerformanceTracker()
 
   const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = transaction.then(operation, operation)
@@ -177,7 +181,9 @@ export function createConversationRepository(
   }
 
   return {
+    getPerformanceMetrics: () => performanceTracker.snapshot(),
     load(projectPath) {
+      const startedAt = performance.now()
       return runExclusive(async (): Promise<ConversationLoadResult> => {
         const path = activePath(projectPath)
         const listing = await files.readDirectory(directory(projectPath))
@@ -249,15 +255,26 @@ export function createConversationRepository(
         }
         return { status: 'missing', warning: cleanupWarning }
       }).catch(error => ({ status: 'failed' as const, reason: errorMessage(error), path: activePath(projectPath) }))
+        .then(result => {
+          const document = result.status === 'loaded' ? result.document : null
+          const capacity = document ? measureConversationCapacity(document) : null
+          performanceTracker.record('load', performance.now() - startedAt, capacity?.bytes ?? 0, capacity?.messageCount ?? 0)
+          return result
+        })
     },
 
     save(projectPath, document) {
+      const startedAt = performance.now()
       return runExclusive(async () => {
         try {
           return await saveInternal(projectPath, document)
         } catch (error) {
           return { ok: false as const, error: errorMessage(error), certainty: 'uncertain' as const }
         }
+      }).then(result => {
+        const capacity = measureConversationCapacity(document)
+        performanceTracker.record('save', performance.now() - startedAt, capacity.bytes, capacity.messageCount)
+        return result
       })
     },
 

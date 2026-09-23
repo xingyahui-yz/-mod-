@@ -11,6 +11,7 @@ import {
 } from 'react'
 import type { ConversationAttachment, ConversationQuickReplySelection } from './conversationDocument'
 import { createConversationRepository } from './conversationRepository'
+import type { ConversationPerformanceMetrics } from './conversationPerformance'
 import {
   ProjectConversation,
   type ConversationModel,
@@ -54,6 +55,7 @@ export interface ProjectConversationActions {
   ): ReturnType<ProjectConversation['send']>
   cancel(): ReturnType<ProjectConversation['cancel']>
   retryTurn(turnId: string): ReturnType<ProjectConversation['retryTurn']>
+  getPerformanceMetrics(): ConversationPerformanceMetrics | null
   archiveAndReset(): ReturnType<ProjectConversation['archiveAndReset']>
   listArchives(): ReturnType<ProjectConversation['listArchives']>
   readArchive(archiveId: string): ReturnType<ProjectConversation['readArchive']>
@@ -366,6 +368,7 @@ export function useProjectConversationActions(): ProjectConversationActions {
   }
 
   return useMemo(() => ({
+    getPerformanceMetrics: () => conversation?.getPerformanceMetrics() ?? null,
     send: (
       userText: string,
       attachments: readonly ConversationAttachment[] = [],

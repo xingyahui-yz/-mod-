@@ -26,6 +26,22 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProjectConversationDrawer', () => {
+  it('归档管理展示当前进程内存储 p95 与 SQLite 评估阈值', async () => {
+    const repository = memoryRepository({ status: 'missing' })
+    repository.getPerformanceMetrics = vi.fn(() => ({
+      scope: 'current-project-session', sampleLimit: 100,
+      load: { sampleCount: 3, p95Ms: 120 }, save: { sampleCount: 2, p95Ms: 240 },
+      softScale: { criteria: '>=10MB or >=5000 messages', load: { sampleCount: 1, p95Ms: 620 }, save: { sampleCount: 1, p95Ms: 520 } },
+      samples: [],
+    }))
+    renderDrawer('/mods/quiet-depth', repository, successModel('unused'))
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(screen.getByRole('button', { name: '查看存储性能与 SQLite 评估数据' }))
+
+    expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('120 ms')
+    expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('超过 500 ms')
+  })
+
   it('可导出已知旧 schema 隔离原文，并二次确认后恢复且保留原隔离文件', async () => {
     const repository = memoryRepository({
       status: 'quarantined',

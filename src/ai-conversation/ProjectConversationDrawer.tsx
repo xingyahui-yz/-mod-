@@ -14,6 +14,7 @@ import {
 import { CardProposalPanel } from './CardProposalPanel'
 import type { ConversationProposalRejectionFeedback } from './proposalLifecycle'
 import type { ConversationArchiveSummary, ConversationArchiveReadResult, ConversationQuarantineSummary, ConversationQuarantineReadResult } from './conversationRepository'
+import type { ConversationPerformanceMetrics } from './conversationPerformance'
 
 const RETRIABLE_STATUSES = new Set<ConversationAttemptStatus>(['failed', 'cancelled', 'interrupted'])
 const NO_CARD_DOCUMENTS: readonly never[] = []
@@ -40,6 +41,7 @@ export function ProjectConversationDrawer({
   const [isLoadingArchives, setIsLoadingArchives] = useState(false)
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null)
   const [archiveRead, setArchiveRead] = useState<Extract<ConversationArchiveReadResult, { ok: true }> | null>(null)
+  const [performanceMetrics, setPerformanceMetrics] = useState<ConversationPerformanceMetrics | null>(null)
   const [quarantineError, setQuarantineError] = useState<string | null>(null)
   const [quarantines, setQuarantines] = useState<readonly ConversationQuarantineSummary[]>([])
   const [isLoadingQuarantines, setIsLoadingQuarantines] = useState(false)
@@ -86,6 +88,7 @@ export function ProjectConversationDrawer({
       setActionError(null)
       setArchiveError(null)
       setArchiveBrowserOpen(false)
+      setPerformanceMetrics(null)
       setArchives([])
       setIsLoadingArchives(false)
       setSelectedArchiveId(null)
@@ -585,6 +588,13 @@ export function ProjectConversationDrawer({
                   <p className="conversation-archive-readonly-note">
                     归档为只读历史，不会自动恢复到活动对话；可浏览或额外导出 JSON。
                   </p>
+                  <button type="button" onClick={() => setPerformanceMetrics(actions.getPerformanceMetrics())}>查看存储性能与 SQLite 评估数据</button>
+                  {performanceMetrics && <section aria-label="对话存储性能指标">
+                    <strong>本次项目会话实例内最近 {performanceMetrics.sampleLimit} 次活动文档读写样本</strong>
+                    <p>加载 p95：{formatMetric(performanceMetrics.load.p95Ms)}（{performanceMetrics.load.sampleCount} 次）；原子保存 p95：{formatMetric(performanceMetrics.save.p95Ms)}（{performanceMetrics.save.sampleCount} 次）。</p>
+                    <p>软阈值规模样本（≥10 MB 或 ≥5,000 条消息）：加载 p95 {formatMetric(performanceMetrics.softScale.load.p95Ms)}（{performanceMetrics.softScale.load.sampleCount} 次）；保存 p95 {formatMetric(performanceMetrics.softScale.save.p95Ms)}（{performanceMetrics.softScale.save.sampleCount} 次）。</p>
+                    <p>若软阈值规模的加载或保存 p95 超过 500 ms，应立项评估 SQLite；这些样本仅保留于当前应用进程，不含对话文本，也不会持久化。</p>
+                  </section>}
                   <button
                     type="button"
                     className="conversation-archive-reset-button"
@@ -957,6 +967,10 @@ function projectName(projectRoot: string): string {
 
 function shortRevision(revision: string): string {
   return revision.slice(0, 8)
+}
+
+function formatMetric(value: number | null): string {
+  return value === null ? '暂无样本' : `${Math.round(value)} ms`
 }
 
 function formatCapacityBytes(bytes: number): string {

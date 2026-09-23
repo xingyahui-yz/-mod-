@@ -75,6 +75,26 @@ describe('ConversationRepository', () => {
     expect([...memory.data.keys()]).toEqual(['/project/.modstudio/ai/conversation.json'])
   })
 
+  it('为活动文档 load/save 记录进程内 p95 样本，不写入文档', async () => {
+    const memory = memoryFiles()
+    const repository = createConversationRepository(memory.files, () => 1, () => 'metrics')
+    const document = createConversationDocument('2026-09-01T00:00:00Z')
+    await repository.save('/project', document)
+    await repository.load('/project')
+
+    const metrics = repository.getPerformanceMetrics?.()
+    expect(metrics).toMatchObject({
+      scope: 'current-project-session',
+      sampleLimit: 100,
+      load: { sampleCount: 1 },
+      save: { sampleCount: 1 },
+      softScale: { load: { sampleCount: 0, p95Ms: null }, save: { sampleCount: 0, p95Ms: null } },
+    })
+    expect(metrics?.load.p95Ms).toEqual(expect.any(Number))
+    expect(memory.data.get('/project/.modstudio/ai/conversation.json')).toBe(JSON.stringify(document, null, 2))
+    expect(JSON.stringify(metrics)).not.toContain('conversation.json')
+  })
+
   it('加载并原子改写严格 v1 为当前 v4', async () => {
     const path = '/project/.modstudio/ai/conversation.json'
     const current = createConversationDocument('2026-09-01T00:00:00Z')
