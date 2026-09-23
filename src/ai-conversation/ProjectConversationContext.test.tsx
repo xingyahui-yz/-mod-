@@ -487,6 +487,9 @@ function repositoryWithSaves(
     }),
     listArchives: vi.fn(async () => ({ ok: true as const, archives: [] })),
     readArchive: vi.fn(async (_projectRoot, archiveId) => ({ ok: false as const, error: `missing archive: ${archiveId}` })),
+    listQuarantines: vi.fn(async () => ({ ok: true as const, quarantines: [] })),
+    readQuarantine: vi.fn(async (_projectRoot, quarantineId) => ({ ok: false as const, error: `missing quarantine: ${quarantineId}` })),
+    restoreQuarantine: vi.fn(async () => ({ ok: false as const, error: 'not used', certainty: 'unchanged' as const })),
   }
 }
 

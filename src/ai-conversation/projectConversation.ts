@@ -15,6 +15,8 @@ import {
 import type {
   ConversationArchiveListResult,
   ConversationArchiveReadResult,
+  ConversationQuarantineListResult,
+  ConversationQuarantineReadResult,
   ConversationRepository,
   ConversationLoadResult,
 } from './conversationRepository'
@@ -69,6 +71,7 @@ export type ProjectConversationErrorCode =
   | 'context-over-budget'
   | 'capacity-limit'
   | 'archive-failed'
+  | 'quarantine-recovery-failed'
   | 'nothing-to-archive'
   | 'not-retryable'
   | 'cancelled'
@@ -238,6 +241,47 @@ export class ProjectConversation {
 
   readArchive(archiveId: string): Promise<ConversationArchiveReadResult> {
     return this.repository.readArchive(this.projectPath, archiveId)
+  }
+
+  listQuarantines(): Promise<ConversationQuarantineListResult> {
+    return this.repository.listQuarantines(this.projectPath)
+  }
+
+  readQuarantine(quarantineId: string): Promise<ConversationQuarantineReadResult> {
+    return this.repository.readQuarantine(this.projectPath, quarantineId)
+  }
+
+  async restoreQuarantine(quarantineId: string): Promise<ProjectConversationResult> {
+    if (this.hasActiveWork()) return failure('already-running', '当前轮次仍在处理，不能恢复隔离文档')
+    return this.runMutation(async () => {
+      if (this.snapshot.isRunning) return failure('already-running', '当前轮次仍在处理，不能恢复隔离文档')
+      if (this.snapshot.requiresReload) return failure('persistence', '对话持久化状态不确定，请重新加载')
+      if (this.snapshot.loadStatus === 'loading' || this.snapshot.loadStatus === 'failed') {
+        return failure('load-failed', '对话状态未就绪，无法恢复隔离文档')
+      }
+      const result = await this.repository.restoreQuarantine(this.projectPath, quarantineId)
+      if (!result.ok) {
+        const uncertain = result.certainty === 'uncertain'
+        this.update({
+          ...this.snapshot,
+          lastError: result.error,
+          persistenceError: uncertain ? result.error : null,
+          requiresReload: uncertain,
+        })
+        return failure(uncertain ? 'persistence' : 'quarantine-recovery-failed', result.error)
+      }
+      this.update({
+        ...this.snapshot,
+        document: result.document,
+        loadStatus: 'loaded',
+        quarantineReason: null,
+        isRunning: false,
+        lastError: result.migrated ? '已从隔离文档恢复并迁移版本；原始隔离文件仍保留。' : '已从隔离文档恢复；原始隔离文件仍保留。',
+        persistenceError: null,
+        requiresReload: false,
+      })
+      return { ok: true }
+    })
   }
 
   async archiveAndReset(): Promise<ProjectConversationResult> {

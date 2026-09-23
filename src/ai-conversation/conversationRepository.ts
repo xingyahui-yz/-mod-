@@ -44,12 +44,35 @@ export type ConversationArchiveAndResetResult =
   | { ok: true; archiveId: string }
   | { ok: false; error: string; certainty: 'unchanged' | 'uncertain' }
 
+export interface ConversationQuarantineSummary {
+  quarantineId: string
+  reason: string
+  schemaVersion: number | null
+  bytes: number
+  recoverable: boolean
+}
+
+export type ConversationQuarantineListResult =
+  | { ok: true; quarantines: readonly ConversationQuarantineSummary[] }
+  | { ok: false; error: string }
+
+export type ConversationQuarantineReadResult =
+  | { ok: true; quarantineId: string; reason: string; schemaVersion: number | null; recoverable: boolean; migrated: boolean; document: ConversationDocument | null; rawJson: string }
+  | { ok: false; error: string }
+
+export type ConversationQuarantineRestoreResult =
+  | { ok: true; quarantineId: string; document: ConversationDocument; migrated: boolean }
+  | { ok: false; error: string; certainty: 'unchanged' | 'uncertain' }
+
 export interface ConversationRepository {
   load(projectPath: string): Promise<ConversationLoadResult>
   save(projectPath: string, document: ConversationDocument): Promise<ConversationSaveResult>
   archiveAndReset(projectPath: string, document: ConversationDocument, resetAt: string): Promise<ConversationArchiveAndResetResult>
   listArchives(projectPath: string): Promise<ConversationArchiveListResult>
   readArchive(projectPath: string, archiveId: string): Promise<ConversationArchiveReadResult>
+  listQuarantines(projectPath: string): Promise<ConversationQuarantineListResult>
+  readQuarantine(projectPath: string, quarantineId: string): Promise<ConversationQuarantineReadResult>
+  restoreQuarantine(projectPath: string, quarantineId: string): Promise<ConversationQuarantineRestoreResult>
 }
 
 const directory = (projectPath: string) => `${projectPath}/.modstudio/ai`
@@ -129,6 +152,19 @@ export function createConversationRepository(
     return { ok: true }
   }
 
+  const readQuarantineInternal = async (projectPath: string, quarantineId: string): Promise<ConversationQuarantineReadResult> => {
+    if (!isSafeQuarantineId(quarantineId)) return { ok: false, error: '隔离文档 ID 无效' }
+    const result = await files.readFile(directory(projectPath) + '/' + quarantineId)
+    if (result.status === 'error') return { ok: false, error: '无法读取隔离文档：' + result.error }
+    if (result.status === 'missing') return { ok: false, error: '隔离文档不存在' }
+    const parsed = parseRawDocument(result.value)
+    const schemaVersion = readSchemaVersion(result.value)
+    return {
+      ok: true, quarantineId, reason: parsed.ok ? (parsed.migrated ? '支持的旧版本，可迁移恢复' : '文档有效') : parsed.reason,
+      schemaVersion, recoverable: parsed.ok, migrated: parsed.ok && parsed.migrated,
+      document: parsed.ok ? parsed.document : null, rawJson: result.value,
+    }
+  }
   const readArchiveInternal = async (projectPath: string, archiveId: string): Promise<ConversationArchiveReadResult> => {
     if (!isSafeArchiveId(archiveId)) return { ok: false, error: '归档 ID 无效' }
     const result = await files.readFile(`${archivesDirectory(projectPath)}/${archiveId}.json`)
@@ -302,6 +338,54 @@ export function createConversationRepository(
         catch (error) { return { ok: false as const, error: errorMessage(error) } }
       })
     },
+
+    listQuarantines(projectPath) {
+      return runExclusive(async () => {
+        try {
+          const listing = await files.readDirectory(directory(projectPath))
+          if (listing.status === 'error') return { ok: false as const, error: listing.error }
+          if (listing.status === 'missing') return { ok: true as const, quarantines: [] }
+          const quarantines: ConversationQuarantineSummary[] = []
+          for (const entry of listing.value) {
+            const quarantineId = fileName(entry)
+            if (!isSafeQuarantineId(quarantineId)) continue
+            const result = await readQuarantineInternal(projectPath, quarantineId)
+            if (!result.ok) return { ok: false as const, error: result.error }
+            quarantines.push({ quarantineId, reason: result.reason, schemaVersion: result.schemaVersion, bytes: new TextEncoder().encode(result.rawJson).byteLength, recoverable: result.recoverable })
+          }
+          quarantines.sort((left, right) => left.quarantineId.localeCompare(right.quarantineId))
+          return { ok: true as const, quarantines }
+        } catch (error) { return { ok: false as const, error: errorMessage(error) } }
+      })
+    },
+
+    readQuarantine(projectPath, quarantineId) {
+      return runExclusive(async () => {
+        try { return await readQuarantineInternal(projectPath, quarantineId) }
+        catch (error) { return { ok: false as const, error: errorMessage(error) } }
+      })
+    },
+
+    restoreQuarantine(projectPath, quarantineId) {
+      return runExclusive(async () => {
+        try {
+          if (!isSafeQuarantineId(quarantineId)) return { ok: false as const, error: '隔离文档 ID 无效', certainty: 'unchanged' as const }
+          const path = activePath(projectPath)
+          const active = await files.readFile(path)
+          if (active.status === 'found') return { ok: false as const, error: '活动对话已存在，拒绝覆盖', certainty: 'unchanged' as const }
+          if (active.status === 'error') return { ok: false as const, error: '无法确认活动对话状态：' + active.error, certainty: 'uncertain' as const }
+          const quarantine = await readQuarantineInternal(projectPath, quarantineId)
+          if (!quarantine.ok) return { ok: false as const, error: quarantine.error, certainty: 'unchanged' as const }
+          if (!quarantine.recoverable || !quarantine.document) return { ok: false as const, error: '隔离文档不可恢复：' + quarantine.reason, certainty: 'unchanged' as const }
+          const saved = await saveInternal(projectPath, quarantine.document, true)
+          if (!saved.ok) return { ok: false as const, error: saved.error, certainty: saved.certainty }
+          const restored = await files.readFile(path)
+          const restoredDocument = restored.status === 'found' ? parseSavedDocument(restored.value) : null
+          if (!restoredDocument || !documentsEqual(restoredDocument, quarantine.document)) return { ok: false as const, error: '恢复后活动文档读回校验失败', certainty: 'uncertain' as const }
+          return { ok: true as const, quarantineId, document: quarantine.document, migrated: quarantine.migrated }
+        } catch (error) { return { ok: false as const, error: errorMessage(error), certainty: 'uncertain' as const } }
+      })
+    },
   }
 }
 
@@ -438,6 +522,19 @@ function fileName(path: string): string {
 
 function isSafeArchiveId(value: string): boolean {
   return /^[a-zA-Z0-9_-]{1,100}$/.test(value) && value !== '.' && value !== '..'
+}
+
+function isSafeQuarantineId(value: string): boolean {
+  return /^conversation\.json\.quarantine(?:-future)?-[0-9]+-[a-zA-Z0-9_-]{1,100}$/.test(value)
+}
+
+function readSchemaVersion(content: string): number | null {
+  try {
+    const raw: unknown = JSON.parse(content)
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const version = (raw as Record<string, unknown>).schemaVersion
+    return typeof version === 'number' && Number.isSafeInteger(version) ? version : null
+  } catch { return null }
 }
 
 function safeId(value: string): string {

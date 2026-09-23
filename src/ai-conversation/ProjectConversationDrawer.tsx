@@ -13,7 +13,7 @@ import {
 } from './ProjectConversationContext'
 import { CardProposalPanel } from './CardProposalPanel'
 import type { ConversationProposalRejectionFeedback } from './proposalLifecycle'
-import type { ConversationArchiveSummary, ConversationArchiveReadResult } from './conversationRepository'
+import type { ConversationArchiveSummary, ConversationArchiveReadResult, ConversationQuarantineSummary, ConversationQuarantineReadResult } from './conversationRepository'
 
 const RETRIABLE_STATUSES = new Set<ConversationAttemptStatus>(['failed', 'cancelled', 'interrupted'])
 const NO_CARD_DOCUMENTS: readonly never[] = []
@@ -40,6 +40,14 @@ export function ProjectConversationDrawer({
   const [isLoadingArchives, setIsLoadingArchives] = useState(false)
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null)
   const [archiveRead, setArchiveRead] = useState<Extract<ConversationArchiveReadResult, { ok: true }> | null>(null)
+  const [quarantineError, setQuarantineError] = useState<string | null>(null)
+  const [quarantines, setQuarantines] = useState<readonly ConversationQuarantineSummary[]>([])
+  const [isLoadingQuarantines, setIsLoadingQuarantines] = useState(false)
+  const [quarantineBrowserOpen, setQuarantineBrowserOpen] = useState(false)
+  const [selectedQuarantineId, setSelectedQuarantineId] = useState<string | null>(null)
+  const [quarantineRead, setQuarantineRead] = useState<Extract<ConversationQuarantineReadResult, { ok: true }> | null>(null)
+  const quarantineListRequest = useRef(0)
+  const quarantineReadRequest = useRef(0)
   const archiveReadRequest = useRef(0)
   const archiveListRequest = useRef(0)
   const currentProjectRoot = useRef(view.projectRoot)
@@ -84,6 +92,14 @@ export function ProjectConversationDrawer({
       setArchiveRead(null)
       archiveReadRequest.current += 1
       archiveListRequest.current += 1
+      setQuarantineError(null)
+      setQuarantines([])
+      setIsLoadingQuarantines(false)
+      setQuarantineBrowserOpen(false)
+      setSelectedQuarantineId(null)
+      setQuarantineRead(null)
+      quarantineListRequest.current += 1
+      quarantineReadRequest.current += 1
       setHasUnread(false)
       previousActivityCount.current = activityCount
       unreadBaselineReadyRef.current = view.loadStatus !== 'loading'
@@ -259,9 +275,31 @@ export function ProjectConversationDrawer({
     }
   }
 
+  const refreshQuarantines = async () => {
+    const request = ++quarantineListRequest.current
+    const requestedProjectRoot = view.projectRoot
+    setIsLoadingQuarantines(true)
+    setQuarantineError(null)
+    try {
+      const result = await actions.listQuarantines()
+      if (request !== quarantineListRequest.current || currentProjectRoot.current !== requestedProjectRoot) return
+      if (result.ok) setQuarantines(result.quarantines)
+      else setQuarantineError(result.error)
+    } catch (error) {
+      if (request === quarantineListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setQuarantineError(error instanceof Error ? error.message : '读取隔离文件列表失败')
+      }
+    } finally {
+      if (request === quarantineListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setIsLoadingQuarantines(false)
+      }
+    }
+  }
+
   const openArchiveBrowser = () => {
     setArchiveBrowserOpen(true)
     void refreshArchives()
+    void refreshQuarantines()
   }
 
   const showArchive = async (archiveId: string) => {
@@ -287,6 +325,70 @@ export function ProjectConversationDrawer({
     setSelectedArchiveId(null)
     setArchiveRead(null)
     setArchiveError(null)
+  }
+
+
+  const showQuarantine = async (quarantineId: string) => {
+    setSelectedQuarantineId(quarantineId)
+    setQuarantineRead(null)
+    setQuarantineError(null)
+    const request = ++quarantineReadRequest.current
+    try {
+      const result = await actions.readQuarantine(quarantineId)
+      if (request !== quarantineReadRequest.current || currentProjectRoot.current !== view.projectRoot) return
+      if (result.ok) setQuarantineRead(result)
+      else setQuarantineError(result.error)
+    } catch (error) {
+      if (request === quarantineReadRequest.current && currentProjectRoot.current === view.projectRoot) {
+        setQuarantineError(error instanceof Error ? error.message : '读取隔离文件失败')
+      }
+    }
+  }
+
+  const leaveQuarantine = () => {
+    quarantineReadRequest.current += 1
+    setSelectedQuarantineId(null)
+    setQuarantineRead(null)
+    setQuarantineError(null)
+  }
+
+  const exportQuarantine = () => {
+    if (!quarantineRead) return
+    const blob = new Blob([quarantineRead.rawJson], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'quarantine-' + safeArchiveFilename(quarantineRead.quarantineId) + '.json'
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  const canRestoreQuarantine = Boolean(
+    quarantineRead?.recoverable &&
+    !view.document &&
+    !view.isBusy &&
+    (view.loadStatus === 'quarantined' || view.loadStatus === 'missing'),
+  )
+
+  const restoreQuarantine = async () => {
+    if (!selectedQuarantineId || !canRestoreQuarantine) return
+    const confirmed = window.confirm(
+      '将隔离文档迁移并恢复为当前项目的活动对话。原始隔离文件会保留。确定恢复吗？',
+    )
+    if (!confirmed) return
+    setQuarantineError(null)
+    try {
+      const result = await actions.restoreQuarantine(selectedQuarantineId)
+      if (!result.ok) {
+        setQuarantineError(result.error)
+        return
+      }
+      await refreshQuarantines()
+    } catch (error) {
+      setQuarantineError(error instanceof Error ? error.message : '恢复隔离对话失败')
+    }
   }
 
   const exportArchive = () => {
@@ -519,10 +621,73 @@ export function ProjectConversationDrawer({
                       {archiveRead && <span>{archiveRead.document.turns.length} 轮历史</span>}
                     </div>
                   )}
+                  <section className="conversation-quarantines" aria-label="隔离对话文件">
+                    <h3>隔离文件</h3>
+                    <button
+                      type="button"
+                      aria-expanded={quarantineBrowserOpen}
+                      onClick={() => {
+                        setQuarantineBrowserOpen(true)
+                        void refreshQuarantines()
+                      }}
+                    >{quarantineBrowserOpen ? '刷新隔离文件列表' : '查看隔离文件'}</button>
+                    {quarantineBrowserOpen && (
+                      <>
+                        <p>隔离文件会保留原始内容；未知未来 schema 或损坏文件仅可导出，不可恢复。</p>
+                        <button type="button" onClick={() => void refreshQuarantines()} disabled={isLoadingQuarantines}>
+                          {isLoadingQuarantines ? '正在读取…' : '刷新隔离列表'}
+                        </button>
+                        {isLoadingQuarantines && <span role="status">正在读取隔离文件列表…</span>}
+                        {!isLoadingQuarantines && quarantines.length === 0 && <p>没有隔离文件。</p>}
+                        {quarantines.length > 0 && (
+                          <ul aria-label="隔离文件列表">
+                            {quarantines.map(item => (
+                              <li key={item.quarantineId}>
+                                <button
+                                  type="button"
+                                  aria-label={'查看隔离文件 ' + item.quarantineId}
+                                  aria-pressed={selectedQuarantineId === item.quarantineId}
+                                  onClick={() => void showQuarantine(item.quarantineId)}
+                                >
+                                  {item.quarantineId} · schema {item.schemaVersion ?? '未知'} · {formatCapacityBytes(item.bytes)} · {item.recoverable ? '可恢复' : '仅可导出'}
+                                </button>
+                                <small>{item.reason}</small>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {selectedQuarantineId && (
+                          <div className="conversation-quarantine-viewer" aria-label="隔离文件只读查看">
+                            <strong>隔离原始文档 · {selectedQuarantineId}</strong>
+                            {quarantineRead ? (
+                              <>
+                                <p>原因：{quarantineRead.reason}</p>
+                                <p>schemaVersion：{quarantineRead.schemaVersion ?? '未知或损坏'}</p>
+                                <p>状态：{quarantineRead.recoverable ? quarantineRead.migrated ? '可迁移恢复' : '可恢复' : '仅可导出，不能恢复'}</p>
+                                <button type="button" onClick={leaveQuarantine}>关闭隔离查看</button>
+                                <button type="button" onClick={exportQuarantine}>导出隔离原始 JSON</button>
+                                <button
+                                  type="button"
+                                  onClick={() => void restoreQuarantine()}
+                                  disabled={!canRestoreQuarantine}
+                                >确认恢复隔离对话</button>
+                                {view.document && <p role="status">当前活动对话包含内容，因此禁止用隔离文档覆盖。</p>}
+                                {!view.document && view.loadStatus !== 'quarantined' && view.loadStatus !== 'missing' && (
+                                  <p role="status">当前项目状态不允许恢复隔离文档。</p>
+                                )}
+                                <pre aria-label="隔离文件原始 JSON">{quarantineRead.rawJson}</pre>
+                              </>
+                            ) : <p>正在读取隔离文件…</p>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
                 </div>
               )}
             </section>
             {archiveError && <div className="conversation-error" role="alert">归档操作失败：{archiveError}</div>}
+            {quarantineError && <div className="conversation-error" role="alert">隔离文件操作失败：{quarantineError}</div>}
 
             <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label={selectedArchiveId ? '归档对话历史' : '对话历史'}>
               {selectedArchiveId ? (archiveRead

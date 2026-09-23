@@ -7,10 +7,13 @@ import type { CardDocument } from '../card/cardDocument'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { ConversationCapacityLimits } from './conversationCapacity'
 
-const unusedArchiveMethods: Pick<ConversationRepository, 'archiveAndReset' | 'listArchives' | 'readArchive'> = {
+const unusedArchiveMethods: Pick<ConversationRepository, 'archiveAndReset' | 'listArchives' | 'readArchive' | 'listQuarantines' | 'readQuarantine' | 'restoreQuarantine'> = {
   archiveAndReset: async () => ({ ok: false, error: 'not used', certainty: 'unchanged' }),
   listArchives: async () => ({ ok: true, archives: [] }),
   readArchive: async () => ({ ok: false, error: 'not used' }),
+  listQuarantines: async () => ({ ok: true, quarantines: [] }),
+  readQuarantine: async () => ({ ok: false, error: 'not used' }),
+  restoreQuarantine: async () => ({ ok: false, error: 'not used', certainty: 'unchanged' }),
 }
 
 function harness(
@@ -78,6 +81,26 @@ describe('ProjectConversation', () => {
     await expect(h.conversation.send('下一轮')).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
     expect(respond).toHaveBeenCalledTimes(1)
     expect(h.saved()?.turns).toHaveLength(1)
+  })
+
+  it('显式恢复可迁移隔离文档后更新活动状态并保留源文件', async () => {
+    const restored = createConversationDocument('2026-09-01T00:00:00.000Z')
+    const restore = vi.fn(async () => ({ ok: true as const, quarantineId: 'conversation.json.quarantine-1-old', document: restored, migrated: true }))
+    const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
+      load: async () => ({ status: 'quarantined', reason: '损坏活动文档', path: '/p/.modstudio/ai/conversation.json.quarantine-1-old' }),
+      save: async () => ({ ok: true }),
+      restoreQuarantine: restore,
+    }
+    const conversation = new ProjectConversation('/p', repository, { respond: async () => ({ success: true, content: '{"schemaVersion":1,"text":"ok","quickReplies":[],"proposals":[]}' }) })
+    await conversation.load()
+    expect(conversation.getSnapshot().loadStatus).toBe('quarantined')
+
+
+    await expect(conversation.restoreQuarantine('conversation.json.quarantine-1-old')).resolves.toEqual({ ok: true })
+    expect(restore).toHaveBeenCalledWith('/p', 'conversation.json.quarantine-1-old')
+    expect(conversation.getSnapshot()).toMatchObject({ loadStatus: 'loaded', document: restored, quarantineReason: null, requiresReload: false })
+    expect(conversation.getSnapshot().lastError).toContain('原始隔离文件仍保留')
   })
 
   it('归档完整活动历史后重置为空文档，并支持只读读取', async () => {

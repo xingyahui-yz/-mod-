@@ -395,6 +395,104 @@ describe('ConversationRepository', () => {
     }
   })
 
+  it('读取并恢复可迁移隔离文档，保留原始隔离字节', async () => {
+    const path = '/project/.modstudio/ai/conversation.json.quarantine-42-old'
+    const current = createConversationDocument('2026-09-01T00:00:00Z')
+    const v1 = { schemaVersion: 1, turns: current.turns, createdAt: current.createdAt, updatedAt: current.updatedAt }
+    const raw = JSON.stringify(v1, null, 2)
+    const memory = memoryFiles({ [path]: raw })
+    const repository = createConversationRepository(memory.files)
+
+    const read = await repository.readQuarantine('/project', 'conversation.json.quarantine-42-old')
+    expect(read).toMatchObject({ ok: true, recoverable: true, migrated: true, document: current, rawJson: raw })
+    await expect(repository.listQuarantines('/project')).resolves.toEqual({
+      ok: true,
+      quarantines: [{ quarantineId: 'conversation.json.quarantine-42-old', reason: '支持的旧版本，可迁移恢复', schemaVersion: 1, bytes: new TextEncoder().encode(raw).byteLength, recoverable: true }],
+    })
+    await expect(repository.restoreQuarantine('/project', 'conversation.json.quarantine-42-old')).resolves.toEqual({
+      ok: true, quarantineId: 'conversation.json.quarantine-42-old', document: current, migrated: true,
+    })
+    expect(memory.data.get(path)).toBe(raw)
+    expect(JSON.parse(memory.data.get('/project/.modstudio/ai/conversation.json')!)).toEqual(current)
+  })
+
+  it('未来 schema quarantine 可导出原始内容但不可恢复', async () => {
+    const id = 'conversation.json.quarantine-future-88-future'
+    const path = '/project/.modstudio/ai/' + id
+    const raw = JSON.stringify({ schemaVersion: 99, opaque: 'preserve' })
+    const memory = memoryFiles({ [path]: raw })
+    const repository = createConversationRepository(memory.files)
+
+    await expect(repository.readQuarantine('/project', id)).resolves.toEqual({
+      ok: true, quarantineId: id, reason: '不支持的 schemaVersion', schemaVersion: 99,
+      recoverable: false, migrated: false, document: null, rawJson: raw,
+    })
+    await expect(repository.listQuarantines('/project')).resolves.toMatchObject({
+      ok: true, quarantines: [{ quarantineId: id, schemaVersion: 99, recoverable: false, bytes: new TextEncoder().encode(raw).byteLength }],
+    })
+    await expect(repository.restoreQuarantine('/project', id)).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
+    expect(memory.data.has(path)).toBe(true)
+    expect(memory.data.has('/project/.modstudio/ai/conversation.json')).toBe(false)
+  })
+
+  it('quarantine restore 在 active 存在时拒绝覆盖', async () => {
+    const id = 'conversation.json.quarantine-42-valid'
+    const quarantinePath = '/project/.modstudio/ai/' + id
+    const activePath = '/project/.modstudio/ai/conversation.json'
+    const active = createConversationDocument('2026-09-02T00:00:00Z')
+    const quarantined = createConversationDocument('2026-09-01T00:00:00Z')
+    const memory = memoryFiles({ [quarantinePath]: JSON.stringify(quarantined), [activePath]: JSON.stringify(active) })
+
+    await expect(createConversationRepository(memory.files).restoreQuarantine('/project', id)).resolves.toMatchObject({
+      ok: false, certainty: 'unchanged', error: '活动对话已存在，拒绝覆盖',
+    })
+    expect(JSON.parse(memory.data.get(activePath)!)).toEqual(active)
+    expect(JSON.parse(memory.data.get(quarantinePath)!)).toEqual(quarantined)
+  })
+
+  it('quarantine API 拒绝路径穿越与不匹配的 basename', async () => {
+    const repository = createConversationRepository(memoryFiles().files)
+    await expect(repository.readQuarantine('/project', '../conversation.json.quarantine-1-x')).resolves.toMatchObject({ ok: false })
+    await expect(repository.readQuarantine('/project', 'conversation.json.quarantine-x-id')).resolves.toMatchObject({ ok: false })
+    await expect(repository.restoreQuarantine('/project', 'conversation.json.quarantine-1-../../active')).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
+  })
+
+  it('原子写入失败时恢复不改 active 且保留 quarantine', async () => {
+    const id = 'conversation.json.quarantine-42-valid'
+    const quarantinePath = '/project/.modstudio/ai/' + id
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const raw = JSON.stringify(original)
+    const memory = memoryFiles({ [quarantinePath]: raw })
+    const files: ConversationFilePort = {
+      ...memory.files,
+      writeFile: async (path, content) => path.includes('/conversation.json.tmp-') ? false : memory.files.writeFile(path, content),
+    }
+
+    await expect(createConversationRepository(files).restoreQuarantine('/project', id)).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
+    expect(memory.data.has('/project/.modstudio/ai/conversation.json')).toBe(false)
+    expect(memory.data.get(quarantinePath)).toBe(raw)
+  })
+
+  it('真实目录可读取并恢复 quarantine，且源文件保留', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-quarantine-'))
+    const aiDirectory = join(root, '.modstudio/ai')
+    const id = 'conversation.json.quarantine-42-valid'
+    const quarantinePath = join(aiDirectory, id)
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const raw = JSON.stringify(original, null, 2)
+    try {
+      await mkdir(aiDirectory, { recursive: true })
+      await writeFile(quarantinePath, raw, 'utf8')
+      const repository = createConversationRepository(realFiles())
+      await expect(repository.listQuarantines(root)).resolves.toMatchObject({ ok: true, quarantines: [{ quarantineId: id, recoverable: true }] })
+      await expect(repository.restoreQuarantine(root, id)).resolves.toMatchObject({ ok: true, document: original, migrated: false })
+      expect(await readFile(quarantinePath, 'utf8')).toBe(raw)
+      expect(JSON.parse(await readFile(join(aiDirectory, 'conversation.json'), 'utf8'))).toEqual(original)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('真实目录上的 EACCES tagged error 阻止恢复猜测', async () => {
     const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-eacces-'))
     const base = realFiles()

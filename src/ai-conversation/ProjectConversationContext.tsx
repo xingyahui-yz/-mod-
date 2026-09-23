@@ -57,6 +57,9 @@ export interface ProjectConversationActions {
   archiveAndReset(): ReturnType<ProjectConversation['archiveAndReset']>
   listArchives(): ReturnType<ProjectConversation['listArchives']>
   readArchive(archiveId: string): ReturnType<ProjectConversation['readArchive']>
+  listQuarantines(): ReturnType<ProjectConversation['listQuarantines']>
+  readQuarantine(quarantineId: string): ReturnType<ProjectConversation['readQuarantine']>
+  restoreQuarantine(quarantineId: string): ReturnType<ProjectConversation['restoreQuarantine']>
   refreshProposal(proposalId: string): ReturnType<ProjectConversation['refreshProposal']>
   acceptProposal(proposalId: string, finalCardId: string): ReturnType<ProjectConversation['acceptProposal']>
   rejectProposal(
@@ -388,6 +391,16 @@ export function useProjectConversationActions(): ProjectConversationActions {
     readArchive: (archiveId: string) => conversation
       ? conversation.readArchive(archiveId)
       : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    listQuarantines: () => conversation
+      ? conversation.listQuarantines()
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    readQuarantine: (quarantineId: string) => conversation
+      ? conversation.readQuarantine(quarantineId)
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    restoreQuarantine: (quarantineId: string) => {
+      if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
+      return runProjectMutation(() => conversation.restoreQuarantine(quarantineId))
+    },
     refreshProposal: (proposalId: string) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
       return runProjectMutation(() => conversation.refreshProposal(proposalId))

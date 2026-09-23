@@ -26,6 +26,162 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProjectConversationDrawer', () => {
+  it('可导出已知旧 schema 隔离原文，并二次确认后恢复且保留原隔离文件', async () => {
+    const repository = memoryRepository({
+      status: 'quarantined',
+      reason: '旧 schema，可迁移',
+      path: '/mods/quiet-depth/.modstudio/ai/conversation.json.quarantine-1-id',
+    })
+    const quarantineId = 'conversation.json.quarantine-1-old'
+    const migratedDocument = completedDocument()
+    const rawJson = JSON.stringify({ schemaVersion: 3, turns: [{ id: 'legacy' }] })
+    const quarantineSummary = {
+      quarantineId,
+      reason: '支持的旧版本，可迁移恢复',
+      schemaVersion: 3,
+      bytes: new TextEncoder().encode(rawJson).byteLength,
+      recoverable: true,
+    }
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [quarantineSummary] }))
+    repository.readQuarantine = vi.fn(async (_projectRoot, id) => ({
+      ok: true as const,
+      quarantineId: id,
+      reason: quarantineSummary.reason,
+      schemaVersion: 3,
+      recoverable: true,
+      migrated: true,
+      document: migratedDocument,
+      rawJson,
+    }))
+    repository.restoreQuarantine = vi.fn(async (_projectRoot, id) => ({
+      ok: true as const,
+      quarantineId: id,
+      document: migratedDocument,
+      migrated: true,
+    }))
+    const createObjectURL = vi.fn((blob: Blob) => { exportedBlob = blob; return 'blob:quarantine' })
+    const revokeObjectURL = vi.fn()
+    let exportedBlob: Blob | null = null
+    let downloadedFilename = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { downloadedFilename = this.download })
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+    const viewer = await screen.findByLabelText('隔离文件只读查看')
+    expect(viewer.textContent).toContain('schemaVersion：3')
+    expect(viewer.textContent).toContain('可迁移恢复')
+    expect(screen.getByLabelText('隔离文件原始 JSON').textContent).toBe(rawJson)
+
+    fireEvent.click(screen.getByRole('button', { name: '导出隔离原始 JSON' }))
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    expect(downloadedFilename).toBe('quarantine-conversation.json.quarantine-1-old.json')
+    if (!exportedBlob) throw new Error('隔离原始 JSON Blob 未导出')
+    const exportedText = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(exportedBlob!)
+    })
+    expect(exportedText).toBe(rawJson)
+
+    fireEvent.click(screen.getByRole('button', { name: '确认恢复隔离对话' }))
+    expect(confirm).toHaveBeenCalledOnce()
+    await waitFor(() => expect(repository.restoreQuarantine).toHaveBeenCalledWith('/mods/quiet-depth', quarantineId))
+    expect(await screen.findByText(/已从隔离文档恢复并迁移版本/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '查看隔离文件 ' + quarantineId })).toBeTruthy()
+    expect(repository.listQuarantines).toHaveBeenCalledTimes(3)
+  })
+
+  it('未来 schema 隔离文件只可查看和导出，恢复按钮禁用', async () => {
+    const repository = memoryRepository({ status: 'quarantined', reason: '未来 schema', path: '/mods/p/future' })
+    const quarantineId = 'conversation.json.quarantine-future-2-id'
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [{
+      quarantineId, reason: '未来 schemaVersion 99', schemaVersion: 99, bytes: 40, recoverable: false,
+    }] }))
+    repository.readQuarantine = vi.fn(async () => ({
+      ok: true as const,
+      quarantineId,
+      reason: '未知未来 schema，不可安全迁移',
+      schemaVersion: 99,
+      recoverable: false,
+      migrated: false,
+      document: null,
+      rawJson: '{"schemaVersion":99,"future":true}',
+    }))
+    const createObjectURL = vi.fn(() => 'blob:future')
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    renderDrawer('/mods/p', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+    expect(await screen.findByText('状态：仅可导出，不能恢复')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '确认恢复隔离对话' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '导出隔离原始 JSON' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(repository.restoreQuarantine).not.toHaveBeenCalled()
+  })
+
+  it('取消隔离恢复二次确认时不调用 restoreQuarantine', async () => {
+    const repository = memoryRepository({ status: 'quarantined', reason: '旧文档', path: '/mods/p/old' })
+    const quarantineId = 'conversation.json.quarantine-3-old'
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [{
+      quarantineId, reason: '支持旧版本', schemaVersion: 3, bytes: 12, recoverable: true,
+    }] }))
+    repository.readQuarantine = vi.fn(async () => ({
+      ok: true as const,
+      quarantineId,
+      reason: '支持旧版本',
+      schemaVersion: 3,
+      recoverable: true,
+      migrated: true,
+      document: completedDocument(),
+      rawJson: '{"schemaVersion":3}',
+    }))
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    renderDrawer('/mods/p', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认恢复隔离对话' }))
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(repository.restoreQuarantine).not.toHaveBeenCalled()
+    expect(screen.getByText('对话已进入只读隔离')).toBeTruthy()
+  })
+
+  it('活动对话已有内容时禁止覆盖恢复隔离文档', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    const quarantineId = 'conversation.json.quarantine-4-old'
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [{
+      quarantineId, reason: '另一个旧文档', schemaVersion: 3, bytes: 12, recoverable: true,
+    }] }))
+    repository.readQuarantine = vi.fn(async () => ({
+      ok: true as const,
+      quarantineId,
+      reason: '支持旧版本',
+      schemaVersion: 3,
+      recoverable: true,
+      migrated: true,
+      document: completedDocument(),
+      rawJson: '{"schemaVersion":3}',
+    }))
+    renderDrawer('/mods/p', repository, successModel('不会调用'))
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+
+    expect(await screen.findByText('当前活动对话包含内容，因此禁止用隔离文档覆盖。')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '确认恢复隔离对话' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(repository.restoreQuarantine).not.toHaveBeenCalled()
+  })
   it('切换项目后迟到的旧归档列表不会覆盖新项目列表', async () => {
     const delayedOldList = deferred<ConversationArchiveListResult>()
     const oldRepository = memoryRepository({ status: 'loaded', document: completedDocument() })
@@ -856,6 +1012,9 @@ function memoryRepository(initial: ConversationLoadResult) {
         ? { ok: true as const, archiveId, document: structuredClone(document), rawJson: JSON.stringify(document) }
         : { ok: false as const, error: '归档不存在' }
     }),
+    listQuarantines: vi.fn(async () => ({ ok: true as const, quarantines: [] })),
+    readQuarantine: vi.fn(async (_projectRoot, quarantineId) => ({ ok: false as const, error: `missing quarantine: ${quarantineId}` })),
+    restoreQuarantine: vi.fn(async () => ({ ok: false as const, error: 'not used', certainty: 'unchanged' as const })),
   }
   return repository
 }
