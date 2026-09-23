@@ -10,6 +10,7 @@ class MemoryClaimFiles implements CardIdClaimFilePort {
   files = new Map<string, string>()
   failRename: ((from: string, to: string) => boolean) | null = null
   failRemove: ((path: string) => boolean) | null = null
+  failRead: ((path: string) => boolean) | null = null
 
   async readDirectory(path: string): Promise<CardIdClaimFileEntry[]> {
     const prefix = `${path}/`
@@ -23,6 +24,7 @@ class MemoryClaimFiles implements CardIdClaimFilePort {
   }
 
   async readFile(path: string) {
+    if (this.failRead?.(path)) throw new Error("read failed")
     return this.files.get(path) ?? null
   }
 
@@ -158,6 +160,93 @@ describe('Card ID claim', () => {
     })
     expect(next.status).toBe('acquired')
   })
+  it("并发 claim 输家不能清除赢家的活动 owner 标记", async () => {
+    const files = new MemoryClaimFiles()
+    files.files.set(source, "pending document")
+    const claim = cardsRoot + "/.id-claims/fireball.claim"
+    const originalRead = files.readFile.bind(files)
+    let ownerReads = 0
+    let signalOwnerReads!: () => void
+    const bothOwnerReads = new Promise<void>(resolve => { signalOwnerReads = resolve })
+    files.readFile = async path => {
+      if (path.includes("-owner-")) {
+        ownerReads += 1
+        if (ownerReads === 2) signalOwnerReads()
+        await bothOwnerReads
+      }
+      return originalRead(path)
+    }
+    const originalLink = files.linkNoReplace.bind(files)
+    let signalWinnerPublished!: () => void
+    let releaseWinnerLink!: () => void
+    const winnerPublished = new Promise<void>(resolve => { signalWinnerPublished = resolve })
+    const continueWinnerLink = new Promise<void>(resolve => { releaseWinnerLink = resolve })
+    files.linkNoReplace = async (from, to) => {
+      const result = await originalLink(from, to)
+      if (to === claim && from.includes("winner-operation")) {
+        signalWinnerPublished()
+        await continueWinnerLink
+      }
+      return result
+    }
+
+    const winnerPromise = acquireCardIdClaim(files, cardsRoot, "Fireball", source, {
+      sessionId: "current-session",
+      operationId: "winner-operation",
+    })
+    const loserPromise = acquireCardIdClaim(files, cardsRoot, "Fireball", source, {
+      sessionId: "current-session",
+      operationId: "loser-operation",
+    })
+    await bothOwnerReads
+    await winnerPublished
+    await expect(loserPromise).resolves.toEqual({ status: "occupied" })
+    releaseWinnerLink()
+
+    const winner = await winnerPromise
+    expect(winner.status).toBe("acquired")
+    await expect(recoverCardIdClaims(files, cardsRoot, { sessionId: "current-session" }))
+      .resolves.toEqual({ status: "recovered", count: 0 })
+    await expect(acquireCardIdClaim(files, cardsRoot, "Fireball", source, {
+      sessionId: "current-session",
+      operationId: "still-occupied",
+    })).resolves.toEqual({ status: "occupied" })
+    if (winner.status === "acquired") await winner.release()
+  })
+
+  it("发布后的 claim 读回失败可在后续 acquire 安全恢复", async () => {
+    const files = new MemoryClaimFiles()
+    files.files.set(source, "pending document")
+    const claim = cardsRoot + "/.id-claims/fireball.claim"
+    const originalLink = files.linkNoReplace.bind(files)
+    let failNextClaimRead = false
+    let failFirstClaimRead = true
+    files.linkNoReplace = async (from, to) => {
+      const result = await originalLink(from, to)
+      if (to === claim && result.status === "linked" && failFirstClaimRead) {
+        failFirstClaimRead = false
+        failNextClaimRead = true
+      }
+      return result
+    }
+    files.failRead = path => {
+      if (path !== claim || !failNextClaimRead) return false
+      failNextClaimRead = false
+      return true
+    }
+
+    await expect(acquireCardIdClaim(files, cardsRoot, "Fireball", source, {
+      sessionId: "current-session",
+      operationId: "readback-failure",
+    })).resolves.toEqual({ status: "failed" })
+    const retry = await acquireCardIdClaim(files, cardsRoot, "Fireball", source, {
+      sessionId: "current-session",
+      operationId: "retry-after-readback-failure",
+    })
+    expect(retry.status).toBe("acquired")
+    if (retry.status === "acquired") await retry.release()
+  })
+
   it("claim 原子发布返回前启动恢复不会回收仍在获取中的 owner", async () => {
     const files = new MemoryClaimFiles()
     files.files.set(source, "pending document")

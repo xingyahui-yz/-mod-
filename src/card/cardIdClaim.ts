@@ -49,7 +49,20 @@ function token(prefix: string): string {
 const defaultSessionId = token('session')
 
 /** 当前 renderer session 内仍在执行的 owner；用于避免 load/recovery 偷走本进程活锁。 */
-const activeOwners = new Map<string, string>()
+const activeOwners = new Map<string, Set<string>>()
+
+function markActiveOwner(claimPath: string, serialized: string): void {
+  const owners = activeOwners.get(claimPath) ?? new Set<string>()
+  owners.add(serialized)
+  activeOwners.set(claimPath, owners)
+}
+
+function unmarkActiveOwner(claimPath: string, serialized: string): void {
+  const owners = activeOwners.get(claimPath)
+  if (!owners) return
+  owners.delete(serialized)
+  if (owners.size === 0) activeOwners.delete(claimPath)
+}
 
 function joinPath(...parts: string[]): string {
   return parts
@@ -143,7 +156,7 @@ async function recoverClaimPath(
   if (!record || record.normalizedCardId !== expectedNormalizedCardId) return 'failed'
 
   const serialized = serializeClaim(record)
-  if (record.sessionId === sessionId && activeOwners.get(claimPath) === serialized) {
+  if (record.sessionId === sessionId && activeOwners.get(claimPath)?.has(serialized)) {
     return 'active'
   }
 
@@ -159,7 +172,7 @@ async function recoverClaimPath(
     return 'failed'
   }
   if (!await files.remove(recoveryPath).catch(() => false)) return 'failed'
-  if (activeOwners.get(claimPath) === serialized) activeOwners.delete(claimPath)
+  unmarkActiveOwner(claimPath, serialized)
   return 'recovered'
 }
 
@@ -250,18 +263,19 @@ export async function acquireCardIdClaim(
     return { status: 'failed' }
   }
 
-  activeOwners.set(claimPath, serialized)
+  markActiveOwner(claimPath, serialized)
   const linked = await files.linkNoReplace(ownerPath, claimPath)
     .catch(() => ({ status: 'failed' as const }))
   if (linked.status !== 'linked') {
-    if (activeOwners.get(claimPath) === serialized) activeOwners.delete(claimPath)
+    unmarkActiveOwner(claimPath, serialized)
     await files.remove(ownerPath).catch(() => false)
     return { status: linked.status === 'exists' ? 'occupied' : 'failed' }
   }
   const claimReadBack = await safeRead(files, claimPath)
   if (claimReadBack.status !== 'found' || claimReadBack.value !== serialized) {
-    // 读回不确定时保留本地 active owner 标记，阻止同 renderer 的恢复
-    // 流程把可能仍在使用的 claim 当作崩溃遗留回收。
+    // acquire 不返回 handle，调用方不会继续使用该 ID；允许后续 acquire 重读
+    // 并安全回收此可能发布的 claim，避免 renderer 内永久卡死。
+    unmarkActiveOwner(claimPath, serialized)
     await files.remove(ownerPath).catch(() => false)
     return { status: 'failed' }
   }
@@ -310,7 +324,7 @@ export async function acquireCardIdClaim(
           }
           return { status: 'released' }
         } finally {
-          if (activeOwners.get(claimPath) === serialized) activeOwners.delete(claimPath)
+          unmarkActiveOwner(claimPath, serialized)
         }
       })()
       return releasePromise
