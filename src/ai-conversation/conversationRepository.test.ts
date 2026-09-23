@@ -84,13 +84,14 @@ describe('ConversationRepository', () => {
 
     const metrics = repository.getPerformanceMetrics?.()
     expect(metrics).toMatchObject({
-      scope: 'current-project-session',
+      scope: 'current-project-session', hardLimitBlockCount: 0,
       sampleLimit: 100,
       load: { sampleCount: 1 },
       save: { sampleCount: 1 },
       softScale: { load: { sampleCount: 0, p95Ms: null }, save: { sampleCount: 0, p95Ms: null } },
     })
     expect(metrics?.load.p95Ms).toEqual(expect.any(Number))
+    expect(metrics?.samples.find(sample => sample.operation === 'save')?.bytes).toBe(new TextEncoder().encode(JSON.stringify(document, null, 2)).byteLength)
     expect(memory.data.get('/project/.modstudio/ai/conversation.json')).toBe(JSON.stringify(document, null, 2))
     expect(JSON.stringify(metrics)).not.toContain('conversation.json')
   })
@@ -118,9 +119,11 @@ describe('ConversationRepository', () => {
       ...memory.files,
       readDirectory: async () => ({ status: 'error', error: 'EACCES' }),
     }
-    await expect(createConversationRepository(files).load('/project')).resolves.toEqual({
+    const repository = createConversationRepository(files)
+    await expect(repository.load('/project')).resolves.toEqual({
       status: 'failed', reason: 'EACCES', path: '/project/.modstudio/ai/conversation.json',
     })
+    expect(repository.getPerformanceMetrics?.().load.sampleCount).toBe(0)
   })
 
   it('隔离损坏活动文档后恢复最新有效备份', async () => {

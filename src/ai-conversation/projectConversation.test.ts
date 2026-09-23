@@ -31,6 +31,7 @@ function harness(
   const archives = new Map<string, ConversationDocument>()
   const repository: ConversationRepository = {
       ...unusedArchiveMethods,
+    getPerformanceMetrics: () => ({ scope: 'current-project-session', hardLimitBlockCount: 0, sampleLimit: 100, load: { sampleCount: 0, p95Ms: null }, save: { sampleCount: 0, p95Ms: null }, softScale: { criteria: '>=10MB or >=5000 messages', load: { sampleCount: 0, p95Ms: null }, save: { sampleCount: 0, p95Ms: null } }, samples: [] }),
     load: async () => saved ? { status: 'loaded', document: saved } : { status: 'missing' },
     save: async (_path, document) => {
       saveCall += 1
@@ -81,6 +82,7 @@ describe('ProjectConversation', () => {
     await expect(h.conversation.send('下一轮')).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
     expect(respond).toHaveBeenCalledTimes(1)
     expect(h.saved()?.turns).toHaveLength(1)
+    expect(h.conversation.getPerformanceMetrics()?.hardLimitBlockCount).toBe(1)
   })
 
   it('显式恢复可迁移隔离文档后更新活动状态并保留源文件', async () => {
@@ -387,6 +389,7 @@ describe('ProjectConversation', () => {
     await expect(h.conversation.retryTurn(turnId)).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
     expect(h.saved()).toEqual(saved)
     expect(respond).toHaveBeenCalledTimes(1)
+    expect(h.conversation.getPerformanceMetrics()?.hardLimitBlockCount).toBe(1)
   })
 
   it('拒绝重试非最后轮次', async () => {

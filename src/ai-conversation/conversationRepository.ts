@@ -1,6 +1,5 @@
 import { CURRENT_CONVERSATION_SCHEMA_VERSION, createConversationDocument, migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
 import { createConversationPerformanceTracker, type ConversationPerformanceMetrics } from './conversationPerformance'
-import { measureConversationCapacity } from './conversationCapacity'
 
 export type ConversationFileRead<T> =
   | { status: 'found'; value: T }
@@ -104,6 +103,7 @@ export function createConversationRepository(
     projectPath: string,
     document: ConversationDocument,
     retainBackup = false,
+    onSerialized?: (content: string) => void,
   ): Promise<ConversationSaveResult> => {
     const parsed = parseConversationDocument(document)
     if (!parsed.ok) return unchanged(parsed.reason)
@@ -113,6 +113,7 @@ export function createConversationRepository(
     const temporary = uniqueSibling(path, 'tmp')
     const backup = uniqueSibling(path, 'backup')
     const content = JSON.stringify(document, null, 2)
+    onSerialized?.(content)
     if (!await files.writeFile(temporary, content)) {
       const cleaned = await files.remove(temporary)
       return unchanged(cleaned ? '无法写入临时文件' : '无法写入临时文件，且临时文件清理失败')
@@ -184,6 +185,7 @@ export function createConversationRepository(
     getPerformanceMetrics: () => performanceTracker.snapshot(),
     load(projectPath) {
       const startedAt = performance.now()
+      let loadedRawContent: string | null = null
       return runExclusive(async (): Promise<ConversationLoadResult> => {
         const path = activePath(projectPath)
         const listing = await files.readDirectory(directory(projectPath))
@@ -199,6 +201,7 @@ export function createConversationRepository(
         if (active.status === 'found') {
           const parsed = parseRawDocument(active.value)
           if (parsed.ok) {
+            loadedRawContent = active.value
             if (parsed.migrated) {
               const saved = await saveInternal(projectPath, parsed.document, true)
               if (!saved.ok) return { status: 'failed', reason: `迁移后的对话文档保存失败：${saved.error}`, path }
@@ -221,12 +224,14 @@ export function createConversationRepository(
             if (restored.migrated) {
               const saved = await saveInternal(projectPath, restored.document, true)
               if (!saved.ok) return { status: 'failed', reason: `备份恢复后迁移保存失败：${saved.error}`, path }
+              loadedRawContent = restored.rawContent
               return {
                 status: 'loaded',
                 document: restored.document,
                 warning: joinWarnings(cleanupWarning, `损坏活动文档已隔离到 ${quarantinePath}`, saved.warning),
               }
             }
+            loadedRawContent = restored.rawContent
             return {
               status: 'loaded',
               document: restored.document,
@@ -245,8 +250,10 @@ export function createConversationRepository(
           if (restored.migrated) {
             const saved = await saveInternal(projectPath, restored.document, true)
             if (!saved.ok) return { status: 'failed', reason: `备份恢复后迁移保存失败：${saved.error}`, path }
+            loadedRawContent = restored.rawContent
             return { status: 'loaded', document: restored.document, warning: joinWarnings(cleanupWarning, '已从崩溃备份恢复对话', saved.warning) }
           }
+          loadedRawContent = restored.rawContent
           return { status: 'loaded', document: restored.document, warning: joinWarnings(cleanupWarning, '已从崩溃备份恢复对话') }
         }
         if (restored.status === 'error') return { status: 'failed', reason: restored.error, path }
@@ -256,24 +263,28 @@ export function createConversationRepository(
         return { status: 'missing', warning: cleanupWarning }
       }).catch(error => ({ status: 'failed' as const, reason: errorMessage(error), path: activePath(projectPath) }))
         .then(result => {
-          const document = result.status === 'loaded' ? result.document : null
-          const capacity = document ? measureConversationCapacity(document) : null
-          performanceTracker.record('load', performance.now() - startedAt, capacity?.bytes ?? 0, capacity?.messageCount ?? 0)
+          const elapsedMs = performance.now() - startedAt
+          if (result.status === 'loaded' && loadedRawContent !== null) {
+            performanceTracker.record('load', elapsedMs, utf8ByteLength(loadedRawContent), messageCount(result.document))
+          }
           return result
         })
     },
 
     save(projectPath, document) {
       const startedAt = performance.now()
+      let serializedContent: string | null = null
       return runExclusive(async () => {
         try {
-          return await saveInternal(projectPath, document)
+          return await saveInternal(projectPath, document, false, content => { serializedContent = content })
         } catch (error) {
           return { ok: false as const, error: errorMessage(error), certainty: 'uncertain' as const }
         }
       }).then(result => {
-        const capacity = measureConversationCapacity(document)
-        performanceTracker.record('save', performance.now() - startedAt, capacity.bytes, capacity.messageCount)
+        const elapsedMs = performance.now() - startedAt
+        if (serializedContent !== null) {
+          performanceTracker.record('save', elapsedMs, utf8ByteLength(serializedContent), messageCount(document))
+        }
         return result
       })
     },
@@ -480,6 +491,24 @@ function parseRawDocument(content: string): ParsedRaw {
   }
 }
 
+function messageCount(document: ConversationDocument): number {
+  return document.turns.reduce((count, turn) => count + 1 + (turn.assistantText === null ? 0 : 1), 0)
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code <= 0x7f) bytes += 1
+    else if (code <= 0x7ff) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length && value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+      bytes += 4
+      index += 1
+    } else bytes += 3
+  }
+  return bytes
+}
+
 function parseSavedDocument(content: string): ConversationDocument | null {
   try {
     const parsed = parseConversationDocument(JSON.parse(content))
@@ -496,7 +525,7 @@ async function restoreLatestValidBackup(
 ): Promise<
   | { status: 'none' }
   | { status: 'error'; error: string }
-  | { status: 'restored'; document: ConversationDocument; migrated: boolean }
+  | { status: 'restored'; document: ConversationDocument; migrated: boolean; rawContent: string }
 > {
   for (const backup of backups) {
     const content = await files.readFile(backup)
@@ -507,7 +536,7 @@ async function restoreLatestValidBackup(
     if (!await files.rename(backup, active)) return { status: 'error', error: `无法恢复备份 ${backup}` }
     const verified = await files.readFile(active)
     if (verified.status !== 'found' || verified.value !== content.value) return { status: 'error', error: `备份恢复后读回校验失败：${backup}` }
-    return { status: 'restored', document: parsed.document, migrated: parsed.migrated }
+    return { status: 'restored', document: parsed.document, migrated: parsed.migrated, rawContent: content.value }
   }
   return { status: 'none' }
 }

@@ -133,6 +133,7 @@ interface ResolvedProjectContext {
 }
 
 export class ProjectConversation {
+  private hardLimitBlockCount = 0
   private snapshot: ProjectConversationSnapshot = {
     document: null,
     loadStatus: 'loading',
@@ -237,7 +238,8 @@ export class ProjectConversation {
   }
 
   getPerformanceMetrics(): ConversationPerformanceMetrics | null {
-    return this.repository.getPerformanceMetrics?.() ?? null
+    const metrics = this.repository.getPerformanceMetrics?.()
+    return metrics ? { ...metrics, hardLimitBlockCount: metrics.hardLimitBlockCount + this.hardLimitBlockCount } : null
   }
 
   listArchives(): Promise<ConversationArchiveListResult> {
@@ -624,7 +626,10 @@ export class ProjectConversation {
     if (!this.isValidQuickReplySelection(text, quickReplySelection)) return failure('invalid-input', '快捷回答引用无效')
 
     const currentCapacity = this.snapshot.capacity
-    if (currentCapacity.level === 'hard') return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
+    if (currentCapacity.level === 'hard') {
+      this.hardLimitBlockCount += 1
+      return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
+    }
 
     const now = this.now()
     const attemptId = this.createId()
@@ -660,7 +665,10 @@ export class ProjectConversation {
   private async startRetry(turnId: string): Promise<{ ok: true; value: StartedAttempt } | Extract<ProjectConversationResult, { ok: false }>> {
     const ready = this.ensureReady()
     if (!ready.ok) return ready
-    if (this.snapshot.capacity.level === 'hard') return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
+    if (this.snapshot.capacity.level === 'hard') {
+      this.hardLimitBlockCount += 1
+      return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
+    }
     const document = this.snapshot.document
     const turn = document?.turns[document.turns.length - 1]
     const lastAttempt = turn?.attempts[turn.attempts.length - 1]

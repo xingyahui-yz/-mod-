@@ -588,12 +588,12 @@ export function ProjectConversationDrawer({
                   <p className="conversation-archive-readonly-note">
                     归档为只读历史，不会自动恢复到活动对话；可浏览或额外导出 JSON。
                   </p>
-                  <button type="button" onClick={() => setPerformanceMetrics(actions.getPerformanceMetrics())}>查看存储性能与 SQLite 评估数据</button>
+                  <button type="button" onClick={() => setPerformanceMetrics(actions.getPerformanceMetrics())}>刷新存储性能与 SQLite 评估数据</button>
                   {performanceMetrics && <section aria-label="对话存储性能指标">
-                    <strong>本次项目会话实例内最近 {performanceMetrics.sampleLimit} 次活动文档读写样本</strong>
-                    <p>加载 p95：{formatMetric(performanceMetrics.load.p95Ms)}（{performanceMetrics.load.sampleCount} 次）；原子保存 p95：{formatMetric(performanceMetrics.save.p95Ms)}（{performanceMetrics.save.sampleCount} 次）。</p>
+                    <strong>本项目会话实例最近 {performanceMetrics.sampleLimit} 次可测量仓储样本（仅成功加载；保存包括已序列化的失败尝试）</strong>
+                    <p>常规活动文档仓储端到端耗时（含排队、解析/校验；不含归档重置）：加载 p95：{formatMetric(performanceMetrics.load.p95Ms)}（{performanceMetrics.load.sampleCount} 次）；原子保存 p95：{formatMetric(performanceMetrics.save.p95Ms)}（{performanceMetrics.save.sampleCount} 次）。</p>
                     <p>软阈值规模样本（≥10 MB 或 ≥5,000 条消息）：加载 p95 {formatMetric(performanceMetrics.softScale.load.p95Ms)}（{performanceMetrics.softScale.load.sampleCount} 次）；保存 p95 {formatMetric(performanceMetrics.softScale.save.p95Ms)}（{performanceMetrics.softScale.save.sampleCount} 次）。</p>
-                    <p>若软阈值规模的加载或保存 p95 超过 500 ms，应立项评估 SQLite；这些样本仅保留于当前应用进程，不含对话文本，也不会持久化。</p>
+                    <p>若软阈值规模的加载或保存 p95 超过 500 ms，或硬容量限制拦截频繁，应立项评估 SQLite；当前项目会话内硬限制拦截 {performanceMetrics.hardLimitBlockCount} 次。样本仅保留于内存，不含对话文本，也不会持久化。</p>
                   </section>}
                   <button
                     type="button"

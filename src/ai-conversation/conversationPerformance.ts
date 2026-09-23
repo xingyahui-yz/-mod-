@@ -9,6 +9,7 @@ export interface ConversationIoSample {
 }
 
 export interface ConversationPerformanceMetrics {
+  hardLimitBlockCount: number
   scope: 'current-project-session'
   sampleLimit: number
   load: { sampleCount: number; p95Ms: number | null }
@@ -21,7 +22,7 @@ export interface ConversationPerformanceMetrics {
   samples: readonly ConversationIoSample[]
 }
 
-export const CONVERSATION_SOFT_SCALE_BYTES = 10 * 1024 * 1024
+export const CONVERSATION_SOFT_SCALE_BYTES = 10_000_000
 export const CONVERSATION_SOFT_SCALE_MESSAGES = 5_000
 const SAMPLE_LIMIT = 100
 
@@ -42,6 +43,7 @@ export function createConversationPerformanceTracker() {
         sample.bytes >= CONVERSATION_SOFT_SCALE_BYTES || sample.messageCount >= CONVERSATION_SOFT_SCALE_MESSAGES,
       )
       return {
+        hardLimitBlockCount: 0,
         scope: 'current-project-session',
         sampleLimit: SAMPLE_LIMIT,
         load: summarize(isOperation('load')),
