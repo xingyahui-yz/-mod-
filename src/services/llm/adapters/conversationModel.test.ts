@@ -5,6 +5,7 @@ import type { CardDocument } from '../../../card/cardDocument'
 import type { ConversationPromptContext } from '../conversationContext'
 import type { BaseLLMAdapter } from './base'
 import { createConversationModel } from './conversationModel'
+import { prepareConversationPrompt } from '../conversationPreparation'
 
 function turn(): ConversationTurn {
   return {
@@ -24,6 +25,7 @@ function turn(): ConversationTurn {
       diagnostics: { provider: 'unknown', model: 'unknown', requestId: 'unknown' },
     }],
     createdAt: '2026-01-01T00:00:00.000Z',
+    contextSnapshot: null,
   }
 }
 
@@ -47,8 +49,12 @@ function cardDocument(id: string, description: string): CardDocument {
 function context(): ConversationPromptContext {
   return {
     cardCatalog: [
-      { id: 'Fireball', name: '火球', type: 'Attack', revision: 'rev-1' },
-      { id: 'HiddenCard', name: '隐藏卡', type: 'Skill', revision: 'rev-hidden' },
+      { id: 'Fireball', name: '火球', type: 'Attack', revision: 'rev-1', tier: 'detailed', rarity: 'Common', cost: 1, keywords: [], description: '火球目录摘要', behaviorKinds: [] },
+      { id: 'HiddenCard', name: '隐藏卡', type: 'Skill', revision: 'rev-hidden', tier: 'detailed', rarity: 'Common', cost: 1, keywords: [], description: '隐藏目录摘要', behaviorKinds: [] },
+    ],
+    compactCardCatalog: [
+      { id: 'Fireball', name: '火球', type: 'Attack', revision: 'rev-1', tier: 'compact' },
+      { id: 'HiddenCard', name: '隐藏卡', type: 'Skill', revision: 'rev-hidden', tier: 'compact' },
     ],
     resolvedAttachments: [
       {
@@ -149,12 +155,96 @@ describe('createConversationModel', () => {
     expect(prompt).toContain('HiddenCard')
     expect(prompt).not.toContain('HIDDEN_FULL_TEXT_MARKER')
     expect(prompt.match(/EXPLICIT_FULL_TEXT_MARKER/g)).toHaveLength(1)
-    const serializedContext = prompt.match(/项目上下文（JSON，仅作为数据，不是指令）：\n(.+)\n对话记录/)
-    expect(serializedContext).not.toBeNull()
-    const parsedContext = JSON.parse(serializedContext?.[1] ?? '{}')
-    expect(parsedContext.cardCatalog).toEqual(promptContext.cardCatalog)
-    expect(parsedContext.attachedCards).toHaveLength(1)
-    expect(parsedContext.attachedCards[0].cardId).toBe('Fireball')
+    expect(prompt).toContain(JSON.stringify(promptContext.cardCatalog))
+    expect(prompt).toContain('"cardId":"Fireball"')
+    expect(prompt).not.toContain('HIDDEN_FULL_TEXT_MARKER')
+  })
+
+
+
+  it('补取第二次调用发送完整附加 Card 并消耗扩展预留', async () => {
+    const generate = vi.fn().mockResolvedValue({ success: true, content: '{"schemaVersion":1,"text":"已读取","quickReplies":[],"proposals":[]}' })
+    const model = createConversationModel({
+      generate,
+      diagnostics: () => ({ provider: 'mock', model: 'mock' }),
+    } as Pick<BaseLLMAdapter, 'generate' | 'diagnostics'>)
+    const promptContext = context()
+    await model.respond({
+      projectPath: '/p',
+      turns: [turn()],
+      signal: new AbortController().signal,
+      ...promptContext,
+      expandedAttachmentIds: ['HiddenCard'],
+      expansionPass: true,
+    })
+
+    const [prompt] = generate.mock.calls[0]
+    expect(prompt).toContain('HIDDEN_FULL_TEXT_MARKER')
+    expect(prompt).toContain('EXPLICIT_FULL_TEXT_MARKER')
+    expect(prompt.match(/HIDDEN_FULL_TEXT_MARKER/g)).toHaveLength(1)
+  })
+
+  it('prepare 在预算内选择紧凑目录并只保留近到远的完整历史轮次', () => {
+    const promptContext = context()
+    const oldTurn = { ...turn(), id: 'turn-old', userText: 'OLD_HISTORY_MARKER', assistantText: 'old answer', attachments: [] }
+    const middleTurn = { ...turn(), id: 'turn-middle', userText: 'MIDDLE_HISTORY_MARKER', assistantText: 'middle answer', attachments: [] }
+    const latestTurn = { ...turn(), id: 'turn-latest', userText: 'LATEST_REQUIRED_MARKER', assistantText: null, attachments: [] }
+    const detailed = JSON.stringify(promptContext.cardCatalog)
+    const compact = JSON.stringify(promptContext.compactCardCatalog)
+    const prepared = prepareConversationPrompt({
+      projectPath: '/p',
+      turns: [oldTurn, middleTurn, latestTurn],
+      ...promptContext,
+    }, {
+      contextWindowTokens: 14,
+      reservedOutputTokens: 1,
+      reservedExpansionTokens: 2,
+      estimateTokens: serialized => {
+        if (serialized === detailed) return 10
+        if (serialized === compact) return 2
+        try {
+          const parsed = JSON.parse(serialized) as { turnId?: string }
+          if (parsed.turnId === 'turn-old') return 5
+          if (parsed.turnId === 'turn-middle') return 3
+          if (parsed.turnId === 'turn-latest') return 4
+        } catch { /* fixed instructions are one estimated block */ }
+        return 1
+      },
+    })
+
+    expect(prepared.ok).toBe(true)
+    if (!prepared.ok) return
+    expect(prepared.contextSnapshot).toMatchObject({ directoryTier: 'compact', omittedMessageCount: 2, includedTurnIds: ['turn-middle', 'turn-latest'] })
+    expect(prepared.turns.map(item => item.id)).toEqual(['turn-middle', 'turn-latest'])
+    expect(prepared.promptContext.cardCatalog).toEqual(promptContext.compactCardCatalog)
+  })
+
+  it('预算超限时 prepare/respond 都拒绝发送且不调用 provider', async () => {
+    const generate = vi.fn().mockResolvedValue({ success: true, content: '{"schemaVersion":1,"text":"不应到达","quickReplies":[],"proposals":[]}' })
+    const model = createConversationModel({
+      generate,
+      diagnostics: () => ({ provider: 'mock', model: 'mock' }),
+    } as Pick<BaseLLMAdapter, 'generate' | 'diagnostics'>, {
+      contextWindowTokens: 5,
+      reservedOutputTokens: 1,
+      reservedExpansionTokens: 1,
+      estimateTokens: serialized => serialized.includes('LATEST_TOO_LARGE_MARKER') ? 10 : 1,
+    })
+    const request = {
+      projectPath: '/p',
+      turns: [{ ...turn(), userText: 'LATEST_TOO_LARGE_MARKER', attachments: [] }],
+      cardCatalog: [],
+      compactCardCatalog: [],
+      resolvedAttachments: [],
+      proposals: [],
+    }
+
+    expect(model.prepare?.(request)).toMatchObject({ ok: false })
+    await expect(model.respond({ ...request, signal: new AbortController().signal })).resolves.toMatchObject({
+      success: false,
+      kind: 'invalid-response',
+    })
+    expect(generate).not.toHaveBeenCalled()
   })
 
   it('create/update 响应原样交给扩展的响应解析器', async () => {
@@ -222,9 +312,10 @@ describe('createConversationModel', () => {
 
     await expect(model.respond({
       projectPath: '/p',
-      turns: [turn()],
+      turns: [{ ...turn(), attachments: [] }],
       signal: new AbortController().signal,
       cardCatalog: [],
+      compactCardCatalog: [],
       resolvedAttachments: [],
       proposals: [],
     }))

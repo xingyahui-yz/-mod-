@@ -486,7 +486,7 @@ function repositoryWithSaves(
 
 function conversationDocumentWith(proposal: ConversationCardProposal): ConversationDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     turns: [],
     proposals: [proposal],
     createdAt: NOW,

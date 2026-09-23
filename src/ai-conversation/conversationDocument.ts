@@ -34,6 +34,17 @@ export interface ConversationAttempt {
   diagnostics: ConversationAttemptDiagnostics
 }
 
+export interface ConversationContextSnapshot {
+  directoryTier: 'detailed' | 'compact'
+  contextWindowTokens: number
+  reservedOutputTokens: number
+  reservedExpansionTokens: number
+  estimatedInputTokens: number
+  estimatedTotalTokens: number
+  omittedMessageCount: number
+  includedTurnIds: string[]
+}
+
 export interface ConversationTurn {
   id: string
   userText: string
@@ -43,10 +54,11 @@ export interface ConversationTurn {
   attachments: ConversationAttachment[]
   attempts: ConversationAttempt[]
   createdAt: string
+  contextSnapshot: ConversationContextSnapshot | null
 }
 
-export interface ConversationDocumentV2 {
-  schemaVersion: 2
+export interface ConversationDocumentV3 {
+  schemaVersion: 3
   turns: ConversationTurn[]
   proposals: ConversationCardProposal[]
   createdAt: string
@@ -54,7 +66,7 @@ export interface ConversationDocumentV2 {
 }
 
 /** The only writable conversation document shape. Older versions exist only at the migration boundary. */
-export type ConversationDocument = ConversationDocumentV2
+export type ConversationDocument = ConversationDocumentV3
 
 export type ConversationDocumentParseResult =
   | { ok: true; document: ConversationDocument }
@@ -65,9 +77,11 @@ export type ConversationDocumentMigrationResult =
   | { ok: false; reason: string; raw: unknown }
 
 const DOCUMENT_KEYS = ['createdAt', 'proposals', 'schemaVersion', 'turns', 'updatedAt']
+const DOCUMENT_V2_KEYS = ['createdAt', 'proposals', 'schemaVersion', 'turns', 'updatedAt']
 const V1_DOCUMENT_KEYS = ['createdAt', 'schemaVersion', 'turns', 'updatedAt']
 const LEGACY_DOCUMENT_KEYS = ['createdAt', 'projectPath', 'schemaVersion', 'turns', 'updatedAt']
-const TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'quickReplySelection', 'userText']
+const TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'contextSnapshot', 'createdAt', 'id', 'quickReplies', 'quickReplySelection', 'userText']
+const TURN_V2_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'quickReplySelection', 'userText']
 const LEGACY_TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'userText']
 const ATTEMPT_KEYS = ['diagnostics', 'error', 'failureKind', 'finishedAt', 'id', 'startedAt', 'status']
 const LEGACY_ATTEMPT_KEYS = ['error', 'finishedAt', 'id', 'startedAt', 'status']
@@ -81,12 +95,12 @@ const FAILURE_KINDS: readonly ConversationAttemptFailureKind[] = ['cancelled', '
 const MAX_PERSISTED_ERROR_LENGTH = 500
 
 export function createConversationDocument(now: string): ConversationDocument {
-  return { schemaVersion: 2, turns: [], proposals: [], createdAt: now, updatedAt: now }
+  return { schemaVersion: 3, turns: [], proposals: [], createdAt: now, updatedAt: now }
 }
 
 export function parseConversationDocument(raw: unknown): ConversationDocumentParseResult {
   if (!isRecord(raw)) return invalid('文档必须是对象', raw)
-  if (Object.prototype.hasOwnProperty.call(raw, 'schemaVersion') && raw.schemaVersion !== 2) {
+  if (Object.prototype.hasOwnProperty.call(raw, 'schemaVersion') && raw.schemaVersion !== 3) {
     return invalid('不支持的 schemaVersion', raw)
   }
   if (!hasExactKeys(raw, DOCUMENT_KEYS)) return invalid('文档包含缺失或未知字段', raw)
@@ -148,7 +162,7 @@ export function parseConversationDocument(raw: unknown): ConversationDocumentPar
   return {
     ok: true,
     document: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       turns: turnsResult.turns,
       proposals,
       createdAt: raw.createdAt,
@@ -157,14 +171,21 @@ export function parseConversationDocument(raw: unknown): ConversationDocumentPar
   }
 }
 
-/** Migrate strict PR1 v1 and the released bb5f191 v1 envelope into the current v2 shape. */
+/** Migrate strict PR1 v1 and the released bb5f191 v1 envelope into the current v3 shape. */
 export function migrateConversationDocument(raw: unknown): ConversationDocumentMigrationResult {
   const current = parseConversationDocument(raw)
   if (current.ok) return { ...current, migrated: false }
+  if (isRecord(raw) && raw.schemaVersion === 2 && Array.isArray(raw.turns) && hasExactKeys(raw, DOCUMENT_V2_KEYS)) {
+    if (!raw.turns.every(inputTurn => isRecord(inputTurn) && hasExactKeys(inputTurn, TURN_V2_KEYS))) return current
+    const strictV2Candidate: unknown = { ...raw, schemaVersion: 3, turns: raw.turns.map(inputTurn => ({ ...(inputTurn as Record<string, unknown>), contextSnapshot: null })) }
+    const parsed = parseConversationDocument(strictV2Candidate)
+    if (parsed.ok) return { ...parsed, migrated: true }
+    return current
+  }
   if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.turns)) return current
 
-  if (hasExactKeys(raw, V1_DOCUMENT_KEYS)) {
-    const strictV1Candidate: unknown = { ...raw, schemaVersion: 2, proposals: [] }
+  if (hasExactKeys(raw, V1_DOCUMENT_KEYS) && raw.turns.every(inputTurn => isRecord(inputTurn) && hasExactKeys(inputTurn, TURN_V2_KEYS))) {
+    const strictV1Candidate: unknown = { ...raw, schemaVersion: 3, proposals: [], turns: raw.turns.map(inputTurn => ({ ...(inputTurn as Record<string, unknown>), contextSnapshot: null })) }
     const parsed = parseConversationDocument(strictV1Candidate)
     if (parsed.ok) return { ...parsed, migrated: true }
   }
@@ -202,10 +223,11 @@ export function migrateConversationDocument(raw: unknown): ConversationDocumentM
       attachments: attachments as ConversationAttachment[],
       attempts,
       createdAt: createdAt as string,
+      contextSnapshot: null,
     })
   }
   const migrated: unknown = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     turns: migratedTurns,
     proposals: [],
     createdAt: raw.createdAt,
@@ -275,7 +297,7 @@ function isTurn(input: unknown): input is ConversationTurn {
   if (!isRecord(input) || !hasExactKeys(input, TURN_KEYS) || !isNonEmptyString(input.id) || !isNonEmptyString(input.userText) ||
     !(input.assistantText === null || typeof input.assistantText === 'string') || !Array.isArray(input.quickReplies) ||
     input.quickReplies.length > 4 || !isQuickReplySelection(input.quickReplySelection) || !Array.isArray(input.attachments) ||
-    !Array.isArray(input.attempts) || input.attempts.length === 0 || !isTimestamp(input.createdAt)) return false
+    !Array.isArray(input.attempts) || input.attempts.length === 0 || !isTimestamp(input.createdAt) || !(input.contextSnapshot === null || isConversationContextSnapshot(input.contextSnapshot))) return false
 
   const quickReplyIds = new Set<string>()
   for (const inputReply of input.quickReplies) {
@@ -292,6 +314,31 @@ function isTurn(input: unknown): input is ConversationTurn {
   }
 
   return input.attempts.every(isAttempt)
+}
+
+function isConversationContextSnapshot(input: unknown): input is ConversationContextSnapshot {
+  if (!isRecord(input) || !hasExactKeys(input, [
+    'contextWindowTokens', 'directoryTier', 'estimatedInputTokens', 'estimatedTotalTokens',
+    'includedTurnIds', 'omittedMessageCount', 'reservedExpansionTokens', 'reservedOutputTokens',
+  ]) || (input.directoryTier !== 'detailed' && input.directoryTier !== 'compact') ||
+    !isPositiveSafeInteger(input.contextWindowTokens) || !isNonNegativeSafeInteger(input.reservedOutputTokens) ||
+    !isNonNegativeSafeInteger(input.reservedExpansionTokens) || !isNonNegativeSafeInteger(input.estimatedInputTokens) ||
+    !isNonNegativeSafeInteger(input.estimatedTotalTokens) || !isNonNegativeSafeInteger(input.omittedMessageCount) ||
+    !Array.isArray(input.includedTurnIds)) return false
+  const ids = new Set<string>()
+  for (const id of input.includedTurnIds) {
+    if (!isNonEmptyString(id) || ids.has(id)) return false
+    ids.add(id)
+  }
+  return true
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function isAttempt(input: unknown): input is ConversationAttempt {

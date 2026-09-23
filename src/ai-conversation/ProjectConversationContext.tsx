@@ -19,6 +19,7 @@ import {
 } from './projectConversation'
 import { createConversationFilePort } from '../services/FileService'
 import { createAdapter, createConversationModel } from '../services/llm/adapters'
+import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
 import { useAIStore } from '../stores/useAIStore'
 import {
   getCardCatalogView,
@@ -238,6 +239,10 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
     return latestModel
   }
   const model: ConversationModel = {
+    prepare(request) {
+      const configuredModel = createLatestModel()
+      return configuredModel?.prepare?.(request) ?? prepareConversationPrompt(request)
+    },
     diagnostics() {
       if (activeModel?.diagnostics) return activeModel.diagnostics()
       const { provider } = useAIStore.getState()

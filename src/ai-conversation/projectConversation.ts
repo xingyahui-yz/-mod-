@@ -7,14 +7,16 @@ import {
   type ConversationAttemptFailureKind,
   type ConversationAttemptStatus,
   type ConversationDocument,
+  type ConversationContextSnapshot,
   type ConversationQuickReplySelection,
   type ConversationTurn,
 } from './conversationDocument'
 import type { ConversationRepository, ConversationLoadResult } from './conversationRepository'
-import { parseConversationResponseText, type ConversationResponseV1 } from './conversationResponse'
+import { parseConversationModelResponseText, type ConversationResponseV1 } from './conversationResponse'
+import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
-import type { ConversationPromptContext } from '../services/llm/conversationContext'
+import { buildConversationCardCatalog, type ConversationPromptContext } from '../services/llm/conversationContext'
 import {
   acceptConversationCardProposal,
   markConversationProposalTransitionCommitted,
@@ -36,8 +38,13 @@ export interface ConversationRequest extends ConversationPromptContext {
 
 export type ConversationModelFailureKind = 'cancelled' | 'timeout' | 'provider' | 'invalid-response' | 'persistence'
 
+export type ConversationPreparationResult =
+  | { ok: true; turns: readonly ConversationTurn[]; promptContext: ConversationPromptContext; contextSnapshot: ConversationContextSnapshot }
+  | { ok: false; error: string }
+
 export interface ConversationModel {
   diagnostics?: () => Partial<ConversationAttemptDiagnostics>
+  prepare?: (request: Omit<ConversationRequest, 'signal'>) => ConversationPreparationResult
   respond(request: ConversationRequest): Promise<
     | { success: true; content: string; diagnostics?: Partial<ConversationAttemptDiagnostics> }
     | { success: false; error: string; kind?: ConversationModelFailureKind; diagnostics?: Partial<ConversationAttemptDiagnostics> }
@@ -50,6 +57,7 @@ export type ProjectConversationErrorCode =
   | 'load-failed'
   | 'quarantined'
   | 'already-running'
+  | 'context-over-budget'
   | 'not-retryable'
   | 'cancelled'
   | 'timeout'
@@ -95,11 +103,16 @@ interface StartedAttempt {
   requestId: number
   controller: AbortController
   promptContext: ConversationPromptContext
+  sourcePromptContext: ConversationPromptContext
+  promptTurns: readonly ConversationTurn[]
+  projectDocuments: readonly CardDocument[]
+  contextSnapshot: ConversationContextSnapshot | null
 }
 
 interface ResolvedProjectContext {
   promptContext: ConversationPromptContext
   attachments: ConversationAttachment[]
+  projectDocuments: readonly CardDocument[]
 }
 
 export class ProjectConversation {
@@ -516,6 +529,7 @@ export class ProjectConversation {
       quickReplySelection,
       attachments: projectContext.value.attachments,
       createdAt: now,
+      contextSnapshot: null,
       attempts: [{
         id: attemptId,
         status: 'running',
@@ -530,7 +544,7 @@ export class ProjectConversation {
     return this.persistStartedAttempt(pending, attemptId, {
       ...projectContext.value.promptContext,
       proposals: proposalSummaries(pending),
-    })
+    }, projectContext.value.projectDocuments)
   }
 
   private async startRetry(turnId: string): Promise<{ ok: true; value: StartedAttempt } | Extract<ProjectConversationResult, { ok: false }>> {
@@ -572,15 +586,30 @@ export class ProjectConversation {
     return this.persistStartedAttempt(pending, attemptId, {
       ...projectContext.value.promptContext,
       proposals: proposalSummaries(pending),
-    })
+    }, projectContext.value.projectDocuments)
   }
 
   private async persistStartedAttempt(
     document: ConversationDocument,
     attemptId: string,
     promptContext: ConversationPromptContext,
+    projectDocuments: readonly CardDocument[],
   ): Promise<{ ok: true; value: StartedAttempt } | Extract<ProjectConversationResult, { ok: false }>> {
-    const saved = await this.repository.save(this.projectPath, document)
+    let prepared: ConversationPreparationResult | undefined
+    try {
+      prepared = this.model.prepare?.({ projectPath: this.projectPath, turns: document.turns, ...promptContext })
+    } catch {
+      return failure('context-over-budget', '无法安全准备模型上下文；本轮未保存或发送')
+    }
+    if (prepared && !prepared.ok) return failure('context-over-budget', prepared.error)
+    const promptTurns = prepared?.ok ? prepared.turns : document.turns
+    const preparedContext = prepared?.ok ? prepared.promptContext : promptContext
+    const contextSnapshot = prepared?.ok ? prepared.contextSnapshot : null
+    const latestTurnId = document.turns.at(-1)?.id
+    const preparedDocument: ConversationDocument = contextSnapshot && latestTurnId
+      ? { ...document, turns: document.turns.map(turn => turn.id === latestTurnId ? { ...turn, contextSnapshot } : turn) }
+      : document
+    const saved = await this.repository.save(this.projectPath, preparedDocument)
     if (!saved.ok) {
       this.update({
         ...this.snapshot,
@@ -596,7 +625,7 @@ export class ProjectConversation {
     this.abortController = controller
     this.activeAttemptId = attemptId
     this.update({
-      document,
+      document: preparedDocument,
       loadStatus: 'loaded',
       quarantineReason: null,
       isRunning: true,
@@ -604,18 +633,48 @@ export class ProjectConversation {
       persistenceError: null,
       requiresReload: false,
     })
-    return { ok: true, value: { document, attemptId, requestId, controller, promptContext } }
+    return { ok: true, value: { document: preparedDocument, attemptId, requestId, controller, promptContext: preparedContext, sourcePromptContext: promptContext, promptTurns, projectDocuments, contextSnapshot } }
   }
 
-  private async executeAttempt(started: StartedAttempt): Promise<ProjectConversationResult> {
+  private async executeAttempt(initialStarted: StartedAttempt): Promise<ProjectConversationResult> {
+    let started = initialStarted
     let response: Awaited<ReturnType<ConversationModel['respond']>>
+    let finalResponse: ConversationResponseV1 | null = null
     try {
-      response = await this.model.respond({
-        projectPath: this.projectPath,
-        turns: started.document.turns,
-        signal: started.controller.signal,
-        ...started.promptContext,
-      })
+      response = await this.callModel(started)
+      if (response.success) {
+        const parsed = parseConversationModelResponseText(response.content)
+        if (!parsed.ok) {
+          response = { success: false, error: parsed.error, kind: 'invalid-response', diagnostics: response.diagnostics }
+        } else if (parsed.value.kind === 'final') {
+          finalResponse = parsed.value.response
+        } else {
+          const expanded = this.prepareContextExpansion(started, parsed.value.cardIds)
+          if (!expanded.ok) {
+            response = { success: false, error: expanded.error, kind: 'invalid-response', diagnostics: response.diagnostics }
+          } else {
+            started = expanded.value
+            await this.runMutation(async () => {
+              if (this.isCurrentRequest(started)) this.update({ ...this.snapshot, document: started.document })
+            })
+            if (!this.isCurrentRequest(started)) {
+              response = { success: false, error: '请求已取消', kind: 'cancelled', diagnostics: response.diagnostics }
+            } else {
+              response = await this.callModel(started)
+              if (response.success) {
+                const second = parseConversationModelResponseText(response.content)
+                if (!second.ok) {
+                  response = { success: false, error: second.error, kind: 'invalid-response', diagnostics: response.diagnostics }
+                } else if (second.value.kind === 'expand-context') {
+                  response = { success: false, error: '同一轮对话最多允许一次 Card 上下文补取', kind: 'invalid-response', diagnostics: response.diagnostics }
+                } else {
+                  finalResponse = second.value.response
+                }
+              }
+            }
+          }
+        }
+      }
     } catch (error) {
       response = { success: false, error: sanitizeConversationError(error), kind: 'provider' }
     }
@@ -628,10 +687,62 @@ export class ProjectConversation {
         const status = kind === 'cancelled' ? 'cancelled' : 'failed'
         return this.finishFailure(started, status, sanitizeConversationError(response.error), kind, diagnostics)
       }
-      const parsed = parseConversationResponseText(response.content)
-      if (!parsed.ok) return this.finishFailure(started, 'failed', sanitizeConversationError(parsed.error), 'invalid-response', diagnostics)
-      return this.finishSuccess(started, parsed.value, diagnostics)
+      if (!finalResponse) return this.finishFailure(started, 'failed', '模型响应缺少最终结果', 'invalid-response', diagnostics)
+      return this.finishSuccess(started, finalResponse, diagnostics)
     })
+  }
+
+  private callModel(started: StartedAttempt): ReturnType<ConversationModel['respond']> {
+    return this.model.respond({
+      ...started.promptContext,
+      projectPath: this.projectPath,
+      turns: started.promptTurns,
+      signal: started.controller.signal,
+    })
+  }
+
+  private prepareContextExpansion(
+    started: StartedAttempt,
+    requestedCardIds: readonly string[],
+  ): { ok: true; value: StartedAttempt } | { ok: false; error: string } {
+    const cardsById = new Map(started.sourcePromptContext.cardCatalog.map(card => [card.id.toLowerCase(), card]))
+    const documentsById = new Map(started.projectDocuments.map(document => [document.card.id.toLowerCase(), document]))
+    const alreadyAttached = new Set(started.sourcePromptContext.resolvedAttachments.map(attachment => attachment.cardId.toLowerCase()))
+    const expandedAttachments: ResolvedProjectContext['promptContext']['resolvedAttachments'][number][] = []
+    const normalizedIds = new Set<string>()
+    for (const cardId of requestedCardIds) {
+      const normalized = cardId.toLowerCase()
+      if (normalizedIds.has(normalized)) return { ok: false, error: '补取 Card ID 重复' }
+      normalizedIds.add(normalized)
+      if (alreadyAttached.has(normalized)) return { ok: false, error: '补取不能重复请求本轮已附加的 Card：' + cardId }
+      const summary = cardsById.get(normalized)
+      const document = documentsById.get(normalized)
+      if (!summary || !document || summary.id !== cardId || document.card.id !== cardId) {
+        return { ok: false, error: '模型请求了目录之外或大小写不匹配的 Card：' + cardId }
+      }
+      const revision = cardDocumentRevision(document)
+      if (revision !== summary.revision) return { ok: false, error: '补取 Card revision 与本轮目录快照不一致：' + cardId }
+      expandedAttachments.push({ cardId, revision, document })
+    }
+    const expandedPromptContext: ConversationPromptContext = {
+      ...started.sourcePromptContext,
+      resolvedAttachments: [...started.sourcePromptContext.resolvedAttachments, ...expandedAttachments],
+      expandedAttachmentIds: requestedCardIds,
+      expansionPass: true,
+    }
+    const request = { projectPath: this.projectPath, turns: started.document.turns, ...expandedPromptContext }
+    let prepared: ConversationPreparationResult
+    try {
+      prepared = this.model.prepare?.(request) ?? prepareConversationPrompt(request)
+    } catch {
+      return { ok: false, error: '无法安全准备补取后的上下文' }
+    }
+    if (!prepared.ok) return { ok: false, error: prepared.error }
+    const latestTurnId = started.document.turns.at(-1)?.id
+    const document: ConversationDocument = prepared.contextSnapshot && latestTurnId
+      ? { ...started.document, turns: started.document.turns.map(turn => turn.id === latestTurnId ? { ...turn, contextSnapshot: prepared.contextSnapshot } : turn) }
+      : started.document
+    return { ok: true, value: { ...started, document, promptContext: prepared.promptContext, promptTurns: prepared.turns, contextSnapshot: prepared.contextSnapshot } }
   }
 
   private async finishSuccess(
@@ -911,13 +1022,10 @@ export class ProjectConversation {
       ok: true,
       value: {
         attachments,
+        projectDocuments,
         promptContext: {
-          cardCatalog: projectDocuments.map(candidate => ({
-            id: candidate.card.id,
-            name: candidate.card.name,
-            type: candidate.card.type,
-            revision: cardDocumentRevision(candidate),
-          })),
+          cardCatalog: buildConversationCardCatalog(projectDocuments, 'detailed'),
+          compactCardCatalog: buildConversationCardCatalog(projectDocuments, 'compact'),
           resolvedAttachments,
           proposals: proposalSummaries(document),
         },

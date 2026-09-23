@@ -34,6 +34,18 @@ export const CONVERSATION_CARD_DESCRIPTION_MAX_CODE_POINTS = 160
 /** Build deterministic directory projections without exposing complete Card documents. */
 export function buildConversationCardCatalog(
   documents: readonly CardDocument[],
+  tier: 'detailed',
+): DetailedConversationCardCatalogSummary[]
+export function buildConversationCardCatalog(
+  documents: readonly CardDocument[],
+  tier: 'compact',
+): CompactConversationCardCatalogSummary[]
+export function buildConversationCardCatalog(
+  documents: readonly CardDocument[],
+  tier: ConversationCardCatalogTier,
+): ConversationCardCatalogSummary[]
+export function buildConversationCardCatalog(
+  documents: readonly CardDocument[],
   tier: ConversationCardCatalogTier,
 ): ConversationCardCatalogSummary[] {
   return documents.map(document => {
@@ -108,7 +120,12 @@ export interface ConversationProposalSummary {
 }
 
 export interface ConversationPromptContext {
-  cardCatalog: readonly ConversationProjectCardSummary[]
+  cardCatalog: readonly ConversationCardCatalogSummary[]
+  compactCardCatalog: readonly CompactConversationCardCatalogSummary[]
   resolvedAttachments: readonly ConversationResolvedAttachment[]
   proposals: readonly ConversationProposalSummary[]
+  /** Internally retrieved for this turn; never stored as a user attachment. */
+  expandedAttachmentIds?: readonly string[]
+  /** Consume the single reserved expansion allowance on the second provider call. */
+  expansionPass?: boolean
 }

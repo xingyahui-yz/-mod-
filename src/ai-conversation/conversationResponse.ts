@@ -22,6 +22,22 @@ export type ConversationCardProposalInput =
   | ConversationCreateCardProposalInput
   | ConversationUpdateCardProposalInput
 
+export interface ConversationContextExpansionResponseV1 {
+  schemaVersion: 1
+  action: 'expand-context'
+  cardIds: string[]
+}
+
+export type ConversationModelResponse =
+  | { kind: 'final'; response: ConversationResponseV1 }
+  | { kind: 'expand-context'; cardIds: string[] }
+
+export type ConversationModelResponseParseResult =
+  | { ok: true; value: ConversationModelResponse }
+  | { ok: false; error: string }
+
+export const MAX_CONTEXT_EXPANSION_CARD_IDS = 8
+
 export interface ConversationResponseV1 {
   schemaVersion: 1
   text: string
@@ -33,6 +49,7 @@ export type ConversationResponseParseResult =
   | { ok: true; value: ConversationResponseV1 }
   | { ok: false; error: string }
 
+const EXPANSION_KEYS = ['action', 'cardIds', 'schemaVersion']
 const EXACT_KEYS = ['proposals', 'quickReplies', 'schemaVersion', 'text']
 const CREATE_PROPOSAL_KEYS = ['document', 'operation']
 const UPDATE_PROPOSAL_KEYS = ['baseRevision', 'document', 'operation', 'targetCardId']
@@ -46,6 +63,42 @@ const NODE_KEYS = ['data', 'id', 'position', 'type']
 const POSITION_KEYS = ['x', 'y']
 const EDGE_KEYS = ['from', 'id', 'to']
 const EDGE_ENDPOINT_KEYS = ['nodeId', 'port']
+
+export function parseConversationModelResponse(input: unknown): ConversationModelResponseParseResult {
+  if (isRecord(input) && input.action === 'expand-context') {
+    const expansion = parseConversationContextExpansionResponse(input)
+    return expansion.ok
+      ? { ok: true, value: { kind: 'expand-context', cardIds: expansion.value.cardIds } }
+      : expansion
+  }
+  const finalResponse = parseConversationResponse(input)
+  return finalResponse.ok
+    ? { ok: true, value: { kind: 'final', response: finalResponse.value } }
+    : finalResponse
+}
+
+export function parseConversationContextExpansionResponse(input: unknown):
+  | { ok: true; value: ConversationContextExpansionResponseV1 }
+  | { ok: false; error: string } {
+  if (!isRecord(input) || !hasExactKeys(input, EXPANSION_KEYS)) {
+    return { ok: false, error: 'expand-context 响应包含缺失或未知字段' }
+  }
+  if (input.schemaVersion !== 1) return { ok: false, error: '不支持的补取响应版本' }
+  if (input.action !== 'expand-context') return { ok: false, error: '不支持的补取 action' }
+  if (!Array.isArray(input.cardIds) || input.cardIds.length < 1 || input.cardIds.length > MAX_CONTEXT_EXPANSION_CARD_IDS) {
+    return { ok: false, error: "cardIds 必须包含 1 到 " + MAX_CONTEXT_EXPANSION_CARD_IDS + " 项" }
+  }
+  const ids = new Set<string>()
+  const cardIds: string[] = []
+  for (const candidate of input.cardIds) {
+    if (typeof candidate !== 'string' || !candidate.trim()) return { ok: false, error: 'cardIds 必须是非空字符串' }
+    const cardId = candidate.trim()
+    if (ids.has(cardId)) return { ok: false, error: 'cardIds 去除首尾空格后必须唯一' }
+    ids.add(cardId)
+    cardIds.push(cardId)
+  }
+  return { ok: true, value: { schemaVersion: 1, action: 'expand-context', cardIds } }
+}
 
 export function parseConversationResponse(input: unknown): ConversationResponseParseResult {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -208,6 +261,15 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
+}
+
+export function parseConversationModelResponseText(content: string): ConversationModelResponseParseResult {
+  try {
+    const fenced = content.trim().match(/^\x60\x60\x60(?:json)?\s*([\s\S]*?)\s*\x60\x60\x60$/i)
+    return parseConversationModelResponse(JSON.parse(fenced ? fenced[1] : content))
+  } catch {
+    return { ok: false, error: '模型没有返回有效 JSON' }
+  }
 }
 
 export function parseConversationResponseText(content: string): ConversationResponseParseResult {

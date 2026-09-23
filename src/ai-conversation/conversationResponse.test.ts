@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseConversationResponse } from './conversationResponse'
+import { MAX_CONTEXT_EXPANSION_CARD_IDS, parseConversationContextExpansionResponse, parseConversationModelResponse, parseConversationResponse } from './conversationResponse'
 
 function cardDocument(id = 'Fireball') {
   return {
@@ -134,4 +134,46 @@ describe('parseConversationResponse', () => {
     { schemaVersion: 1, text: 'x', quickReplies: [{ id: 'a', label: 'A' }, { id: 'a', label: 'B' }], proposals: [] },
     { schemaVersion: 1, text: 'x', quickReplies: [], proposals: [{}] },
   ])('原子拒绝非法信封 %#', value => expect(parseConversationResponse(value).ok).toBe(false))
+})
+
+describe("parseConversationModelResponse", () => {
+  it("解析严格的补取响应并规范化 Card ID", () => {
+    const input = { schemaVersion: 1, action: "expand-context", cardIds: ["  Fireball  ", "FrostArc"] }
+    expect(parseConversationContextExpansionResponse(input)).toEqual({
+      ok: true,
+      value: { schemaVersion: 1, action: "expand-context", cardIds: ["Fireball", "FrostArc"] },
+    })
+    expect(parseConversationModelResponse(input)).toEqual({
+      ok: true,
+      value: { kind: "expand-context", cardIds: ["Fireball", "FrostArc"] },
+    })
+  })
+
+  it("保留现有严格 final parser 并通过统一入口标注 final", () => {
+    expect(parseConversationModelResponse({ schemaVersion: 1, text: "完成", quickReplies: [], proposals: [] })).toEqual({
+      ok: true,
+      value: { kind: "final", response: { schemaVersion: 1, text: "完成", quickReplies: [], proposals: [] } },
+    })
+  })
+
+  it("接受补取 Card ID 数量的上下边界", () => {
+    for (const count of [1, MAX_CONTEXT_EXPANSION_CARD_IDS]) {
+      const cardIds = Array.from({ length: count }, (_, index) => "Card" + index)
+      expect(parseConversationContextExpansionResponse({ schemaVersion: 1, action: "expand-context", cardIds }).ok).toBe(true)
+    }
+  })
+
+  it.each([
+    { schemaVersion: 1, action: "expand-context", cardIds: [] },
+    { schemaVersion: 1, action: "expand-context", cardIds: Array.from({ length: MAX_CONTEXT_EXPANSION_CARD_IDS + 1 }, (_, index) => "Card" + index) },
+    { schemaVersion: 1, action: "expand-context", cardIds: ["  "] },
+    { schemaVersion: 1, action: "expand-context", cardIds: ["Fireball", " Fireball "] },
+    { schemaVersion: 1, action: "expand-context", cardIds: [1] },
+    { schemaVersion: 2, action: "expand-context", cardIds: ["Fireball"] },
+    { schemaVersion: 1, action: "expand-context", cardIds: ["Fireball"], extra: true },
+    { schemaVersion: 1, action: "other", cardIds: ["Fireball"] },
+  ])("拒绝不完整、越界或不严格的补取响应 %#", input => {
+    expect(parseConversationContextExpansionResponse(input).ok).toBe(false)
+    expect(parseConversationModelResponse(input).ok).toBe(false)
+  })
 })

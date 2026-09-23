@@ -597,7 +597,7 @@ function responseText(text: string): string {
 
 function completedDocument(): ConversationDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     proposals: [],
     turns: [{
       id: 'turn-1',
@@ -606,6 +606,7 @@ function completedDocument(): ConversationDocument {
       quickReplies: [{ id: 'continue', label: '继续完善' }],
       quickReplySelection: null,
       attachments: [],
+      contextSnapshot: null,
       attempts: [{
         id: 'attempt-1',
         status: 'completed',
