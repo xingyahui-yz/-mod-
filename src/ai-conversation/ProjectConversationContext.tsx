@@ -54,6 +54,9 @@ export interface ProjectConversationActions {
   ): ReturnType<ProjectConversation['send']>
   cancel(): ReturnType<ProjectConversation['cancel']>
   retryTurn(turnId: string): ReturnType<ProjectConversation['retryTurn']>
+  archiveAndReset(): ReturnType<ProjectConversation['archiveAndReset']>
+  listArchives(): ReturnType<ProjectConversation['listArchives']>
+  readArchive(archiveId: string): ReturnType<ProjectConversation['readArchive']>
   refreshProposal(proposalId: string): ReturnType<ProjectConversation['refreshProposal']>
   acceptProposal(proposalId: string, finalCardId: string): ReturnType<ProjectConversation['acceptProposal']>
   rejectProposal(
@@ -375,6 +378,16 @@ export function useProjectConversationActions(): ProjectConversationActions {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
       return runOutsideProjectMutations(() => conversation.retryTurn(turnId))
     },
+    archiveAndReset: () => {
+      if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
+      return runProjectMutation(() => conversation.archiveAndReset())
+    },
+    listArchives: () => conversation
+      ? conversation.listArchives()
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    readArchive: (archiveId: string) => conversation
+      ? conversation.readArchive(archiveId)
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
     refreshProposal: (proposalId: string) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
       return runProjectMutation(() => conversation.refreshProposal(proposalId))

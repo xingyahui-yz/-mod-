@@ -12,7 +12,12 @@ import {
   type ConversationQuickReplySelection,
   type ConversationTurn,
 } from './conversationDocument'
-import type { ConversationRepository, ConversationLoadResult } from './conversationRepository'
+import type {
+  ConversationArchiveListResult,
+  ConversationArchiveReadResult,
+  ConversationRepository,
+  ConversationLoadResult,
+} from './conversationRepository'
 import { parseConversationModelResponseText, type ConversationResponseV1 } from './conversationResponse'
 import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
 import { DEFAULT_CONVERSATION_CAPACITY_LIMITS, measureConversationCapacity, type ConversationCapacity, type ConversationCapacityLimits } from './conversationCapacity'
@@ -63,6 +68,8 @@ export type ProjectConversationErrorCode =
   | 'already-running'
   | 'context-over-budget'
   | 'capacity-limit'
+  | 'archive-failed'
+  | 'nothing-to-archive'
   | 'not-retryable'
   | 'cancelled'
   | 'timeout'
@@ -222,6 +229,48 @@ export class ProjectConversation {
           requiresReload: false,
         })
       }
+    })
+  }
+
+  listArchives(): Promise<ConversationArchiveListResult> {
+    return this.repository.listArchives(this.projectPath)
+  }
+
+  readArchive(archiveId: string): Promise<ConversationArchiveReadResult> {
+    return this.repository.readArchive(this.projectPath, archiveId)
+  }
+
+  async archiveAndReset(): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      const ready = this.ensureReady()
+      if (!ready.ok) return ready
+      const current = this.snapshot.document
+      if (!current || (current.turns.length === 0 && current.proposals.length === 0)) {
+        return failure('nothing-to-archive', '当前对话没有可归档内容')
+      }
+      const resetAt = this.now()
+      const empty = createConversationDocument(resetAt)
+      const result = await this.repository.archiveAndReset(this.projectPath, current, resetAt)
+      if (!result.ok) {
+        const uncertain = result.certainty === 'uncertain'
+        this.update({
+          ...this.snapshot,
+          lastError: result.error,
+          persistenceError: uncertain ? result.error : null,
+          requiresReload: uncertain,
+        })
+        return failure(uncertain ? 'persistence' : 'archive-failed', result.error)
+      }
+      this.update({
+        ...this.snapshot,
+        document: empty,
+        loadStatus: 'loaded',
+        quarantineReason: null,
+        lastError: null,
+        persistenceError: null,
+        requiresReload: false,
+      })
+      return { ok: true }
     })
   }
 

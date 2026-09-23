@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectConversation, type ConversationModel, type ConversationRequest } from './projectConversation'
-import type { ConversationDocument } from './conversationDocument'
+import { createConversationDocument, type ConversationDocument } from './conversationDocument'
 import type { ConversationSummaryGenerationRequest } from './conversationSummary'
 import type { ConversationRepository } from './conversationRepository'
 import type { CardDocument } from '../card/cardDocument'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { ConversationCapacityLimits } from './conversationCapacity'
+
+const unusedArchiveMethods: Pick<ConversationRepository, 'archiveAndReset' | 'listArchives' | 'readArchive'> = {
+  archiveAndReset: async () => ({ ok: false, error: 'not used', certainty: 'unchanged' }),
+  listArchives: async () => ({ ok: true, archives: [] }),
+  readArchive: async () => ({ ok: false, error: 'not used' }),
+}
 
 function harness(
   model: ConversationModel,
@@ -19,13 +25,30 @@ function harness(
 ) {
   let saved: ConversationDocument | null = options.initial ? structuredClone(options.initial) : null
   let saveCall = 0
+  const archives = new Map<string, ConversationDocument>()
   const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
     load: async () => saved ? { status: 'loaded', document: saved } : { status: 'missing' },
     save: async (_path, document) => {
       saveCall += 1
       if (options.failSaveCalls?.includes(saveCall)) return { ok: false, error: `save-${saveCall}-failed`, certainty: options.failCertainty ?? 'unchanged' }
       saved = structuredClone(document)
       return { ok: true }
+    },
+    archiveAndReset: async (_path, document, resetAt) => {
+      const archiveId = `archive-${archives.size + 1}`
+      archives.set(archiveId, structuredClone(document))
+      saved = createConversationDocument(resetAt)
+      return { ok: true, archiveId }
+    },
+    listArchives: async () => ({ ok: true, archives: [...archives].map(([archiveId, document]) => ({
+      archiveId, createdAt: document.createdAt, updatedAt: document.updatedAt, turnCount: document.turns.length, bytes: 0,
+    })) }),
+    readArchive: async (_path, archiveId) => {
+      const document = archives.get(archiveId)
+      return document
+        ? { ok: true as const, archiveId, document: structuredClone(document), rawJson: JSON.stringify(document, null, 2) }
+        : { ok: false as const, error: '归档不存在' }
     },
   }
   let id = 0
@@ -55,6 +78,21 @@ describe('ProjectConversation', () => {
     await expect(h.conversation.send('下一轮')).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
     expect(respond).toHaveBeenCalledTimes(1)
     expect(h.saved()?.turns).toHaveLength(1)
+  })
+
+  it('归档完整活动历史后重置为空文档，并支持只读读取', async () => {
+    const h = harness({ respond: async () => ({ success: true, content: '{"schemaVersion":1,"text":"已完成","quickReplies":[],"proposals":[]}' }) })
+    await h.conversation.load()
+    await h.conversation.send('归档前消息')
+    const original = structuredClone(h.saved()!)
+
+    await expect(h.conversation.archiveAndReset()).resolves.toEqual({ ok: true })
+    expect(h.saved()).toEqual(createConversationDocument('2026-09-01T00:00:00.000Z'))
+    const listed = await h.conversation.listArchives()
+    expect(listed).toMatchObject({ ok: true, archives: [{ archiveId: 'archive-1', turnCount: 1 }] })
+    await expect(h.conversation.readArchive('archive-1')).resolves.toMatchObject({
+      ok: true, archiveId: 'archive-1', document: original,
+    })
   })
 
   it('先保存 running，再在最终原子保存后展示回复', async () => {
@@ -195,6 +233,7 @@ describe('ProjectConversation', () => {
     let resolveLoad!: () => void
     let responded = false
     const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
       load: () => new Promise(resolve => { resolveLoad = () => resolve({ status: 'missing' }) }),
       save: async () => ({ ok: true }),
     }
@@ -433,6 +472,7 @@ describe('ProjectConversation', () => {
     let markModelStarted!: () => void
     const modelStarted = new Promise<void>(resolve => { markModelStarted = resolve })
     const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
       load: async () => ({ status: 'missing' }),
       save: async (_path, document) => {
         if (firstSave) {
@@ -483,6 +523,7 @@ describe('ProjectConversation', () => {
     const finalStarted = new Promise<void>(resolve => { finalSaveStarted = resolve })
     let releaseFinalSave!: () => void
     const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
       load: async () => ({ status: 'missing' }),
       save: async (_path, document) => {
         saveCall += 1

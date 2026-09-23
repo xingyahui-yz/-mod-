@@ -310,6 +310,91 @@ describe('ConversationRepository', () => {
     }
   })
 
+  it('原子归档成功后重置 active，列表与读取仅暴露已校验文档', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const memory = memoryFiles({ [path]: JSON.stringify(original) })
+    const repository = createConversationRepository(memory.files, () => 5, () => 'archive-1')
+
+    const result = await repository.archiveAndReset('/project', original, '2026-09-02T00:00:00Z')
+
+    expect(result).toEqual({ ok: true, archiveId: 'archive-1' })
+    expect(JSON.parse(memory.data.get(path)!)).toEqual(createConversationDocument('2026-09-02T00:00:00.000Z'))
+    await expect(repository.listArchives('/project')).resolves.toEqual({
+      ok: true,
+      archives: [{ archiveId: 'archive-1', createdAt: original.createdAt, updatedAt: original.updatedAt, turnCount: 0, bytes: new TextEncoder().encode(JSON.stringify(original, null, 2)).byteLength }],
+    })
+    await expect(repository.readArchive('/project', 'archive-1')).resolves.toEqual({
+      ok: true, archiveId: 'archive-1', document: original, rawJson: JSON.stringify(original, null, 2),
+    })
+  })
+
+  it('归档写入或发布读回失败时不重置 active', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    for (const mode of ['write', 'readback'] as const) {
+      const memory = memoryFiles({ [path]: JSON.stringify(original) })
+      const base = memory.files
+      let archiveReads = 0
+      const files: ConversationFilePort = {
+        ...base,
+        writeFile: async (candidate, content) => mode === 'write' && candidate.includes('/archives/') ? false : base.writeFile(candidate, content),
+        readFile: async candidate => mode === 'readback' && candidate.endsWith('/archive-1.json') && ++archiveReads > 1
+          ? { status: 'found', value: '{tampered' }
+          : base.readFile(candidate),
+      }
+      const result = await createConversationRepository(files, () => 1, () => 'archive-1')
+        .archiveAndReset('/project', original, '2026-09-02T00:00:00Z')
+      expect(result).toMatchObject({ ok: false, certainty: 'unchanged' })
+      expect(JSON.parse(memory.data.get(path)!)).toEqual(original)
+    }
+  })
+
+  it('active reset 失败时保留已验证归档', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const memory = memoryFiles({ [path]: JSON.stringify(original) })
+    const base = memory.files
+    const files: ConversationFilePort = {
+      ...base,
+      rename: async (from, to) => from.includes('.tmp-') && to === path ? false : base.rename(from, to),
+    }
+
+    const result = await createConversationRepository(files, () => 1, () => 'archive-1')
+      .archiveAndReset('/project', original, '2026-09-02T00:00:00Z')
+
+    expect(result).toMatchObject({ ok: false, certainty: 'unchanged' })
+    expect(JSON.parse(memory.data.get(path)!)).toEqual(original)
+    expect(JSON.parse(memory.data.get('/project/.modstudio/ai/archives/archive-1.json')!)).toEqual(original)
+  })
+
+  it('归档读取拒绝路径穿越和未知 schema', async () => {
+    const memory = memoryFiles({
+      '/project/.modstudio/ai/archives/future.json': JSON.stringify({ schemaVersion: 99 }),
+    })
+    const repository = createConversationRepository(memory.files)
+    await expect(repository.readArchive('/project', '../conversation')).resolves.toMatchObject({ ok: false })
+    await expect(repository.readArchive('/project', 'future')).resolves.toMatchObject({ ok: false })
+    await expect(repository.listArchives('/project')).resolves.toEqual({ ok: true, archives: [] })
+  })
+
+  it('真实目录可原子归档、列出、读回并拒绝路径穿越', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-archive-'))
+    const active = join(root, '.modstudio/ai/conversation.json')
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    try {
+      await mkdir(join(root, '.modstudio/ai'), { recursive: true })
+      await writeFile(active, JSON.stringify(original), 'utf8')
+      const repository = createConversationRepository(realFiles(), () => 2, () => 'real-archive')
+      await expect(repository.archiveAndReset(root, original, '2026-09-02T00:00:00Z')).resolves.toEqual({ ok: true, archiveId: 'real-archive' })
+      await expect(repository.listArchives(root)).resolves.toMatchObject({ ok: true, archives: [{ archiveId: 'real-archive', turnCount: 0 }] })
+      await expect(repository.readArchive(root, 'real-archive')).resolves.toMatchObject({ ok: true, document: original })
+      await expect(repository.readArchive(root, '../conversation')).resolves.toMatchObject({ ok: false })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('真实目录上的 EACCES tagged error 阻止恢复猜测', async () => {
     const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-eacces-'))
     const base = realFiles()

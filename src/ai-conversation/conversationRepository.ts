@@ -1,4 +1,4 @@
-import { CURRENT_CONVERSATION_SCHEMA_VERSION, migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
+import { CURRENT_CONVERSATION_SCHEMA_VERSION, createConversationDocument, migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
 
 export type ConversationFileRead<T> =
   | { status: 'found'; value: T }
@@ -24,13 +24,37 @@ export type ConversationLoadResult =
   | { status: 'quarantined'; reason: string; path: string; warning?: string }
   | { status: 'failed'; reason: string; path: string }
 
+export interface ConversationArchiveSummary {
+  archiveId: string
+  createdAt: string
+  updatedAt: string
+  turnCount: number
+  bytes: number
+}
+
+export type ConversationArchiveListResult =
+  | { ok: true; archives: readonly ConversationArchiveSummary[] }
+  | { ok: false; error: string }
+
+export type ConversationArchiveReadResult =
+  | { ok: true; archiveId: string; document: ConversationDocument; rawJson: string }
+  | { ok: false; error: string }
+
+export type ConversationArchiveAndResetResult =
+  | { ok: true; archiveId: string }
+  | { ok: false; error: string; certainty: 'unchanged' | 'uncertain' }
+
 export interface ConversationRepository {
   load(projectPath: string): Promise<ConversationLoadResult>
   save(projectPath: string, document: ConversationDocument): Promise<ConversationSaveResult>
+  archiveAndReset(projectPath: string, document: ConversationDocument, resetAt: string): Promise<ConversationArchiveAndResetResult>
+  listArchives(projectPath: string): Promise<ConversationArchiveListResult>
+  readArchive(projectPath: string, archiveId: string): Promise<ConversationArchiveReadResult>
 }
 
 const directory = (projectPath: string) => `${projectPath}/.modstudio/ai`
 const activePath = (projectPath: string) => `${directory(projectPath)}/conversation.json`
+const archivesDirectory = (projectPath: string) => `${directory(projectPath)}/archives`
 
 export function createConversationRepository(
   files: ConversationFilePort,
@@ -103,6 +127,16 @@ export function createConversationRepository(
       return { ok: true, warning: `新文档已保存，但备份清理失败：${backup}` }
     }
     return { ok: true }
+  }
+
+  const readArchiveInternal = async (projectPath: string, archiveId: string): Promise<ConversationArchiveReadResult> => {
+    if (!isSafeArchiveId(archiveId)) return { ok: false, error: '归档 ID 无效' }
+    const result = await files.readFile(`${archivesDirectory(projectPath)}/${archiveId}.json`)
+    if (result.status === 'error') return { ok: false, error: `无法读取归档：${result.error}` }
+    if (result.status === 'missing') return { ok: false, error: '归档不存在' }
+    const document = parseSavedDocument(result.value)
+    if (!document) return { ok: false, error: '归档文档无效或 schema 未知' }
+    return { ok: true, archiveId, document, rawJson: result.value }
   }
 
   return {
@@ -189,12 +223,104 @@ export function createConversationRepository(
         }
       })
     },
+
+    archiveAndReset(projectPath, document, resetAt) {
+      return runExclusive(async () => {
+        try {
+          const parsed = parseConversationDocument(document)
+          if (!parsed.ok) return { ok: false as const, error: parsed.reason, certainty: 'unchanged' as const }
+          if (!Number.isFinite(Date.parse(resetAt))) return { ok: false as const, error: '重置时间无效', certainty: 'unchanged' as const }
+          const archiveDir = archivesDirectory(projectPath)
+          if (!await files.mkdir(archiveDir)) return { ok: false as const, error: '无法创建归档目录', certainty: 'unchanged' as const }
+          const archiveId = await allocateArchiveId(files, archiveDir, createId)
+          if (!archiveId) return { ok: false as const, error: '无法分配唯一归档 ID', certainty: 'unchanged' as const }
+          const archivePath = `${archiveDir}/${archiveId}.json`
+          const temporary = `${archivePath}.tmp-${now()}-${safeId(createId())}`
+          const content = JSON.stringify(document, null, 2)
+          if (!await files.writeFile(temporary, content)) {
+            const cleaned = await files.remove(temporary)
+            return { ok: false as const, error: cleaned ? '无法写入归档临时文件' : '无法写入归档临时文件，且清理失败', certainty: 'unchanged' as const }
+          }
+          const staged = await files.readFile(temporary)
+          if (staged.status !== 'found') {
+            await files.remove(temporary)
+            return { ok: false as const, error: '归档临时文件读回校验失败', certainty: 'unchanged' as const }
+          }
+          const stagedDocument = parseSavedDocument(staged.value)
+          if (!stagedDocument || staged.value !== content || !documentsEqual(stagedDocument, document)) {
+            await files.remove(temporary)
+            return { ok: false as const, error: '归档临时文件读回校验失败', certainty: 'unchanged' as const }
+          }
+          if (!await files.rename(temporary, archivePath)) {
+            await files.remove(temporary)
+            return { ok: false as const, error: '无法原子发布归档文件', certainty: 'unchanged' as const }
+          }
+          const published = await files.readFile(archivePath)
+          const publishedDocument = published.status === 'found' ? parseSavedDocument(published.value) : null
+          if (published.status !== 'found' || !publishedDocument || published.value !== content || !documentsEqual(publishedDocument, document)) {
+            return { ok: false as const, error: '归档发布后读回校验失败，活动对话未重置', certainty: 'unchanged' as const }
+          }
+          const reset = await saveInternal(projectPath, createConversationDocument(new Date(resetAt).toISOString()))
+          if (!reset.ok) return { ok: false as const, error: `归档已保留，但活动对话重置失败：${reset.error}`, certainty: reset.certainty }
+          return { ok: true as const, archiveId }
+        } catch (error) {
+          return { ok: false as const, error: errorMessage(error), certainty: 'uncertain' as const }
+        }
+      })
+    },
+
+    listArchives(projectPath) {
+      return runExclusive(async () => {
+        try {
+          const listing = await files.readDirectory(archivesDirectory(projectPath))
+          if (listing.status === 'error') return { ok: false as const, error: listing.error }
+          if (listing.status === 'missing') return { ok: true as const, archives: [] }
+          const archives: ConversationArchiveSummary[] = []
+          for (const entry of listing.value) {
+            const name = fileName(entry)
+            if (!name.endsWith('.json')) continue
+            const archiveId = name.slice(0, -'.json'.length)
+            if (!isSafeArchiveId(archiveId)) continue
+            const content = await files.readFile(`${archivesDirectory(projectPath)}/${name}`)
+            if (content.status === 'error') return { ok: false as const, error: `无法读取归档 ${archiveId}：${content.error}` }
+            if (content.status !== 'found') continue
+            const document = parseSavedDocument(content.value)
+            if (!document) continue
+            archives.push({ archiveId, createdAt: document.createdAt, updatedAt: document.updatedAt, turnCount: document.turns.length, bytes: new TextEncoder().encode(content.value).byteLength })
+          }
+          archives.sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.archiveId.localeCompare(right.archiveId))
+          return { ok: true as const, archives }
+        } catch (error) {
+          return { ok: false as const, error: errorMessage(error) }
+        }
+      })
+    },
+
+    readArchive(projectPath, archiveId) {
+      return runExclusive(async () => {
+        try { return await readArchiveInternal(projectPath, archiveId) }
+        catch (error) { return { ok: false as const, error: errorMessage(error) } }
+      })
+    },
   }
 }
 
 type ParsedRaw =
   | { ok: true; document: ConversationDocument; migrated: boolean }
   | { ok: false; reason: string; canRestoreBackup: boolean }
+
+
+async function allocateArchiveId(files: ConversationFilePort, archiveDir: string, createId: () => string): Promise<string | null> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const base = safeId(createId())
+    const candidate = attempt === 0 ? base : `${base}-${attempt}`
+    if (!isSafeArchiveId(candidate)) continue
+    const existing = await files.readFile(`${archiveDir}/${candidate}.json`)
+    if (existing.status === 'missing') return candidate
+    if (existing.status === 'error') return null
+  }
+  return null
+}
 
 function parseRawDocument(content: string): ParsedRaw {
   let raw: unknown
@@ -308,6 +434,10 @@ function normalizeEntry(projectPath: string, entry: string): string {
 
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path
+}
+
+function isSafeArchiveId(value: string): boolean {
+  return /^[a-zA-Z0-9_-]{1,100}$/.test(value) && value !== '.' && value !== '..'
 }
 
 function safeId(value: string): string {

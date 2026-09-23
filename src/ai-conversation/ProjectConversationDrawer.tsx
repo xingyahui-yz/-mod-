@@ -13,6 +13,7 @@ import {
 } from './ProjectConversationContext'
 import { CardProposalPanel } from './CardProposalPanel'
 import type { ConversationProposalRejectionFeedback } from './proposalLifecycle'
+import type { ConversationArchiveSummary, ConversationArchiveReadResult } from './conversationRepository'
 
 const RETRIABLE_STATUSES = new Set<ConversationAttemptStatus>(['failed', 'cancelled', 'interrupted'])
 const NO_CARD_DOCUMENTS: readonly never[] = []
@@ -33,6 +34,13 @@ export function ProjectConversationDrawer({
   const [selectedQuickReply, setSelectedQuickReply] = useState<ConversationQuickReplySelection | null>(null)
   const [attachmentIds, setAttachmentIds] = useState<string[]>([])
   const [actionError, setActionError] = useState<string | null>(null)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [archiveBrowserOpen, setArchiveBrowserOpen] = useState(false)
+  const [archives, setArchives] = useState<readonly ConversationArchiveSummary[]>([])
+  const [isLoadingArchives, setIsLoadingArchives] = useState(false)
+  const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null)
+  const [archiveRead, setArchiveRead] = useState<Extract<ConversationArchiveReadResult, { ok: true }> | null>(null)
+  const archiveReadRequest = useRef(0)
   const [hasUnread, setHasUnread] = useState(false)
   const historyRef = useRef<HTMLDivElement>(null)
   const drawerRef = useRef<HTMLElement>(null)
@@ -65,6 +73,12 @@ export function ProjectConversationDrawer({
       setSelectedQuickReply(null)
       setAttachmentIds([])
       setActionError(null)
+      setArchiveError(null)
+      setArchiveBrowserOpen(false)
+      setArchives([])
+      setSelectedArchiveId(null)
+      setArchiveRead(null)
+      archiveReadRequest.current += 1
       setHasUnread(false)
       previousActivityCount.current = activityCount
       unreadBaselineReadyRef.current = view.loadStatus !== 'loading'
@@ -150,6 +164,7 @@ export function ProjectConversationDrawer({
   const availableDocuments = projectDocuments.filter(document => !attachmentIds.includes(document.card.id))
   const canSend = Boolean(
     view.projectRoot &&
+    !selectedArchiveId &&
     isCardCatalogReady &&
     view.loadStatus !== 'loading' &&
     view.loadStatus !== 'error' &&
@@ -215,6 +230,85 @@ export function ProjectConversationDrawer({
   const updateDraft = (value: string) => {
     setDraft(value)
     setSelectedQuickReply(null)
+  }
+
+
+  const refreshArchives = async () => {
+    setIsLoadingArchives(true)
+    setArchiveError(null)
+    try {
+      const result = await actions.listArchives()
+      if (result.ok) setArchives(result.archives)
+      else setArchiveError(result.error)
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : '读取归档列表失败')
+    } finally {
+      setIsLoadingArchives(false)
+    }
+  }
+
+  const openArchiveBrowser = () => {
+    setArchiveBrowserOpen(true)
+    void refreshArchives()
+  }
+
+  const showArchive = async (archiveId: string) => {
+    setSelectedArchiveId(archiveId)
+    setArchiveRead(null)
+    setArchiveError(null)
+    const request = ++archiveReadRequest.current
+    try {
+      const result = await actions.readArchive(archiveId)
+      if (request !== archiveReadRequest.current) return
+      if (result.ok) setArchiveRead(result)
+      else setArchiveError(result.error)
+    } catch (error) {
+      if (request === archiveReadRequest.current) {
+        setArchiveError(error instanceof Error ? error.message : '读取归档失败')
+      }
+    }
+  }
+
+  const leaveArchive = () => {
+    archiveReadRequest.current += 1
+    setSelectedArchiveId(null)
+    setArchiveRead(null)
+    setArchiveError(null)
+  }
+
+  const exportArchive = () => {
+    if (!archiveRead) return
+    const blob = new Blob([archiveRead.rawJson], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'conversation-' + safeArchiveFilename(archiveRead.archiveId) + '.json'
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const archiveAndReset = async () => {
+    if (view.isBusy || !view.document) return
+    const confirmed = window.confirm('将当前项目对话完整归档，并清空活动对话。归档只能只读查看或导出，不会自动恢复。确定继续吗？')
+    if (!confirmed) return
+    setArchiveError(null)
+    try {
+      const result = await actions.archiveAndReset()
+      if (!result.ok) {
+        setArchiveError(result.error)
+        return
+      }
+      setDraft('')
+      setSelectedQuickReply(null)
+      setAttachmentIds([])
+      leaveArchive()
+      setArchiveBrowserOpen(true)
+      await refreshArchives()
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : '归档并重置失败')
+    }
   }
 
   const previewUpdateProposal = async (proposalId: string, cardId: string) => {
@@ -363,10 +457,93 @@ export function ProjectConversationDrawer({
                     ? '当前轮次会完成或取消，之后将封锁新消息；请先归档并重置活动对话。'
                     : '请先归档并重置活动对话，然后再继续。'}
                 </span>
+                <button type="button" onClick={openArchiveBrowser}>打开归档管理</button>
               </div>
             )}
 
-            <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label="对话历史">
+            <section className="conversation-archive-controls" aria-label="对话归档">
+              <button type="button" onClick={openArchiveBrowser} aria-expanded={archiveBrowserOpen}>
+                {archiveBrowserOpen ? '刷新归档列表' : '浏览归档' + (archives.length ? '（' + archives.length + '）' : '')}
+              </button>
+              {archiveBrowserOpen && (
+                <div className="conversation-archive-browser">
+                  <p className="conversation-archive-readonly-note">
+                    归档为只读历史，不会自动恢复到活动对话；可浏览或额外导出 JSON。
+                  </p>
+                  <button
+                    type="button"
+                    className="conversation-archive-reset-button"
+                    onClick={() => void archiveAndReset()}
+                    disabled={view.isBusy || !view.document || (!view.document.turns.length && !view.document.proposals.length) || view.loadStatus !== 'loaded'}
+                  >归档当前对话并重置</button>
+                  <button type="button" onClick={() => void refreshArchives()} disabled={isLoadingArchives}>
+                    {isLoadingArchives ? '正在读取…' : '刷新列表'}
+                  </button>
+                  {isLoadingArchives && <span role="status">正在读取归档列表…</span>}
+                  {!isLoadingArchives && archives.length === 0 && <p>尚无归档。</p>}
+                  {archives.length > 0 && (
+                    <ul aria-label="项目对话归档列表">
+                      {archives.map(archive => (
+                        <li key={archive.archiveId}>
+                          <button
+                            type="button"
+                            aria-label={'查看归档 ' + archive.archiveId}
+                            aria-pressed={selectedArchiveId === archive.archiveId}
+                            onClick={() => void showArchive(archive.archiveId)}
+                          >
+                            {new Date(archive.createdAt).toLocaleString('zh-CN')} · {archive.turnCount} 轮 · {formatCapacityBytes(archive.bytes)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {selectedArchiveId && (
+                    <div className="conversation-archive-viewer" aria-label="归档只读查看">
+                      <strong>归档只读查看 · {selectedArchiveId}</strong>
+                      <p>此内容不会替换或恢复活动对话。</p>
+                      <button type="button" onClick={leaveArchive}>返回当前对话</button>
+                      <button type="button" onClick={exportArchive} disabled={!archiveRead}>导出此归档 JSON</button>
+                      {archiveRead && <span>{archiveRead.document.turns.length} 轮历史</span>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+            {archiveError && <div className="conversation-error" role="alert">归档操作失败：{archiveError}</div>}
+
+            <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label={selectedArchiveId ? '归档对话历史' : '对话历史'}>
+              {selectedArchiveId ? (archiveRead
+                ? <>
+                    {archiveRead.document.turns.length > 0
+                      ? archiveRead.document.turns.map(turn => (
+                        <ConversationTurnView
+                          key={turn.id}
+                          turn={turn}
+                          isLatest={false}
+                          isRunning={false}
+                          persistenceBlocked
+                          selectedQuickReply={null}
+                          onSelectQuickReply={() => undefined}
+                          onRetry={() => undefined}
+                        />
+                      ))
+                      : <div className="conversation-empty">该归档没有对话轮次。</div>}
+                    {archiveRead.document.proposals.length > 0 && (
+                      <section className="conversation-archive-proposals" aria-label="归档提案摘要">
+                        <h3>归档提案摘要（只读）</h3>
+                        <ul>
+                          {archiveRead.document.proposals.map(proposal => (
+                            <li key={proposal.id}>
+                              <strong>{proposal.operation === 'create' ? '创建新 Card' : '修改现有 Card'}</strong>
+                              <span>目标：@{proposal.targetCardId}</span>
+                              <span>状态：{proposalStatusLabel(proposal.status)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                  </>
+                : <div className="conversation-empty">正在读取归档历史…</div>) : <>
               <ConversationState view={view} />
               {turns.map(turn => (
                 <ConversationTurnView
@@ -396,6 +573,7 @@ export function ProjectConversationDrawer({
                   onRedoFromCurrent={redoFromCurrent}
                 />
               )}
+              </>}
             </div>
 
             {(view.persistenceError || actionError || (view.lastError && !view.isBusy)) && (
@@ -404,7 +582,7 @@ export function ProjectConversationDrawer({
               </div>
             )}
 
-            <form className="conversation-composer" onSubmit={event => void handleSubmit(event)}>
+            {!selectedArchiveId && <form className="conversation-composer" onSubmit={event => void handleSubmit(event)}>
               {attachedDocuments.length > 0 && (
                 <div className="conversation-attachments" aria-label="已添加的 Card 上下文">
                   {attachedDocuments.map(document => (
@@ -474,7 +652,7 @@ export function ProjectConversationDrawer({
                     ? '容量达到硬限制；请先归档并重置后再发送'
                     : 'Enter 发送 · Shift + Enter 换行 · 附件仅记录发送时版本'}
               </p>
-            </form>
+            </form>}
           </div>
         )}
       </aside>
@@ -577,6 +755,22 @@ function ConversationTurnView({
       })}
     </article>
   )
+}
+
+function proposalStatusLabel(status: string): string {
+  switch (status) {
+    case 'pending': return '待确认'
+    case 'accepted': return '已接受'
+    case 'rejected': return '已拒绝'
+    case 'stale': return '已过期'
+    case 'superseded': return '已被替代'
+    case 'reverted': return '已撤销'
+    default: return status
+  }
+}
+
+function safeArchiveFilename(archiveId: string): string {
+  return archiveId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'archive'
 }
 
 function projectName(projectRoot: string): string {

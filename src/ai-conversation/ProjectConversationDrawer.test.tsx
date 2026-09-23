@@ -4,7 +4,7 @@ import { createEmptyGraph } from '../node-editor/graph'
 import { cardCatalogActions, getCardCatalogView } from '../card/cardCatalog'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
-import type { ConversationDocument } from './conversationDocument'
+import { createConversationDocument, type ConversationDocument } from './conversationDocument'
 import type { ConversationCapacityLimits } from './conversationCapacity'
 import type { ConversationLoadResult, ConversationRepository } from './conversationRepository'
 import { ProjectConversation, type ConversationModel } from './projectConversation'
@@ -26,6 +26,96 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProjectConversationDrawer', () => {
+  it('归档只读浏览仅显示历史，不恢复活动对话，并可安全导出 JSON', async () => {
+    const active = completedDocument()
+    const repository = memoryRepository({ status: 'loaded', document: active })
+    const archived = structuredClone(active)
+    archived.proposals = [proposal('archived-p1', cardDocument('ArchivedCard', '仅供历史查看'), 'update', 'pending', 'base-revision')]
+    const rawJson = JSON.stringify(archived)
+    repository.listArchives = vi.fn(async () => ({
+      ok: true as const,
+      archives: [{ archiveId: '../archive:one', createdAt: NOW, updatedAt: NOW, turnCount: 1, bytes: rawJson.length }],
+    }))
+    repository.readArchive = vi.fn(async () => ({
+      ok: true as const,
+      archiveId: '../archive:one',
+      document: structuredClone(archived),
+      rawJson,
+    }))
+    const createObjectURL = vi.fn(() => 'blob:archive')
+    const revokeObjectURL = vi.fn()
+    let downloadedFilename = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { downloadedFilename = this.download })
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看归档 ../archive:one' }))
+
+    expect(await screen.findByLabelText('归档只读查看')).toBeTruthy()
+    expect(screen.getByText('此内容不会替换或恢复活动对话。')).toBeTruthy()
+    expect(screen.getByRole('log', { name: '归档对话历史' }).textContent).toContain('我们先做什么？')
+    const archivedProposals = screen.getByRole('region', { name: '归档提案摘要' })
+    expect(archivedProposals.textContent).toContain('修改现有 Card')
+    expect(archivedProposals.textContent).toContain('@ArchivedCard')
+    expect(archivedProposals.textContent).toContain('待确认')
+    expect(screen.queryByRole('button', { name: /接受提案|拒绝提案|创建并接受/ })).toBeNull()
+    expect(screen.queryByLabelText('发送给项目 AI 的消息')).toBeNull()
+    expect(repository.current).toEqual(active)
+
+    fireEvent.click(screen.getByRole('button', { name: '导出此归档 JSON' }))
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob)))
+    expect(downloadedFilename).toBe('conversation-.._archive_one.json')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:archive')
+  })
+
+  it('归档确认取消时不更改活动对话或草稿', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '保留这份草稿' } })
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(repository.archiveAndReset).not.toHaveBeenCalled()
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('保留这份草稿')
+    expect(repository.current?.turns).toHaveLength(1)
+  })
+
+  it('确认后归档并清空活动草稿和附件，再刷新归档列表', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '待归档的问题' } })
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
+
+    await waitFor(() => expect(repository.archiveAndReset).toHaveBeenCalledOnce())
+    expect(await screen.findByRole('button', { name: '查看归档 archive-1' })).toBeTruthy()
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('')
+    expect(repository.current?.turns).toEqual([])
+    expect(repository.listArchives).toHaveBeenCalled()
+  })
+
+  it('归档失败显示错误且不清空活动草稿', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    repository.archiveAndReset = vi.fn(async () => ({ ok: false as const, error: '磁盘不可写', certainty: 'unchanged' as const }))
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '失败后仍保留' } })
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
+
+    expect(await screen.findByText('归档操作失败：磁盘不可写')).toBeTruthy()
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('失败后仍保留')
+    expect(repository.current?.turns).toHaveLength(1)
+  })
   it('容量 warning 显示非阻塞提醒且仍允许发送', async () => {
     const model = successModel('继续讨论。')
     renderDrawer(
@@ -695,6 +785,7 @@ function successfulCardFiles(): ProposalCardPersistencePort {
 
 function memoryRepository(initial: ConversationLoadResult) {
   let current = initial.status === 'loaded' ? initial.document : null
+  const archived = new Map<string, ConversationDocument>()
   const repository: ConversationRepository & { current: ConversationDocument | null } = {
     get current() { return current },
     set current(value) { current = value },
@@ -702,6 +793,28 @@ function memoryRepository(initial: ConversationLoadResult) {
     save: vi.fn(async (_projectRoot, document) => {
       current = structuredClone(document)
       return { ok: true as const }
+    }),
+    archiveAndReset: vi.fn(async (_projectRoot, document) => {
+      const archiveId = 'archive-' + String(archived.size + 1)
+      archived.set(archiveId, structuredClone(document))
+      current = createConversationDocument(document.updatedAt)
+      return { ok: true as const, archiveId }
+    }),
+    listArchives: vi.fn(async () => ({
+      ok: true as const,
+      archives: [...archived].map(([archiveId, document]) => ({
+        archiveId,
+        createdAt: document.createdAt,
+        updatedAt: document.updatedAt,
+        turnCount: document.turns.length,
+        bytes: JSON.stringify(document).length,
+      })),
+    })),
+    readArchive: vi.fn(async archiveId => {
+      const document = archived.get(archiveId)
+      return document
+        ? { ok: true as const, archiveId, document: structuredClone(document), rawJson: JSON.stringify(document) }
+        : { ok: false as const, error: '归档不存在' }
     }),
   }
   return repository
