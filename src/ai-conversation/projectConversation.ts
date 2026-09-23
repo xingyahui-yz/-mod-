@@ -562,6 +562,7 @@ export class ProjectConversation {
   private async startRetry(turnId: string): Promise<{ ok: true; value: StartedAttempt } | Extract<ProjectConversationResult, { ok: false }>> {
     const ready = this.ensureReady()
     if (!ready.ok) return ready
+    if (this.snapshot.capacity.level === 'hard') return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
     const document = this.snapshot.document
     const turn = document?.turns[document.turns.length - 1]
     const lastAttempt = turn?.attempts[turn.attempts.length - 1]

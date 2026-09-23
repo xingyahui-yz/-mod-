@@ -312,6 +312,21 @@ describe('ProjectConversation', () => {
     expect(turn.attempts[0].failureKind).toBe('timeout')
   })
 
+  it('硬容量达到后拒绝重试失败轮次', async () => {
+    const respond = vi.fn(async () => ({ success: false as const, error: '超时', kind: 'timeout' as const }))
+    const h = harness({ respond }, {
+      capacityLimits: { warningBytes: 1, warningMessages: 10, hardBytes: 1, hardMessages: 20 },
+    })
+    await h.conversation.load()
+    await expect(h.conversation.send('保留原消息')).resolves.toMatchObject({ ok: false, code: 'timeout' })
+    const turnId = h.conversation.getSnapshot().document!.turns[0].id
+    const saved = h.saved()
+
+    await expect(h.conversation.retryTurn(turnId)).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
+    expect(h.saved()).toEqual(saved)
+    expect(respond).toHaveBeenCalledTimes(1)
+  })
+
   it('拒绝重试非最后轮次', async () => {
     let call = 0
     const h = harness({ respond: async () => {
