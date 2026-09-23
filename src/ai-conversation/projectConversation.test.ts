@@ -5,6 +5,7 @@ import type { ConversationSummaryGenerationRequest } from './conversationSummary
 import type { ConversationRepository } from './conversationRepository'
 import type { CardDocument } from '../card/cardDocument'
 import { cardDocumentRevision } from '../card/cardAiProposal'
+import type { ConversationCapacityLimits } from './conversationCapacity'
 
 function harness(
   model: ConversationModel,
@@ -13,6 +14,7 @@ function harness(
     failSaveCalls?: readonly number[]
     failCertainty?: 'unchanged' | 'uncertain'
     projectDocuments?: () => readonly CardDocument[]
+    capacityLimits?: ConversationCapacityLimits
   } = {},
 ) {
   let saved: ConversationDocument | null = options.initial ? structuredClone(options.initial) : null
@@ -34,11 +36,27 @@ function harness(
     () => new Date('2026-09-01T00:00:00Z'),
     () => `id-${++id}`,
     options.projectDocuments,
+    options.capacityLimits,
   )
   return { conversation, saved: () => saved, saveCalls: () => saveCall }
 }
 
 describe('ProjectConversation', () => {
+
+  it('允许当前轮完成后达到硬容量，但拒绝下一轮', async () => {
+    const respond = vi.fn(async () => ({ success: true as const, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }))
+    const h = harness({ respond }, {
+      capacityLimits: { warningBytes: 100_000, warningMessages: 1, hardBytes: 200_000, hardMessages: 1 },
+    })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('最后一轮')).resolves.toEqual({ ok: true })
+    expect(h.conversation.getSnapshot().capacity).toMatchObject({ level: 'hard', messageCount: 2 })
+    await expect(h.conversation.send('下一轮')).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
+    expect(respond).toHaveBeenCalledTimes(1)
+    expect(h.saved()?.turns).toHaveLength(1)
+  })
+
   it('先保存 running，再在最终原子保存后展示回复', async () => {
     let statusDuringCall = ''
     const h = harness({ respond: async () => { statusDuringCall = h.saved()!.turns[0].attempts[0].status; return { success: true, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' } } })

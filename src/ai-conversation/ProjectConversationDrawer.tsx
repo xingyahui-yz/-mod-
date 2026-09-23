@@ -155,6 +155,7 @@ export function ProjectConversationDrawer({
     view.loadStatus !== 'error' &&
     view.loadStatus !== 'quarantined' &&
     !view.persistenceError &&
+    view.capacity.level !== 'hard' &&
     !view.isBusy &&
     draft.trim(),
   )
@@ -348,6 +349,23 @@ export function ProjectConversationDrawer({
               {view.isBusy && <strong>处理中</strong>}
             </div>
 
+            {view.capacity.level === 'warning' && (
+              <div className="conversation-capacity-notice is-warning" role="status">
+                对话已达到容量提醒阈值：{formatCapacityBytes(view.capacity.bytes)} / 10 MB，
+                {view.capacity.messageCount.toLocaleString('zh-CN')} / 5,000 条消息。仍可继续对话；建议适时归档并重置。
+              </div>
+            )}
+            {view.capacity.level === 'hard' && (
+              <div className="conversation-capacity-notice is-hard" role="alert">
+                <strong>项目对话已达到硬容量上限，不能开始新一轮。</strong>
+                <span>
+                  {view.isBusy
+                    ? '当前轮次会完成或取消，之后将封锁新消息；请先归档并重置活动对话。'
+                    : '请先归档并重置活动对话，然后再继续。'}
+                </span>
+              </div>
+            )}
+
             <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label="对话历史">
               <ConversationState view={view} />
               {turns.map(turn => (
@@ -437,7 +455,7 @@ export function ProjectConversationDrawer({
                   placeholder={composerPlaceholder(view.loadStatus, isCardCatalogReady)}
                   aria-label="发送给项目 AI 的消息"
                   rows={3}
-                  disabled={!isCardCatalogReady || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.isBusy}
+                  disabled={!isCardCatalogReady || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.capacity.level === 'hard' || view.isBusy}
                 />
                 {view.isBusy ? (
                   <button type="button" className="conversation-send-button is-cancel" onClick={() => void actions.cancel()}>
@@ -452,7 +470,9 @@ export function ProjectConversationDrawer({
               <p className="conversation-composer-hint">
                 {view.projectRoot && !isCardCatalogReady
                   ? '正在等待当前项目 Card 目录加载完成…'
-                  : 'Enter 发送 · Shift + Enter 换行 · 附件仅记录发送时版本'}
+                  : view.capacity.level === 'hard'
+                    ? '容量达到硬限制；请先归档并重置后再发送'
+                    : 'Enter 发送 · Shift + Enter 换行 · 附件仅记录发送时版本'}
               </p>
             </form>
           </div>
@@ -567,6 +587,10 @@ function shortRevision(revision: string): string {
   return revision.slice(0, 8)
 }
 
+function formatCapacityBytes(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)} MB`
+}
+
 function composerPlaceholder(status: ProjectConversationView['loadStatus'], isCardCatalogReady: boolean): string {
   if (status === 'no-project') return '请先打开项目'
   if (status === 'loading') return '正在恢复对话…'
@@ -610,6 +634,10 @@ const DRAWER_STYLES = `
   .conversation-project-status { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 7px 18px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 11px; }
   .conversation-project-status > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conversation-project-status strong { margin-left: auto; color: color-mix(in srgb, var(--accent) 70%, #7fb8e8); font-weight: 600; }
+  .conversation-capacity-notice { display: flex; flex-direction: column; gap: 3px; margin: 8px 12px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; font-size: 10px; line-height: 1.45; }
+  .conversation-capacity-notice.is-warning { border-color: color-mix(in srgb, #d5a64c 48%, var(--border)); background: color-mix(in srgb, var(--bg-secondary) 94%, #d5a64c 6%); color: var(--text-secondary); }
+  .conversation-capacity-notice.is-hard { border-color: color-mix(in srgb, var(--accent) 58%, var(--border)); background: color-mix(in srgb, var(--bg-secondary) 90%, var(--accent) 10%); color: var(--text-primary); }
+  .conversation-capacity-notice strong { font-size: 11px; }
   .conversation-status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-secondary); opacity: .42; }
   .conversation-status-dot.is-active, [data-running="true"] .conversation-status-dot { background: #6db9e9; opacity: 1; box-shadow: 0 0 0 4px rgba(109, 185, 233, .12); animation: conversation-pulse 1.3s ease-in-out infinite; }
   .conversation-status-dot.has-unread { background: #75b6df; opacity: 1; box-shadow: 0 0 0 3px rgba(117,182,223,.12); }

@@ -83,6 +83,7 @@ const EMPTY_SNAPSHOT: ProjectConversationSnapshot = {
   lastError: null,
   persistenceError: null,
   requiresReload: false,
+  capacity: { level: 'normal', bytes: 0, messageCount: 0 },
 }
 
 const NOOP_UNSUBSCRIBE = () => undefined

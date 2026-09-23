@@ -15,6 +15,7 @@ import {
 import type { ConversationRepository, ConversationLoadResult } from './conversationRepository'
 import { parseConversationModelResponseText, type ConversationResponseV1 } from './conversationResponse'
 import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
+import { DEFAULT_CONVERSATION_CAPACITY_LIMITS, measureConversationCapacity, type ConversationCapacity, type ConversationCapacityLimits } from './conversationCapacity'
 import { CONVERSATION_SUMMARY_REFRESH_THRESHOLD_TOKENS, estimateUnsummarizedConversationTokens, getUnsummarizedTurns, toRollingSummary, type ConversationSummaryGenerationRequest, type ConversationSummaryGenerationResult } from './conversationSummary'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
@@ -61,6 +62,7 @@ export type ProjectConversationErrorCode =
   | 'quarantined'
   | 'already-running'
   | 'context-over-budget'
+  | 'capacity-limit'
   | 'not-retryable'
   | 'cancelled'
   | 'timeout'
@@ -86,6 +88,7 @@ export interface ProjectConversationSnapshot {
   lastError: string | null
   persistenceError: string | null
   requiresReload: boolean
+  capacity: ConversationCapacity
 }
 
 export interface ProposalCardCommit {
@@ -127,6 +130,7 @@ export class ProjectConversation {
     lastError: null,
     persistenceError: null,
     requiresReload: false,
+    capacity: measureConversationCapacity(null),
   }
   private listeners = new Set<Listener>()
   private abortController: AbortController | null = null
@@ -145,6 +149,7 @@ export class ProjectConversation {
     private readonly clock: () => Date = () => new Date(),
     private readonly createId: () => string = () => crypto.randomUUID(),
     private readonly getProjectDocuments: () => readonly CardDocument[] = () => [],
+    private readonly capacityLimits: ConversationCapacityLimits = DEFAULT_CONVERSATION_CAPACITY_LIMITS,
   ) {}
 
   getSnapshot = (): ProjectConversationSnapshot => this.snapshot
@@ -519,6 +524,9 @@ export class ProjectConversation {
     const ready = this.ensureReady()
     if (!ready.ok) return ready
     if (!this.isValidQuickReplySelection(text, quickReplySelection)) return failure('invalid-input', '快捷回答引用无效')
+
+    const currentCapacity = this.snapshot.capacity
+    if (currentCapacity.level === 'hard') return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
 
     const now = this.now()
     const attemptId = this.createId()
@@ -1173,8 +1181,11 @@ export class ProjectConversation {
   }
 
   private now(): string { return this.clock().toISOString() }
-  private update(snapshot: ProjectConversationSnapshot): void {
-    this.snapshot = snapshot
+  private update(snapshot: Omit<ProjectConversationSnapshot, 'capacity'> & { capacity?: ConversationCapacity }): void {
+    const capacity = snapshot.document === this.snapshot.document
+      ? snapshot.capacity ?? this.snapshot.capacity
+      : measureConversationCapacity(snapshot.document, this.capacityLimits)
+    this.snapshot = { ...snapshot, capacity }
     this.listeners.forEach(listener => listener())
   }
 }

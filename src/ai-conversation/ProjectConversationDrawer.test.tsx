@@ -5,6 +5,7 @@ import { cardCatalogActions, getCardCatalogView } from '../card/cardCatalog'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
 import type { ConversationDocument } from './conversationDocument'
+import type { ConversationCapacityLimits } from './conversationCapacity'
 import type { ConversationLoadResult, ConversationRepository } from './conversationRepository'
 import { ProjectConversation, type ConversationModel } from './projectConversation'
 import { ProjectConversationProvider } from './ProjectConversationContext'
@@ -25,6 +26,64 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProjectConversationDrawer', () => {
+  it('容量 warning 显示非阻塞提醒且仍允许发送', async () => {
+    const model = successModel('继续讨论。')
+    renderDrawer(
+      '/mods/quiet-depth',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      model,
+      undefined,
+      { warningBytes: Number.MAX_SAFE_INTEGER, warningMessages: 1, hardBytes: Number.MAX_SAFE_INTEGER, hardMessages: 100 },
+    )
+
+    const notice = await screen.findByRole('status')
+    expect(notice.textContent).toContain('10 MB')
+    expect(notice.textContent).toContain('5,000 条消息')
+    const composer = screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement
+    expect(composer.disabled).toBe(false)
+    fireEvent.change(composer, { target: { value: '继续聊' } })
+    expect((screen.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('容量 hard 显示归档重置要求并禁用新消息', async () => {
+    const model = successModel('不应调用')
+    renderDrawer(
+      '/mods/quiet-depth',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      model,
+      undefined,
+      { warningBytes: Number.MAX_SAFE_INTEGER, warningMessages: 1, hardBytes: Number.MAX_SAFE_INTEGER, hardMessages: 1 },
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('请先归档并重置活动对话')
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(model.respond).not.toHaveBeenCalled()
+  })
+
+  it('运行中达到 hard 时说明当前轮次收尾后封锁，停止按钮仍可用', async () => {
+    let resolveModel: ((value: { success: true; content: string }) => void) | null = null
+    const model: ConversationModel = { respond: vi.fn(() => new Promise(resolve => { resolveModel = resolve })) }
+    renderDrawer(
+      '/mods/quiet-depth',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      model,
+      undefined,
+      { warningBytes: Number.MAX_SAFE_INTEGER, warningMessages: 1, hardBytes: Number.MAX_SAFE_INTEGER, hardMessages: 2 },
+    )
+
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '开始下一轮' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('当前轮次会完成或取消，之后将封锁新消息')
+    const stop = screen.getByRole('button', { name: '停止' }) as HTMLButtonElement
+    expect(stop.disabled).toBe(false)
+    fireEvent.click(stop)
+    expect(await screen.findByText('本次回复已取消')).toBeTruthy()
+    await act(async () => { resolveModel?.({ success: true, content: responseText('迟到') }) })
+  })
   it('缺少历史时不创建空文档，首次消息完成后显示回复', async () => {
     const repository = memoryRepository({ status: 'missing' })
     const model = successModel('我们先确定项目主题。')
@@ -595,6 +654,7 @@ function renderDrawer(
   repository: ReturnType<typeof memoryRepository>,
   model: ConversationModel,
   onOpenCard?: (cardId: string) => void,
+  capacityLimits?: ConversationCapacityLimits,
 ) {
   const catalog = getCardCatalogView()
   if (catalog.sourceProjectRoot === null && catalog.documents.length === 0) {
@@ -610,6 +670,7 @@ function renderDrawer(
       const catalog = getCardCatalogView()
       return catalog.sourceProjectRoot === projectRoot ? catalog.documents : []
     },
+    capacityLimits,
   )
   return render(
     <ProjectConversationProvider
