@@ -8,12 +8,14 @@ import {
   type ConversationAttemptStatus,
   type ConversationDocument,
   type ConversationContextSnapshot,
+  type ConversationRollingSummaryV1,
   type ConversationQuickReplySelection,
   type ConversationTurn,
 } from './conversationDocument'
 import type { ConversationRepository, ConversationLoadResult } from './conversationRepository'
 import { parseConversationModelResponseText, type ConversationResponseV1 } from './conversationResponse'
 import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
+import { CONVERSATION_SUMMARY_REFRESH_THRESHOLD_TOKENS, estimateUnsummarizedConversationTokens, getUnsummarizedTurns, toRollingSummary, type ConversationSummaryGenerationRequest, type ConversationSummaryGenerationResult } from './conversationSummary'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
 import { buildConversationCardCatalog, type ConversationPromptContext } from '../services/llm/conversationContext'
@@ -45,6 +47,7 @@ export type ConversationPreparationResult =
 export interface ConversationModel {
   diagnostics?: () => Partial<ConversationAttemptDiagnostics>
   prepare?: (request: Omit<ConversationRequest, 'signal'>) => ConversationPreparationResult
+  summarize?(request: ConversationSummaryGenerationRequest): Promise<ConversationSummaryGenerationResult>
   respond(request: ConversationRequest): Promise<
     | { success: true; content: string; diagnostics?: Partial<ConversationAttemptDiagnostics> }
     | { success: false; error: string; kind?: ConversationModelFailureKind; diagnostics?: Partial<ConversationAttemptDiagnostics> }
@@ -133,6 +136,7 @@ export class ProjectConversation {
   private pendingStarts = 0
   private startSequence = 0
   private cancelledStartSequence = 0
+  private summaryRefreshRunning = false
 
   constructor(
     readonly projectPath: string,
@@ -654,9 +658,8 @@ export class ProjectConversation {
             response = { success: false, error: expanded.error, kind: 'invalid-response', diagnostics: response.diagnostics }
           } else {
             started = expanded.value
-            await this.runMutation(async () => {
-              if (this.isCurrentRequest(started)) this.update({ ...this.snapshot, document: started.document })
-            })
+            const persisted = await this.persistExpandedContextSnapshot(started)
+            if (!persisted.ok) return persisted
             if (!this.isCurrentRequest(started)) {
               response = { success: false, error: '请求已取消', kind: 'cancelled', diagnostics: response.diagnostics }
             } else {
@@ -679,7 +682,7 @@ export class ProjectConversation {
       response = { success: false, error: sanitizeConversationError(error), kind: 'provider' }
     }
 
-    return this.runMutation(async () => {
+    const result = await this.runMutation(async () => {
       if (!this.isCurrentRequest(started)) return failure('cancelled', '请求已取消')
       const diagnostics = this.responseDiagnostics(started, response.diagnostics)
       if (!response.success) {
@@ -690,6 +693,62 @@ export class ProjectConversation {
       if (!finalResponse) return this.finishFailure(started, 'failed', '模型响应缺少最终结果', 'invalid-response', diagnostics)
       return this.finishSuccess(started, finalResponse, diagnostics)
     })
+    if (result.ok) void this.refreshRollingSummary()
+    return result
+  }
+
+  private async refreshRollingSummary(): Promise<void> {
+    if (this.summaryRefreshRunning || !this.model.summarize) return
+    const document = this.snapshot.document
+    if (!document) return
+    const previousSummary = document.rollingSummary
+    const unsummarized = getUnsummarizedTurns(document.turns, previousSummary)
+    const completedPrefix: ConversationTurn[] = []
+    for (const turn of unsummarized) {
+      const latestAttempt = turn.attempts.at(-1)
+      if (turn.assistantText === null || latestAttempt?.status !== 'completed') break
+      completedPrefix.push(turn)
+    }
+    if (!completedPrefix.length || estimateUnsummarizedConversationTokens(completedPrefix) < CONVERSATION_SUMMARY_REFRESH_THRESHOLD_TOKENS) return
+
+    const throughTurnId = completedPrefix[completedPrefix.length - 1].id
+    const previousCursor = previousSummary ? { ...previousSummary } : null
+    const throughIndex = document.turns.findIndex(turn => turn.id === throughTurnId)
+    if (throughIndex < 0) return
+    const capturedPrefix = document.turns.slice(0, throughIndex + 1)
+    const controller = new AbortController()
+    this.summaryRefreshRunning = true
+    try {
+      const result = await this.model.summarize({
+        previousSummary: previousSummary?.text ?? null,
+        turns: completedPrefix,
+        signal: controller.signal,
+      })
+      if (!result.success) return
+      await this.runMutation(async () => {
+        const latest = this.snapshot.document
+        if (!latest || !sameRollingSummary(latest.rollingSummary, previousCursor)) return
+        const latestPrefix = latest.turns.slice(0, capturedPrefix.length)
+        if (latestPrefix.length !== capturedPrefix.length || JSON.stringify(latestPrefix) !== JSON.stringify(capturedPrefix)) return
+        const target = latest.turns.find(turn => turn.id === throughTurnId)
+        const finishedAt = target?.attempts.at(-1)?.finishedAt
+        if (!target || !finishedAt || target.assistantText === null || target.attempts.at(-1)?.status !== 'completed') return
+        const now = this.now()
+        const updatedAt = Date.parse(now) >= Date.parse(finishedAt) ? now : finishedAt
+        const updated: ConversationDocument = {
+          ...latest,
+          rollingSummary: toRollingSummary(throughTurnId, result.text, updatedAt),
+          updatedAt,
+        }
+        const saved = await this.repository.save(this.projectPath, updated)
+        if (!saved.ok) return
+        this.update({ ...this.snapshot, document: updated })
+      })
+    } catch {
+      // Best-effort only: summary failure must not alter the successful turn.
+    } finally {
+      this.summaryRefreshRunning = false
+    }
   }
 
   private callModel(started: StartedAttempt): ReturnType<ConversationModel['respond']> {
@@ -698,6 +757,30 @@ export class ProjectConversation {
       projectPath: this.projectPath,
       turns: started.promptTurns,
       signal: started.controller.signal,
+    })
+  }
+
+  private async persistExpandedContextSnapshot(started: StartedAttempt): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      if (!this.isCurrentRequest(started)) return failure('cancelled', '请求已取消')
+      const saved = await this.repository.save(this.projectPath, started.document)
+      if (!saved.ok) {
+        return this.finishFailure(
+          started,
+          'failed',
+          '补取上下文快照保存失败：' + saved.error,
+          'persistence',
+          this.responseDiagnostics(started, undefined),
+        )
+      }
+      this.update({
+        ...this.snapshot,
+        document: started.document,
+        lastError: saved.warning ?? null,
+        persistenceError: null,
+        requiresReload: false,
+      })
+      return { ok: true }
     })
   }
 
@@ -1028,6 +1111,7 @@ export class ProjectConversation {
           compactCardCatalog: buildConversationCardCatalog(projectDocuments, 'compact'),
           resolvedAttachments,
           proposals: proposalSummaries(document),
+          rollingSummary: document.rollingSummary,
         },
       },
     }
@@ -1110,6 +1194,11 @@ function proposalSummaries(document: ConversationDocument): ConversationPromptCo
       finalCardId: accepted?.type === 'accepted' ? accepted.finalCardId : null,
     }
   })
+}
+
+function sameRollingSummary(left: ConversationRollingSummaryV1 | null, right: ConversationRollingSummaryV1 | null): boolean {
+  return left === null ? right === null : right !== null &&
+    left.throughTurnId === right.throughTurnId && left.text === right.text && left.updatedAt === right.updatedAt
 }
 
 function findTurnIdForAttempt(document: ConversationDocument, attemptId: string): string {

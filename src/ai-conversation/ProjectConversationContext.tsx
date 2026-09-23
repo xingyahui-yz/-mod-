@@ -251,6 +251,11 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
       if (configuredModel?.diagnostics) return configuredModel.diagnostics()
       return { provider, model: 'unknown' }
     },
+    async summarize(request) {
+      const configuredModel = createLatestModel()
+      if (!configuredModel?.summarize) return { success: false as const, error: '请先在「设置」中配置 API 密钥', kind: 'provider' as const }
+      return configuredModel.summarize(request)
+    },
     async respond(request) {
       const configuredModel = createLatestModel()
       if (!configuredModel) {

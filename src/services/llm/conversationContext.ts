@@ -1,5 +1,6 @@
 import type { CardDocument } from '../../card/cardDocument'
 import type { ConversationCardProposalStatus } from '../../ai-conversation/proposalLifecycle'
+import type { ConversationRollingSummaryV1 } from '../../ai-conversation/conversationDocument'
 import type { ConversationProposalRejectionFeedback } from '../../ai-conversation/proposalLifecycle'
 import { cardDocumentRevision } from '../../card/cardAiProposal'
 
@@ -124,6 +125,8 @@ export interface ConversationPromptContext {
   compactCardCatalog: readonly CompactConversationCardCatalogSummary[]
   resolvedAttachments: readonly ConversationResolvedAttachment[]
   proposals: readonly ConversationProposalSummary[]
+  /** LLM-derived user intent only; project facts always come from local context. */
+  rollingSummary?: ConversationRollingSummaryV1 | null
   /** Internally retrieved for this turn; never stored as a user attachment. */
   expandedAttachmentIds?: readonly string[]
   /** Consume the single reserved expansion allowance on the second provider call. */

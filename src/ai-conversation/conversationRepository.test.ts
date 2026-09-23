@@ -64,7 +64,7 @@ describe('ConversationRepository', () => {
     expect([...memory.data.keys()]).toEqual(['/project/.modstudio/ai/conversation.json'])
   })
 
-  it('加载并原子改写严格 v1 为 proposals 为空的 v2', async () => {
+  it('加载并原子改写严格 v1 为当前 v4', async () => {
     const path = '/project/.modstudio/ai/conversation.json'
     const current = createConversationDocument('2026-09-01T00:00:00Z')
     const v1 = {
@@ -104,7 +104,7 @@ describe('ConversationRepository', () => {
     expect(memory.data.has(`${path}.quarantine-42-quarantine`)).toBe(true)
   })
 
-  it('损坏的已知 v2 schema 仍可从备份恢复', async () => {
+  it('损坏的已知 v4 schema 仍可从备份恢复', async () => {
     const path = '/project/.modstudio/ai/conversation.json'
     const backup = `${path}.backup-41-valid`
     const document = createConversationDocument('2026-09-01T00:00:00Z')
@@ -113,10 +113,10 @@ describe('ConversationRepository', () => {
       [backup]: JSON.stringify(document),
     })
 
-    const result = await createConversationRepository(memory.files, () => 42, () => 'known-v2').load('/project')
+    const result = await createConversationRepository(memory.files, () => 42, () => 'known-v4').load('/project')
 
     expect(result).toMatchObject({ status: 'loaded', document })
-    expect(memory.data.has(`${path}.quarantine-42-known-v2`)).toBe(true)
+    expect(memory.data.has(`${path}.quarantine-42-known-v4`)).toBe(true)
   })
 
   it('未来 schema 即使存在旧备份也保持隔离，不自动降级继续写入', async () => {
@@ -263,7 +263,7 @@ describe('ConversationRepository', () => {
     }
   })
 
-  it('真实目录加载 v1 后持久化为 v2 且不遗留临时文件', async () => {
+  it('真实目录加载 v1 后持久化为当前 v4 且不遗留临时文件', async () => {
     const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-migrate-'))
     const aiDirectory = join(root, '.modstudio/ai')
     const path = join(aiDirectory, 'conversation.json')

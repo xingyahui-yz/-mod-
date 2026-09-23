@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectConversation, type ConversationModel, type ConversationRequest } from './projectConversation'
 import type { ConversationDocument } from './conversationDocument'
+import type { ConversationSummaryGenerationRequest } from './conversationSummary'
 import type { ConversationRepository } from './conversationRepository'
 import type { CardDocument } from '../card/cardDocument'
 import { cardDocumentRevision } from '../card/cardAiProposal'
@@ -94,7 +95,7 @@ describe('ProjectConversation', () => {
         contextSnapshot: {
           directoryTier: 'compact' as const, contextWindowTokens: 8192, reservedOutputTokens: 2048,
           reservedExpansionTokens: 1024, estimatedInputTokens: 2300, estimatedTotalTokens: 5472,
-          omittedMessageCount: 2, includedTurnIds: [request.turns.at(-1)!.id],
+          omittedMessageCount: 2, includedTurnIds: [request.turns.at(-1)!.id], providedCards: [],
         },
       }),
       respond: async request => {
@@ -132,6 +133,7 @@ describe('ProjectConversation', () => {
     expect(calls[1].turns[0].attachments).toEqual([])
     expect(h.saved()?.turns[0].attachments).toEqual([])
     expect(h.saved()?.turns[0].contextSnapshot?.reservedExpansionTokens).toBe(0)
+    expect(h.saved()?.turns[0].contextSnapshot?.providedCards).toEqual([{ cardId: 'Fireball', revision: cardDocumentRevision(cardDocument('Fireball', '火焰伤害')), source: 'expanded' }])
     expect(h.saved()?.turns[0].assistantText).toBe('已读取火球')
   })
 
@@ -207,9 +209,53 @@ describe('ProjectConversation', () => {
     expect(h.saveCalls()).toBe(2)
   })
 
+
+  it('达到估算阈值后异步摘要已完成前缀，并在写回时保留并发新轮次', async () => {
+    let resolveSummary!: (result: { success: true; text: string }) => void
+    let summarizedTurnCount = 0
+    const summarize = vi.fn((request: ConversationSummaryGenerationRequest) => {
+      summarizedTurnCount = request.turns.length
+      return new Promise<{ success: true; text: string }>(resolve => { resolveSummary = resolve })
+    })
+    const h = harness({
+      respond: async () => ({ success: true as const, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }),
+      summarize,
+    })
+    await h.conversation.load()
+    await h.conversation.send('a'.repeat(1800))
+    await h.conversation.send('b'.repeat(1800))
+    await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(1))
+    expect(summarizedTurnCount).toBe(2)
+
+    await h.conversation.send('并发的新轮次')
+    resolveSummary({ success: true, text: '用户正在制作一款卡牌游戏' })
+    await vi.waitFor(() => expect(h.conversation.getSnapshot().document?.rollingSummary?.throughTurnId).toBe(h.saved()?.turns[1].id))
+
+    expect(h.conversation.getSnapshot().document?.turns).toHaveLength(3)
+    expect(h.conversation.getSnapshot().document?.rollingSummary?.text).toBe('用户正在制作一款卡牌游戏')
+    expect(h.saved()?.turns[2].assistantText).toBe('完成')
+  })
+
+  it('摘要尚未达到阈值或生成失败都不影响成功轮次和后续发送', async () => {
+    const summarize = vi.fn(async () => ({ success: false as const, error: '摘要失败', kind: 'provider' as const }))
+    const h = harness({
+      respond: async () => ({ success: true as const, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }),
+      summarize,
+    })
+    await h.conversation.load()
+    await h.conversation.send('短消息')
+    expect(summarize).not.toHaveBeenCalled()
+    await h.conversation.send('x'.repeat(1800))
+    await h.conversation.send('y'.repeat(1800))
+    await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(1))
+    expect(h.conversation.getSnapshot().document?.rollingSummary).toBeNull()
+    expect(h.conversation.getSnapshot().document?.turns).toHaveLength(3)
+    await expect(h.conversation.send('仍然可以继续')).resolves.toEqual({ ok: true })
+  })
   it('恢复 running attempt 保存失败时诚实暴露并禁止发送', async () => {
     const running: ConversationDocument = {
-      schemaVersion: 3,
+      schemaVersion: 4,
+      rollingSummary: null,
       proposals: [],
       createdAt: '2026-09-01T00:00:00Z',
       updatedAt: '2026-09-01T00:00:00Z',

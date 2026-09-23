@@ -1,4 +1,5 @@
 import type { ConversationModel, ConversationRequest } from '../../../ai-conversation/projectConversation'
+import { buildConversationSummaryInput, parseConversationIntentSummaryText, type ConversationSummaryGenerationRequest } from '../../../ai-conversation/conversationSummary'
 import { buildPreparedConversationPrompt, isConversationPromptPrepared, prepareConversationPrompt, type ConversationPreparationOptions } from '../conversationPreparation'
 import { sanitizeProviderError, type BaseLLMAdapter } from './base'
 
@@ -12,6 +13,14 @@ export function createConversationModel(
   return {
     diagnostics: () => adapter.diagnostics(),
     prepare: request => prepareConversationPrompt(request, preparationOptions),
+    async summarize(request: ConversationSummaryGenerationRequest) {
+      const response = await adapter.generate(buildConversationSummaryInput(request.previousSummary, request.turns), { signal: request.signal })
+      if (!response.success || response.content === undefined) {
+        return { success: false as const, error: sanitizeProviderError(response.error ?? '摘要请求失败'), kind: response.errorType ?? 'provider' }
+      }
+      const parsed = parseConversationIntentSummaryText(response.content)
+      return parsed.ok ? { success: true as const, text: parsed.text } : { success: false as const, error: parsed.error, kind: 'provider' as const }
+    },
     async respond(request: ConversationRequest) {
       const prepared = isConversationPromptPrepared(request)
         ? { ok: true as const, turns: request.turns, promptContext: request }

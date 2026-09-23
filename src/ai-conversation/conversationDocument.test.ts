@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { cardDocumentRevision } from '../card/cardAiProposal'
-import { createConversationDocument, migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
+import { createConversationDocument, migrateConversationDocument, parseConversationDocument, MAX_ROLLING_SUMMARY_CODE_POINTS, type ConversationDocument } from './conversationDocument'
 
 const diagnostics = { provider: 'qwen', model: 'qwen-turbo', requestId: 'request-1' }
 
@@ -52,7 +52,7 @@ function validDocument(): ConversationDocument {
 }
 
 describe('parseConversationDocument', () => {
-  it('接受严格的当前 v3 文档并提供迁移入口', () => {
+  it('接受严格的当前 v4 文档并提供迁移入口', () => {
     const document = validDocument()
     expect(parseConversationDocument(document)).toEqual({ ok: true, document })
     expect(migrateConversationDocument(document)).toEqual({ ok: true, document, migrated: false })
@@ -70,10 +70,71 @@ describe('parseConversationDocument', () => {
     expect(parseConversationDocument(mutate(validDocument())).ok).toBe(false)
   })
 
-  it("将严格 v2 文档迁移到 v3 并保持解析结果稳定", () => {
+  it("严格校验 rollingSummary 长度、时间和 completed provenance", () => {
     const current = validDocument()
+    const originalTurn = current.turns[0]
+    const completedTurn = {
+      ...originalTurn,
+      assistantText: "已完成",
+      attempts: [{ ...originalTurn.attempts[0], status: "completed" as const, error: null, failureKind: null, finishedAt: "2026-09-01T00:02:00Z" }],
+    }
+    const summary = { throughTurnId: "turn-1", text: "玩家偏好高机动性。", updatedAt: "2026-09-01T00:03:00Z" }
+    const valid = { ...current, turns: [completedTurn], rollingSummary: summary }
+    expect(parseConversationDocument(valid)).toEqual({ ok: true, document: valid })
+
+    const invalidSummaries = [
+      { ...summary, unknown: true },
+      (({ updatedAt: _updatedAt, ...missing }) => missing)(summary),
+      { ...summary, throughTurnId: "missing" },
+      { ...summary, text: "  " },
+      { ...summary, text: "x".repeat(MAX_ROLLING_SUMMARY_CODE_POINTS + 1) },
+      { ...summary, updatedAt: "not-a-time" },
+      { ...summary, updatedAt: "2026-09-01T00:01:00Z" },
+    ]
+    for (const rollingSummary of invalidSummaries) {
+      expect(parseConversationDocument({ ...valid, rollingSummary }).ok).toBe(false)
+    }
+    expect(parseConversationDocument({ ...current, rollingSummary: summary }).ok).toBe(false)
+  })
+
+  it("将严格 v3 文档迁移到 v4 并补充空 summary", () => {
+    const current = validDocument()
+    const { rollingSummary: _rollingSummary, ...withoutSummary } = current
+    const v3 = { ...withoutSummary, schemaVersion: 3 }
+    expect(parseConversationDocument(v3).ok).toBe(false)
+    expect(migrateConversationDocument(v3)).toEqual({ ok: true, document: current, migrated: true })
+    expect(migrateConversationDocument({ ...v3, unknown: true }).ok).toBe(false)
+  })
+
+
+  it('v3 migration 为旧上下文快照补充空 providedCards provenance', () => {
+    const current = validDocument()
+    const oldSnapshot = {
+      directoryTier: 'detailed',
+      contextWindowTokens: 32000,
+      reservedOutputTokens: 2048,
+      reservedExpansionTokens: 4096,
+      estimatedInputTokens: 12000,
+      estimatedTotalTokens: 18144,
+      omittedMessageCount: 0,
+      includedTurnIds: ['turn-1'],
+    }
+    const { rollingSummary: _rollingSummary, ...withoutSummary } = current
+    const v3 = {
+      ...withoutSummary,
+      schemaVersion: 3,
+      turns: [{ ...current.turns[0], contextSnapshot: oldSnapshot }],
+    }
+    const migrated = migrateConversationDocument(v3)
+    expect(migrated.ok).toBe(true)
+    if (migrated.ok) expect(migrated.document.turns[0].contextSnapshot?.providedCards).toEqual([])
+  })
+
+  it("将严格 v2 文档迁移到 v4 并保持解析结果稳定", () => {
+    const current = validDocument()
+    const { rollingSummary: _rollingSummary, ...currentWithoutSummary } = current
     const v2 = {
-      ...current,
+      ...currentWithoutSummary,
       schemaVersion: 2,
       turns: current.turns.map(({ contextSnapshot: _snapshot, ...turn }) => turn),
     }
@@ -85,7 +146,7 @@ describe('parseConversationDocument', () => {
     expect(migrateConversationDocument(malformedV2).ok).toBe(false)
   })
 
-  it("严格校验 v3 contextSnapshot 字段、数值与 turn ID", () => {
+  it("严格校验 contextSnapshot 字段、数值与 turn ID", () => {
     const document = validDocument()
     const snapshot = {
       directoryTier: "detailed" as const,
@@ -96,6 +157,7 @@ describe('parseConversationDocument', () => {
       estimatedTotalTokens: 18144,
       omittedMessageCount: 2,
       includedTurnIds: ["turn-1"],
+      providedCards: [],
     }
     const withSnapshot = { ...document, turns: [{ ...document.turns[0], contextSnapshot: snapshot }] }
     expect(parseConversationDocument(withSnapshot)).toEqual({ ok: true, document: withSnapshot })
@@ -107,6 +169,9 @@ describe('parseConversationDocument', () => {
       { ...snapshot, estimatedInputTokens: Number.NaN },
       { ...snapshot, reservedOutputTokens: -1 },
       { ...snapshot, includedTurnIds: ["turn-1", "turn-1"] },
+      { ...snapshot, estimatedTotalTokens: snapshot.estimatedTotalTokens - 1 },
+      { ...snapshot, contextWindowTokens: snapshot.estimatedTotalTokens - 1 },
+      { ...snapshot, includedTurnIds: [] },
     ]
     for (const contextSnapshot of invalidSnapshots) {
       expect(parseConversationDocument({ ...document, turns: [{ ...document.turns[0], contextSnapshot }] }).ok).toBe(false)
@@ -132,7 +197,7 @@ describe('parseConversationDocument', () => {
     const result = migrateConversationDocument(legacy)
     expect(result).toMatchObject({ ok: true, migrated: true })
     if (!result.ok) throw new Error(result.reason)
-    expect(result.document).toMatchObject({ schemaVersion: 3, proposals: [] })
+    expect(result.document).toMatchObject({ schemaVersion: 4, proposals: [], rollingSummary: null })
     expect(result.document).not.toHaveProperty('projectPath')
     expect(result.document.turns[0]).toMatchObject({ quickReplySelection: null, contextSnapshot: null })
     expect(result.document.turns[0].attempts[0]).toMatchObject({ failureKind: 'provider', diagnostics: { provider: 'unknown', model: 'unknown', requestId: 'unknown' } })
@@ -140,7 +205,7 @@ describe('parseConversationDocument', () => {
     expect(result.document.turns[0].attempts[0].error!.length).toBeLessThanOrEqual(500)
   })
 
-  it('把 PR1 严格 v1 文档迁移为 proposals 为空的 v3', () => {
+  it('把 PR1 严格 v1 文档迁移为 proposals 为空的 v4', () => {
     const current = validDocument()
     const strictV1 = {
       schemaVersion: 1,
@@ -152,7 +217,7 @@ describe('parseConversationDocument', () => {
     expect(migrateConversationDocument(strictV1)).toEqual({
       ok: true,
       migrated: true,
-      document: { ...strictV1, schemaVersion: 3, proposals: [], turns: strictV1.turns.map(turn => ({ ...turn, contextSnapshot: null })) },
+      document: { ...strictV1, schemaVersion: 4, proposals: [], rollingSummary: null, turns: strictV1.turns.map(turn => ({ ...turn, contextSnapshot: null })) },
     })
   })
 

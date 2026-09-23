@@ -214,7 +214,7 @@ describe('createConversationModel', () => {
 
     expect(prepared.ok).toBe(true)
     if (!prepared.ok) return
-    expect(prepared.contextSnapshot).toMatchObject({ directoryTier: 'compact', omittedMessageCount: 2, includedTurnIds: ['turn-middle', 'turn-latest'] })
+    expect(prepared.contextSnapshot).toMatchObject({ directoryTier: 'compact', omittedMessageCount: 2, includedTurnIds: ['turn-middle', 'turn-latest'], providedCards: [] })
     expect(prepared.turns.map(item => item.id)).toEqual(['turn-middle', 'turn-latest'])
     expect(prepared.promptContext.cardCatalog).toEqual(promptContext.compactCardCatalog)
   })
@@ -281,6 +281,56 @@ describe('createConversationModel', () => {
     })
   })
 
+
+  it('摘要通过同一 adapter 严格生成，仅接受 schemaVersion=1 的 JSON 摘要', async () => {
+    const signal = new AbortController().signal
+    const generate = vi.fn().mockResolvedValue({ success: true, content: '{"schemaVersion":1,"text":"用户偏好简洁"}' })
+    const model = createConversationModel({ generate, diagnostics: () => ({ provider: 'mock', model: 'mock' }) } as Pick<BaseLLMAdapter, 'generate' | 'diagnostics'>)
+    const result = await model.summarize?.({
+      previousSummary: '已有目标',
+      turns: [{ ...turn(), userText: '继续保留旧目标' }],
+      signal,
+    })
+
+    expect(result).toEqual({ success: true, text: '用户偏好简洁' })
+    expect(generate.mock.calls[0][0]).toContain('已有目标')
+    expect(generate.mock.calls[0][1]).toEqual({ signal })
+
+    generate.mockResolvedValueOnce({ success: true, content: '{"schemaVersion":1,"text":"摘要","extra":true}' })
+    await expect(model.summarize?.({ previousSummary: null, turns: [turn()], signal })).resolves.toMatchObject({
+      success: false,
+      kind: 'provider',
+    })
+  })
+
+  it('prompt 使用滚动摘要替代其覆盖的历史轮次，同时保留 Card 本地上下文', async () => {
+    const generate = vi.fn().mockResolvedValue({ success: true, content: '{"schemaVersion":1,"text":"继续","quickReplies":[],"proposals":[]}' })
+    const model = createConversationModel({ generate, diagnostics: () => ({ provider: 'mock', model: 'mock' }) } as Pick<BaseLLMAdapter, 'generate' | 'diagnostics'>)
+    const promptContext = context()
+    const covered = { ...turn(), id: 'covered', userText: 'COVERED_HISTORY_SHOULD_BE_ABSENT', assistantText: 'old answer', attachments: [] }
+    const current = { ...turn(), id: 'current', userText: 'CURRENT_USER_MESSAGE', assistantText: null, attachments: [] }
+
+    const prepared = model.prepare?.({
+      projectPath: '/p',
+      turns: [covered, current],
+      ...promptContext,
+      rollingSummary: { throughTurnId: 'covered', text: 'ROLLING_USER_INTENT', updatedAt: '2026-09-01T00:00:00Z' },
+    })
+    expect(prepared?.ok).toBe(true)
+    if (!prepared?.ok) return
+    expect(prepared.turns.map(item => item.id)).toEqual(['current'])
+
+    await model.respond({
+      projectPath: '/p',
+      turns: prepared.turns,
+      signal: new AbortController().signal,
+      ...prepared.promptContext,
+    })
+    const prompt = generate.mock.calls[0][0]
+    expect(prompt).toContain('ROLLING_USER_INTENT')
+    expect(prompt).toContain('CURRENT_USER_MESSAGE')
+    expect(prompt).not.toContain('COVERED_HISTORY_SHOULD_BE_ABSENT')
+  })
   it('响应完成后读取 adapter 的实际 diagnostics', async () => {
     let actual = false
     const diagnostics = vi.fn(() => actual

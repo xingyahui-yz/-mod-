@@ -41,6 +41,67 @@ describe('ProjectConversationDrawer', () => {
     expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('')
   })
 
+  it('压缩目录且省略较早消息时，为该轮提供可访问的中文上下文说明', async () => {
+    const document = completedDocument()
+    document.turns[0].contextSnapshot = {
+      directoryTier: 'compact',
+      contextWindowTokens: 8000,
+      reservedOutputTokens: 1000,
+      reservedExpansionTokens: 500,
+      estimatedInputTokens: 5000,
+      estimatedTotalTokens: 6500,
+      omittedMessageCount: 3,
+      includedTurnIds: ['turn-1'],
+      providedCards: [],
+    }
+    renderDrawer('/mods/quiet-depth', memoryRepository({ status: 'loaded', document }), successModel('不会调用'))
+
+    const notice = await screen.findByRole('note')
+    expect(notice.textContent).toContain('精简版项目目录上下文')
+    expect(notice.textContent).toContain('省略了 3 条较早的对话消息')
+  })
+
+
+  it('仅目录降级或仅历史省略时也会分别披露', async () => {
+    const compact = completedDocument()
+    compact.turns[0].contextSnapshot = {
+      directoryTier: 'compact',
+      contextWindowTokens: 8000,
+      reservedOutputTokens: 1000,
+      reservedExpansionTokens: 500,
+      estimatedInputTokens: 5000,
+      estimatedTotalTokens: 6500,
+      omittedMessageCount: 0,
+      includedTurnIds: ['turn-1'],
+      providedCards: [],
+    }
+    const first = renderDrawer('/mods/quiet-depth', memoryRepository({ status: 'loaded', document: compact }), successModel('不会调用'))
+    expect((await screen.findByRole('note')).textContent).toContain('精简版项目目录上下文')
+    first.unmount()
+
+    const omitted = completedDocument()
+    omitted.turns[0].contextSnapshot = {
+      directoryTier: 'detailed',
+      contextWindowTokens: 8000,
+      reservedOutputTokens: 1000,
+      reservedExpansionTokens: 500,
+      estimatedInputTokens: 6000,
+      estimatedTotalTokens: 7500,
+      omittedMessageCount: 2,
+      includedTurnIds: ['turn-1'],
+      providedCards: [],
+    }
+    renderDrawer('/mods/quiet-depth', memoryRepository({ status: 'loaded', document: omitted }), successModel('不会调用'))
+    expect((await screen.findByRole('note')).textContent).toContain('省略了 2 条较早的对话消息')
+  })
+
+  it('未记录上下文快照时不显示上下文说明', async () => {
+    renderDrawer('/mods/quiet-depth', memoryRepository({ status: 'loaded', document: completedDocument() }), successModel('不会调用'))
+
+    await screen.findByText('先明确玩法主线。')
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
   it('快捷回答带来源填入草稿，编辑后取消关联', async () => {
     const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
     const model = successModel('收到。')
@@ -597,7 +658,8 @@ function responseText(text: string): string {
 
 function completedDocument(): ConversationDocument {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
+    rollingSummary: null,
     proposals: [],
     turns: [{
       id: 'turn-1',
