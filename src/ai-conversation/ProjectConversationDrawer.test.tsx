@@ -566,6 +566,8 @@ function successfulCardFiles(): ProposalCardPersistencePort {
     saveCardDocument: vi.fn(async () => ({ ok: true as const })),
     createCardDocument: vi.fn(async () => ({ ok: true as const })),
     inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
+    readCreateReceipt: vi.fn(async () => ({ status: 'missing' as const })),
+    writeCreateReceipt: vi.fn(async () => ({ ok: true as const })),
   }
 }
 

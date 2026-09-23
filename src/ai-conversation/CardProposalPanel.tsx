@@ -135,6 +135,10 @@ export function CardProposalPanel({
     setRejectingProposalId(null)
   }
 
+  const focusProposalSummary = (proposalId: string) => {
+    proposalSummaryRefs.current.get(proposalId)?.focus()
+  }
+
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Escape') return
     if (rejectingProposalId) {
@@ -169,6 +173,7 @@ export function CardProposalPanel({
       : null
     void runAction(`reject:${rejectingProposal.id}`, async () => {
       await onReject(rejectingProposal.id, feedback)
+      focusProposalSummary(rejectingProposal.id)
       setRejectingProposalId(null)
       setRejectionCode('')
       setRejectionNote('')
@@ -237,7 +242,10 @@ export function CardProposalPanel({
                     onFinalIdChange={value => setFinalIds(current => ({ ...current, [activeProposal.id]: value }))}
                     onAccept={(finalCardId) => void runAction(
                       `accept:${activeProposal.id}`,
-                      () => onAccept(activeProposal.id, finalCardId),
+                      async () => {
+                        await onAccept(activeProposal.id, finalCardId)
+                        focusProposalSummary(activeProposal.id)
+                      },
                     )}
                     onStartReject={() => {
                       setRejectionCode('')

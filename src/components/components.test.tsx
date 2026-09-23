@@ -20,6 +20,7 @@ import { createCardProposal } from '../card/cardAiProposal'
 import { acquireCardPersistenceBarrier } from '../card/cardPersistenceBarrier'
 import { clearCardPersistenceFailures } from '../card/cardPersistenceBarrier'
 import { flushProjectCardChanges } from '../card/cardPersistenceCoordinator'
+import type { CardDocumentLoadEntry } from '../card/cardRepository'
 
 // 重置 Card store；Card 文档而非 localStorage 承担持久化
 beforeEach(() => {
@@ -271,6 +272,89 @@ describe('CardEditor 过滤 + 原始索引', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
     expect(writeFile).toHaveBeenCalledTimes(1)
     expect(vi.mocked(writeFile).mock.calls[0]?.[1]).toContain('最终草稿')
+  })
+
+  it('自动保存结果不确定时立即重载磁盘事实，重载完成前禁止第二次保存', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const recoveryLoad = deferred<CardDocumentLoadEntry[]>()
+    const load = vi.spyOn(FileService, 'loadCardDocuments')
+      .mockResolvedValueOnce([{
+        fileName: 'Fireball.json',
+        path: '/A/.modstudio/cards/Fireball.json',
+        result: { status: 'editable', document: alpha },
+      }])
+      .mockImplementationOnce(() => recoveryLoad.promise)
+    const save = vi.spyOn(FileService, 'saveCardDocument').mockResolvedValue({
+      ok: false,
+      error: '目标文件在发布期间被外部替换',
+      certainty: 'uncertain',
+    })
+    const listTrash = vi.spyOn(FileService, 'listCardTrash').mockResolvedValue([])
+
+    try {
+      render(<CardEditor projectPath="/A" />)
+      const input = await screen.findByDisplayValue('火球')
+      fireEvent.change(input, { target: { value: '触发不确定保存' } })
+
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(1), { timeout: 1000 })
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+      expect(screen.getByText(/保存结果不确定，已停止写入/)).toBeTruthy()
+      expect(screen.queryByDisplayValue('触发不确定保存')).toBeNull()
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)) })
+      expect(save).toHaveBeenCalledTimes(1)
+
+      await act(async () => {
+        recoveryLoad.resolve([{
+          fileName: 'Fireball.json',
+          path: '/A/.modstudio/cards/Fireball.json',
+          result: { status: 'editable', document: alpha },
+        }])
+        await Promise.resolve()
+      })
+      expect(await screen.findByDisplayValue('火球')).toBeTruthy()
+    } finally {
+      load.mockRestore()
+      save.mockRestore()
+      listTrash.mockRestore()
+      clearCardPersistenceFailures('/A')
+    }
+  })
+
+  it('不确定保存后的磁盘重载失败会保持项目级离开门禁', async () => {
+    const alpha = cardDocument(seedCards[0])
+    const load = vi.spyOn(FileService, 'loadCardDocuments')
+      .mockResolvedValueOnce([{
+        fileName: 'Fireball.json',
+        path: '/A/.modstudio/cards/Fireball.json',
+        result: { status: 'editable', document: alpha },
+      }])
+      .mockRejectedValueOnce(new Error('EACCES'))
+    const save = vi.spyOn(FileService, 'saveCardDocument').mockResolvedValue({
+      ok: false,
+      error: '目标状态未知',
+      certainty: 'uncertain',
+    })
+    const listTrash = vi.spyOn(FileService, 'listCardTrash').mockResolvedValue([])
+
+    try {
+      render(<CardEditor projectPath="/A" />)
+      fireEvent.change(await screen.findByDisplayValue('火球'), {
+        target: { value: '无法确认的草稿' },
+      })
+
+      await waitFor(() => expect(load).toHaveBeenCalledTimes(2), { timeout: 1500 })
+      expect(await screen.findByText(/加载卡牌失败: EACCES/)).toBeTruthy()
+      await expect(flushProjectCardChanges('/A')).resolves.toEqual({
+        ok: false,
+        error: '目标状态未知',
+      })
+      expect(save).toHaveBeenCalledTimes(1)
+    } finally {
+      load.mockRestore()
+      save.mockRestore()
+      listTrash.mockRestore()
+      clearCardPersistenceFailures('/A')
+    }
   })
 
   it('现有 CardEditor 原位显示 Card 行为图并写回同一 CardDocument', () => {
@@ -896,7 +980,8 @@ function cardDocument(card: CardData): CardDocument {
 }
 
 function createCardEditorApi(overrides: Partial<FileService.ElectronAPI> = {}): FileService.ElectronAPI {
-  return {
+  const claimFiles = new Map<string, string>()
+  const base: FileService.ElectronAPI = {
     openDirectory: vi.fn(),
     saveDirectory: vi.fn(),
     readDirectory: vi.fn(async () => []),
@@ -911,6 +996,53 @@ function createCardEditorApi(overrides: Partial<FileService.ElectronAPI> = {}): 
     launchGame: vi.fn(),
     showInFolder: vi.fn(),
     ...overrides,
+  }
+  const isClaimPath = (path: string) => path.includes('/.id-claims/')
+
+  return {
+    ...base,
+    async readDirectory(path) {
+      const entries = await base.readDirectory(path)
+      if (!path.endsWith('/.id-claims')) return entries
+      const prefix = `${path}/`
+      const claimEntries = [...claimFiles.keys()]
+        .filter(file => file.startsWith(prefix) && !file.slice(prefix.length).includes('/'))
+        .map(file => ({ name: file.slice(prefix.length), path: file, isDirectory: false }))
+      return [...entries, ...claimEntries.filter(entry =>
+        !entries.some(existing => existing.name === entry.name))]
+    },
+    async readFile(path) {
+      return claimFiles.has(path) ? claimFiles.get(path)! : base.readFile(path)
+    },
+    async writeFile(path, content) {
+      if (!isClaimPath(path)) return base.writeFile(path, content)
+      claimFiles.set(path, content)
+      return true
+    },
+    rename: vi.fn(async (from, to) => {
+      const renamed = base.rename ? await base.rename(from, to) : false
+      if (!renamed) return false
+      if (claimFiles.has(from)) {
+        claimFiles.set(to, claimFiles.get(from)!)
+        claimFiles.delete(from)
+      }
+      return true
+    }),
+    linkNoReplace: vi.fn(async (from, to) => {
+      if (isClaimPath(to) && claimFiles.has(to)) return { status: 'exists' as const }
+      const linked = base.linkNoReplace
+        ? await base.linkNoReplace(from, to)
+        : { status: 'failed' as const }
+      if (linked.status === 'linked' && claimFiles.has(from)) {
+        claimFiles.set(to, claimFiles.get(from)!)
+      }
+      return linked
+    }),
+    remove: vi.fn(async (path) => {
+      const removed = base.remove ? await base.remove(path) : false
+      if (removed && claimFiles.has(path)) claimFiles.delete(path)
+      return removed
+    }),
   }
 }
 

@@ -29,6 +29,8 @@ class MemoryFiles implements CardDocumentFilePort {
   linkResult: 'linked' | 'exists' | 'failed' = 'linked'
   beforeLink: ((from: string, to: string) => void) | null = null
   beforeRename: ((from: string, to: string) => void) | null = null
+  failRemove: ((path: string) => boolean) | null = null
+  failRenameWhen: ((from: string, to: string) => boolean) | null = null
 
   async readDirectory(path: string) {
     const prefix = `${path}/`
@@ -66,7 +68,7 @@ class MemoryFiles implements CardDocumentFilePort {
 
   async rename(from: string, to: string) {
     this.beforeRename?.(from, to)
-    if (this.failRename) return false
+    if (this.failRename || this.failRenameWhen?.(from, to)) return false
     const content = this.files.get(from)
     if (content === undefined) return false
     this.files.delete(from)
@@ -86,6 +88,7 @@ class MemoryFiles implements CardDocumentFilePort {
   }
 
   async remove(path: string) {
+    if (this.failRemove?.(path)) return false
     this.files.delete(path)
     return true
   }
@@ -106,16 +109,16 @@ describe('CardDocumentRepository', () => {
     expect(result.find(item => item.fileName === 'Broken.json')?.result.status).toBe('invalid')
   })
 
-  it('保存先写临时文件，再原子 rename 到 Card ID 文件名', async () => {
+  it('保存成功后活动 Card 是完整新文档且不遗留可恢复临时文件', async () => {
     const files = new MemoryFiles()
     const repository = createCardDocumentRepository({ files })
     files.files.set('/project/.modstudio/cards/IceBolt.json', JSON.stringify(makeDocument('IceBolt')))
     const result = await repository.save('/project', makeDocument('IceBolt'))
 
     expect(result).toEqual({ ok: true, path: '/project/.modstudio/cards/IceBolt.json' })
-    expect(files.renameCalls).toHaveLength(1)
-    expect(files.files.has('/project/.modstudio/cards/IceBolt.json')).toBe(true)
+    expect(JSON.parse(files.files.get('/project/.modstudio/cards/IceBolt.json')!).card.id).toBe('IceBolt')
     expect([...files.files.keys()].some(path => path.includes('.tmp-'))).toBe(false)
+    expect([...files.files.keys()].some(path => path.includes('.save-staging-'))).toBe(false)
   })
 
   it('保存不存在的 Card 不会退化成 create 或覆盖随后出现的文件', async () => {
@@ -194,6 +197,71 @@ describe('CardDocumentRepository', () => {
     expect(loaded[0].result.status).toBe('editable')
     expect(files.files.get(target)).toBeDefined()
     expect(files.files.has(staging)).toBe(false)
+  })
+
+  it('活动 Card 无法验证时不会把 save staging 误判为已发布残留', async () => {
+    const files = new MemoryFiles()
+    const cards = '/project/.modstudio/cards'
+    const target = `${cards}/Fireball.json`
+    const staging = `${target}.save-staging-Fireball-crash`
+    files.files.set(target, '{broken')
+    files.files.set(staging, JSON.stringify(makeDocument('Fireball')))
+
+    await expect(createCardDocumentRepository({ files }).load('/project'))
+      .rejects.toThrow('活动 CardDocument 无法证明已发布')
+    expect(files.files.has(staging)).toBe(true)
+  })
+
+  it('发布后清理旧版本失败也不会在活动 Card 删除后复活', async () => {
+    const files = new MemoryFiles()
+    const target = '/project/.modstudio/cards/Fireball.json'
+    files.files.set(target, JSON.stringify(makeDocument('Fireball')))
+    files.failRemove = path => path.includes('.save-published-')
+
+    const next = makeDocument('Fireball')
+    next.card.name = '已发布版本'
+    const repository = createCardDocumentRepository({ files })
+    await expect(repository.save('/project', next)).resolves.toEqual({ ok: true, path: target })
+
+    expect([...files.files.keys()].some(path => path.includes('.save-published-'))).toBe(true)
+    files.files.delete(target)
+
+    await expect(repository.load('/project')).resolves.toEqual([])
+    expect(files.files.has(target)).toBe(false)
+  })
+
+  it('启动加载会回收 prior-session owner claim', async () => {
+    const files = new MemoryFiles()
+    const claimsRoot = '/project/.modstudio/cards/.id-claims'
+    const claim = `${claimsRoot}/fireball.claim`
+    files.files.set(claim, JSON.stringify({
+      kind: 'mod-studio-card-id-claim',
+      version: 1,
+      normalizedCardId: 'fireball',
+      sessionId: 'previous-session',
+      operationId: 'interrupted-create',
+    }))
+
+    await expect(createCardDocumentRepository({
+      files,
+      claimSessionId: 'current-session',
+    }).load('/project')).resolves.toEqual([])
+    expect(files.files.has(claim)).toBe(false)
+  })
+
+  it('create 的 owner claim release 失败会传播 uncertain 而不静默报告成功', async () => {
+    const files = new MemoryFiles()
+    files.failRenameWhen = from => from.endsWith('/.id-claims/fireball.claim')
+    const repository = createCardDocumentRepository({
+      files,
+      claimSessionId: 'current-session',
+      claimOperationId: () => 'create-release-failure',
+    })
+
+    const result = await repository.create('/project', makeDocument('Fireball'))
+
+    expect(result).toMatchObject({ ok: false, certainty: 'uncertain' })
+    expect(files.files.has('/project/.modstudio/cards/Fireball.json')).toBe(true)
   })
 
   it('rename 失败时不报告成功，并保留原活动文件', async () => {

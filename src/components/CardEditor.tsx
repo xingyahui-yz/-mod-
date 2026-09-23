@@ -24,6 +24,7 @@ import type { CardDocumentLoadEntry } from '../card/cardRepository'
 import type { CardTrashEntry } from '../card/cardTrash'
 import type { BatchGenerationReport } from '../card/cardBatchGeneration'
 import {
+  acquireCardPersistenceBarrier,
   clearCardPersistenceFailures,
   hasCardPersistenceFailure,
   isCardPersistenceBlocked,
@@ -52,7 +53,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   )
   const persistenceBarrierSnapshot = useMemo(
     () => () => Boolean(projectPath && selectedCardId &&
-      isCardPersistenceBlocked(projectPath, selectedCardId)),
+      (isCardPersistenceBlocked(projectPath, selectedCardId) ||
+        hasCardPersistenceFailure(projectPath, selectedCardId))),
     [projectPath, selectedCardId],
   )
   const cardPersistenceBlocked = useSyncExternalStore(
@@ -60,6 +62,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     persistenceBarrierSnapshot,
     persistenceBarrierSnapshot,
   )
+  const cardPersistenceFailed = Boolean(projectPath && selectedCardId &&
+    hasCardPersistenceFailure(projectPath, selectedCardId))
 
   const [generatedCode, setGeneratedCode] = useState<string>('')
   const [saving, setSaving] = useState(false)
@@ -82,6 +86,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   const editorPersistenceTails = useRef(new Map<string, Promise<void>>())
   const deferredAutosaveTasks = useRef(new Map<string, Promise<void>>())
   const editorPersistenceErrors = useRef(new Map<string, string>())
+  const uncertainRecoveryKeys = useRef(new Set<string>())
+  const recoverProjectFromDisk = useRef<(projectRoot: string) => Promise<void>>(async () => undefined)
   const pendingUnmountFlush = useRef<(() => Promise<boolean>) | null>(null)
   const activeProjectRef = useRef<string | null>(projectPath)
   const loadedProjectRef = useRef<string | null>(null)
@@ -101,6 +107,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
     proposalManagedSnapshots.current.clear()
     deferredAutosaveTokens.current.clear()
     persistedSnapshots.current.clear()
+    uncertainRecoveryKeys.current.clear()
     loadGenerationRef.current += 1
     setSaving(false)
     setLoadingCards(false)
@@ -154,7 +161,29 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         if (activeCatalog) {
           persistedSnapshots.current.set(latest.card.id, latestSnapshot)
         }
-      } else editorPersistenceErrors.current.set(key, saved.error)
+      } else {
+        editorPersistenceErrors.current.set(key, saved.error)
+        if (saved.certainty === 'uncertain') {
+          failedTransactionKeys.current.add(key)
+          const failureLease = acquireCardPersistenceBarrier(projectRoot, latest.card.id)
+          failureLease.release('failed')
+          if (!uncertainRecoveryKeys.current.has(key)) {
+            uncertainRecoveryKeys.current.add(key)
+            setTimeout(() => {
+              void (async () => {
+                try {
+                  if (!isActiveCatalogProject(projectRoot)) return
+                  setAutosaveState('error')
+                  showLoadMessage('error', `Card ${latest.card.id} 的保存结果不确定，已停止写入并重新加载磁盘事实`)
+                  await recoverProjectFromDisk.current(projectRoot)
+                } finally {
+                  uncertainRecoveryKeys.current.delete(key)
+                }
+              })()
+            }, 0)
+          }
+        }
+      }
       return saved
     }
     const result = previous.then(persist, persist)
@@ -432,12 +461,6 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       for (const key of persistedCardKeys.current) {
         if (key.startsWith(projectKeyPrefix)) persistedCardKeys.current.delete(key)
       }
-      for (const key of failedTransactionKeys.current) {
-        if (key.startsWith(projectKeyPrefix)) failedTransactionKeys.current.delete(key)
-      }
-      for (const key of editorPersistenceErrors.current.keys()) {
-        if (key.startsWith(projectKeyPrefix)) editorPersistenceErrors.current.delete(key)
-      }
       const entries = await FileService.loadCardDocuments(projectToLoad)
       if (loadGeneration !== loadGenerationRef.current || activeProjectRef.current !== projectToLoad) return
       const editableDocuments = entries
@@ -448,6 +471,12 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       setRecoveryEntries(invalidEntries)
       const loaded = cardCatalogActions.loadDocuments(editableDocuments, projectToLoad)
       if (!loaded.ok) throw new Error(`Card 目录状态无效：${loaded.error}`)
+      for (const key of failedTransactionKeys.current) {
+        if (key.startsWith(projectKeyPrefix)) failedTransactionKeys.current.delete(key)
+      }
+      for (const key of editorPersistenceErrors.current.keys()) {
+        if (key.startsWith(projectKeyPrefix)) editorPersistenceErrors.current.delete(key)
+      }
       clearCardPersistenceFailures(projectToLoad)
       persistedSnapshots.current = new Map(editableDocuments.map(document => [
         document.card.id,
@@ -472,6 +501,10 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         setLoadingCards(false)
       }
     }
+  }
+
+  recoverProjectFromDisk.current = async (projectRoot: string) => {
+    await loadExistingCards(projectRoot)
   }
 
   const handleRestoreCard = async (trashId: string) => {
@@ -503,7 +536,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   const handleBatchGenerate = async () => {
     if (!projectPath || cardPersistenceBlocked || !isActiveCatalogProject(projectPath)) return
-    if (cards.some(card => isCardPersistenceBlocked(projectPath, card.id))) {
+    if (cards.some(card => isCardPersistenceBlocked(projectPath, card.id) ||
+      hasCardPersistenceFailure(projectPath, card.id))) {
       showSaveMessage('error', '仍有 Card 事务正在持久化，批量生成已暂停')
       return
     }
@@ -567,7 +601,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   // 处理卡牌属性变化
   const handleCardChange = (field: keyof CardData, value: string | number | string[]) => {
-    if (selectedCardId === null) return
+    // 普通编辑可以在短暂的 proposal WAL 屏障期间继续，autosave 会在屏障后
+    // 追赶最新草稿；只有结果不确定的粘性失败才必须冻结编辑并等待重载。
+    if (selectedCardId === null || cardPersistenceFailed) return
     const mergeKey = field === 'name' || field === 'description' ? `card.${field}` : undefined
     cardCatalogActions.patchCurrentCard({ [field]: value }, mergeKey ? { mergeKey } : undefined)
     setErrors([]) // 清除错误
@@ -575,13 +611,13 @@ export function CardEditor({ projectPath }: CardEditorProps) {
 
   // 处理关键词变化
   const handleKeywordsChange = (value: string) => {
-    if (selectedCardId === null) return
+    if (selectedCardId === null || cardPersistenceFailed) return
     const keywords = value.split(',').map(k => k.trim()).filter(k => k)
     cardCatalogActions.patchCurrentCard({ keywords }, { mergeKey: 'card.keywords' })
   }
 
   const applyGraph = (next: NodeGraph, transactionKey?: string) => {
-    if (!selectedCardId) return
+    if (!selectedCardId || cardPersistenceFailed) return
     cardCatalogActions.replaceCurrentGraph(next, transactionKey ? { transactionKey } : undefined)
   }
 
@@ -591,7 +627,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
       return
     }
     const operationProject = projectPath
-    if (isCardPersistenceBlocked(operationProject, cardId)) {
+    if (isCardPersistenceBlocked(operationProject, cardId) ||
+      hasCardPersistenceFailure(operationProject, cardId)) {
       showLoadMessage('error', 'Card 历史事务正在持久化，请稍后再删除')
       return
     }
@@ -839,8 +876,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           {autosaveState === 'saving' && <span className="loading-text">自动保存中...</span>}
           {autosaveState === 'saved' && <span className="loading-text">草稿已保存</span>}
           {autosaveState === 'error' && <span className="error-text">自动保存失败</span>}
-          <button onClick={cardCatalogActions.undo} disabled={!canUndo} title="撤销 Card 编辑">↶ 撤销</button>
-          <button onClick={cardCatalogActions.redo} disabled={!canRedo} title="重做 Card 编辑">↷ 重做</button>
+          <button onClick={cardCatalogActions.undo} disabled={!canUndo || cardPersistenceBlocked} title="撤销 Card 编辑">↶ 撤销</button>
+          <button onClick={cardCatalogActions.redo} disabled={!canRedo || cardPersistenceBlocked} title="重做 Card 编辑">↷ 重做</button>
           <button onClick={() => void handleBatchGenerate()} disabled={saving || cardPersistenceBlocked || !projectPath || cards.length === 0} title="逐张生成当前项目中的 Card">
             ⚡ 批量生成
           </button>
@@ -885,7 +922,8 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 <button
                   className="delete-btn"
                   onClick={(e) => { e.stopPropagation(); void handleDeleteCard(card.id); }}
-                  disabled={Boolean(projectPath && isCardPersistenceBlocked(projectPath, card.id))}
+                  disabled={Boolean(projectPath && (isCardPersistenceBlocked(projectPath, card.id) ||
+                    hasCardPersistenceFailure(projectPath, card.id)))}
                 >
                   ×
                 </button>

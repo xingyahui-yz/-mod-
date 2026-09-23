@@ -9,6 +9,7 @@ import {
   reconcilePendingProposalTransition,
   rekeyCreatedCardDocument,
   type ProposalCardPersistencePort,
+  type ProposalCreateReceipt,
 } from './proposalApplication'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 
@@ -247,7 +248,7 @@ describe('提案应用边界', () => {
     expect(files.createCardDocument).toHaveBeenCalledWith('/mods/a', created)
   })
 
-  it('未 committed 的 create 已有同内容回收站事实时不复活 Card', async () => {
+  it('未 committed 的 create 不把预先存在的同内容回收站项误认为本事务已创建', async () => {
     cardCatalogActions.loadDocuments([], '/mods/a')
     const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
     const trashed = rekeyCreatedCardDocument(proposal.document, 'FinalCard')
@@ -255,7 +256,112 @@ describe('提案应用边界', () => {
     files.listTrashedCardDocuments = vi.fn(async () => [trashed])
 
     await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
+    expect(files.createCardDocument).toHaveBeenCalledWith('/mods/a', trashed)
+    expect(getCardCatalogView().documents).toEqual([trashed])
+  })
+
+  it('未 committed 的 create 只有同时命中本事务 receipt 与回收站事实才尊重后继删除', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
+    const trashed = rekeyCreatedCardDocument(proposal.document, 'FinalCard')
+    const files = persistencePort()
+    vi.mocked(files.readCreateReceipt).mockResolvedValue({
+      status: 'found',
+      receipt: createReceipt(proposal, trashed),
+    })
+    vi.mocked(files.listTrashedCardDocuments!).mockResolvedValue([trashed])
+
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
     expect(files.createCardDocument).not.toHaveBeenCalled()
+    expect(files.writeCreateReceipt).not.toHaveBeenCalled()
+    expect(getCardCatalogView().documents).toHaveLength(0)
+  })
+
+  it('只有本事务 receipt、没有匹配回收站项时仍恢复缺失的 create', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
+    const created = rekeyCreatedCardDocument(proposal.document, 'FinalCard')
+    const files = persistencePort()
+    vi.mocked(files.readCreateReceipt).mockResolvedValue({
+      status: 'found',
+      receipt: createReceipt(proposal, created),
+    })
+
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
+    expect(files.createCardDocument).toHaveBeenCalledWith('/mods/a', created)
+    expect(getCardCatalogView().documents).toEqual([created])
+  })
+
+  it('同路径 receipt 的事务身份不匹配时拒绝猜测恢复结果', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
+    const created = rekeyCreatedCardDocument(proposal.document, 'FinalCard')
+    const files = persistencePort()
+    vi.mocked(files.readCreateReceipt).mockResolvedValue({
+      status: 'found',
+      receipt: { ...createReceipt(proposal, created), proposalId: 'other-proposal' },
+    })
+    vi.mocked(files.listTrashedCardDocuments!).mockResolvedValue([created])
+
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({
+      ok: false,
+      error: 'Card FinalCard 的创建 receipt 与待恢复事务不一致',
+      certainty: 'uncertain',
+    })
+    expect(files.createCardDocument).not.toHaveBeenCalled()
+  })
+
+  it('create 在 CardDocument 落盘后、receipt 前崩溃时补写 receipt 并完成恢复', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
+    const created = rekeyCreatedCardDocument(proposal.document, 'FinalCard')
+    const files = persistencePort()
+    vi.mocked(files.inspectCardDocument).mockResolvedValue({ status: 'found', document: created })
+
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({ ok: true })
+    expect(files.createCardDocument).not.toHaveBeenCalled()
+    expect(files.writeCreateReceipt).toHaveBeenCalledWith('/mods/a', createReceipt(proposal, created))
+    expect(getCardCatalogView().documents).toEqual([created])
+  })
+
+  it('receipt 读取失败时不猜测 create 是否曾落盘', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = acceptedCreateProposal(cardDocument('DraftCard'), 'FinalCard')
+    const files = persistencePort()
+    vi.mocked(files.readCreateReceipt).mockResolvedValue({ status: 'error', error: 'EACCES' })
+
+    await expect(reconcilePendingProposalTransition('/mods/a', proposal, files)).resolves.toEqual({
+      ok: false,
+      error: '无法读取 Card 创建 receipt：EACCES',
+      certainty: 'uncertain',
+    })
+    expect(files.createCardDocument).not.toHaveBeenCalled()
+  })
+
+  it('create 已落盘但 receipt 保存失败时返回 uncertain 且不提前修改目录', async () => {
+    cardCatalogActions.loadDocuments([], '/mods/a')
+    const proposal = createProposal(cardDocument('DraftCard'))
+    const files = persistencePort()
+    vi.mocked(files.writeCreateReceipt).mockResolvedValue({
+      ok: false,
+      error: 'receipt 读回失败',
+      certainty: 'uncertain',
+    })
+
+    await expect(persistProposalToCardCatalog('/mods/a', {
+      proposal,
+      finalCardId: 'FinalCard',
+      transactionId: proposal.id,
+    }, files)).resolves.toEqual({
+      ok: false,
+      error: 'CardDocument 已创建，但创建 receipt 保存失败：receipt 读回失败',
+      certainty: 'uncertain',
+    })
+    expect(files.createCardDocument).toHaveBeenCalledOnce()
+    expect(files.writeCreateReceipt).toHaveBeenCalledWith('/mods/a', createReceipt(proposal, rekeyCreatedCardDocument(
+      proposal.document,
+      'FinalCard',
+    )))
     expect(getCardCatalogView().documents).toHaveLength(0)
   })
 
@@ -416,6 +522,19 @@ function persistencePort(options: {
     saveCardDocument: vi.fn(async () => options.save ?? { ok: true as const }),
     createCardDocument: vi.fn(async () => options.save ?? { ok: true as const }),
     inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
+    listTrashedCardDocuments: vi.fn(async () => []),
+    readCreateReceipt: vi.fn(async () => ({ status: 'missing' as const })),
+    writeCreateReceipt: vi.fn(async () => ({ ok: true as const })),
+  }
+}
+
+function createReceipt(proposal: ConversationCardProposal, document: CardDocument): ProposalCreateReceipt {
+  return {
+    schemaVersion: 1,
+    proposalId: proposal.id,
+    transactionId: proposal.id,
+    finalCardId: document.card.id,
+    documentRevision: cardDocumentRevision(document),
   }
 }
 

@@ -104,18 +104,39 @@ describe('FileService conversation port', () => {
     const api = electronApi()
     const firstWrite = deferred<boolean>()
     const persisted = serializeCardDocument(cardDocument('Fireball', '磁盘基线'))
-    vi.mocked(api.readDirectoryResult!).mockResolvedValue({
+    const target = '/project/.modstudio/cards/Fireball.json'
+    const disk = new Map([[target, persisted]])
+    vi.mocked(api.readDirectoryResult!).mockImplementation(async path => ({
       status: 'found',
-      value: [{
-        name: 'Fireball.json',
-        path: '/project/.modstudio/cards/Fireball.json',
-        isDirectory: false,
-      }],
+      value: [...disk.keys()]
+        .filter(file => file.startsWith(`${path}/`) && !file.slice(path.length + 1).includes('/'))
+        .map(file => ({ name: file.slice(path.length + 1), path: file, isDirectory: false })),
+    }))
+    vi.mocked(api.readFile).mockImplementation(async path => disk.get(path) ?? null)
+    vi.mocked(api.readFileResult!).mockImplementation(async path => disk.has(path)
+      ? { status: 'found', value: disk.get(path)! }
+      : { status: 'missing' })
+    let writeIndex = 0
+    vi.mocked(api.writeFile).mockImplementation(async (path, content) => {
+      if (writeIndex++ === 0) await firstWrite.promise
+      disk.set(path, content)
+      return true
     })
-    vi.mocked(api.readFileResult!).mockResolvedValue({ status: 'found', value: persisted })
-    vi.mocked(api.writeFile)
-      .mockImplementationOnce(() => firstWrite.promise)
-      .mockResolvedValue(true)
+    vi.mocked(api.linkNoReplace!).mockImplementation(async (from, to) => {
+      if (disk.has(to)) return { status: 'exists' }
+      const content = disk.get(from)
+      if (content === undefined) return { status: 'failed' }
+      disk.set(to, content)
+      return { status: 'linked' }
+    })
+    vi.mocked(api.rename!).mockImplementation(async (from, to) => {
+      const content = disk.get(from)
+      if (content === undefined) return false
+      disk.delete(from)
+      disk.set(to, content)
+      return true
+    })
+    vi.mocked(api.remove!).mockImplementation(async path => { disk.delete(path); return true })
     const service = createFileService({ api })
     const base = cardDocument('Fireball', '火球')
     const latest = cardDocument('Fireball', '最终火球')
@@ -127,12 +148,17 @@ describe('FileService conversation port', () => {
     firstWrite.resolve(true)
     await expect(first).resolves.toMatchObject({ ok: true })
     await expect(second).resolves.toMatchObject({ ok: true })
-    expect(api.writeFile).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(api.writeFile).mock.calls[1]?.[1]).toContain('最终火球')
+    const documentWrites = vi.mocked(api.writeFile).mock.calls
+      .filter(call => call[0].includes('.json.tmp-'))
+    expect(documentWrites).toHaveLength(2)
+    expect(documentWrites[1]?.[1]).toContain('最终火球')
   })
 
   it('创建 Card 使用 fail-if-exists 原语并与同 ID 写入共用串行队列', async () => {
     const api = electronApi()
+    const disk = new Map<string, string>()
+    vi.mocked(api.writeFile).mockImplementation(async (path, content) => { disk.set(path, content); return true })
+    vi.mocked(api.readFile).mockImplementation(async path => disk.get(path) ?? null)
     vi.mocked(api.linkNoReplace!).mockResolvedValue({ status: 'exists' })
     const service = createFileService({ api })
 
@@ -140,7 +166,7 @@ describe('FileService conversation port', () => {
       .resolves.toEqual({ ok: false, error: 'Card ID 已被占用（大小写不敏感）' })
 
     expect(api.linkNoReplace).toHaveBeenCalledWith(
-      expect.stringMatching(/^\/project\/\.modstudio\/cards\/Fireball\.json\.tmp-/),
+      expect.stringMatching(/^\/project\/\.modstudio\/cards\/\.id-claims\/fireball\.claim-owner-/),
       '/project/.modstudio/cards/.id-claims/fireball.claim',
     )
     expect(api.rename).not.toHaveBeenCalled()

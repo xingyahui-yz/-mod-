@@ -14,6 +14,14 @@ import {
 } from './proposalLifecycle'
 import * as FileService from '../services/FileService'
 import { reserveCardId } from '../card/cardIdReservation'
+import {
+  createProposalCreateReceiptRepository,
+  type ProposalCreateReceipt,
+  type ProposalCreateReceiptLoadResult,
+  type ProposalCreateReceiptSaveResult,
+} from './proposalCreateReceipt'
+
+export type { ProposalCreateReceipt } from './proposalCreateReceipt'
 
 export type ProposalCardPersistenceResult =
   | { ok: true }
@@ -32,6 +40,8 @@ export interface ProposalCardPersistencePort {
     | { status: 'occupied'; error: string }
   >
   listTrashedCardDocuments?(projectRoot: string, cardId: string): Promise<readonly CardDocument[]>
+  readCreateReceipt(projectRoot: string, transactionId: string): Promise<ProposalCreateReceiptLoadResult>
+  writeCreateReceipt(projectRoot: string, receipt: ProposalCreateReceipt): Promise<ProposalCreateReceiptSaveResult>
 }
 
 export interface ProposalCardApplication {
@@ -71,6 +81,14 @@ export function createProposalCardApplication(
   }
 }
 
+const defaultCreateReceiptRepository = createProposalCreateReceiptRepository({
+  readFile: path => FileService.createConversationFilePort().readFile(path),
+  writeFile: (path, content) => FileService.writeFile(path, content),
+  linkNoReplace: (from, to) => FileService.linkFileNoReplace(from, to),
+  remove: path => FileService.removeFile(path),
+  mkdir: path => FileService.createDirectory(path),
+})
+
 const defaultProposalCardPersistencePort: ProposalCardPersistencePort = {
   saveCardDocument: (projectRoot, document) => FileService.saveCardDocument(projectRoot, document),
   createCardDocument: (projectRoot, document) => FileService.createCardDocument(projectRoot, document),
@@ -98,6 +116,10 @@ const defaultProposalCardPersistencePort: ProposalCardPersistencePort = {
       ? [entry.result.document]
       : [])
   },
+  readCreateReceipt: (projectRoot, transactionId) =>
+    defaultCreateReceiptRepository.load(projectRoot, transactionId),
+  writeCreateReceipt: (projectRoot, receipt) =>
+    defaultCreateReceiptRepository.save(projectRoot, receipt),
 }
 
 /**
@@ -209,6 +231,13 @@ export async function persistProposalToCardCatalog(
       ? await createCard(files, projectRoot, next)
       : await saveCard(files, projectRoot, next)
     if (!saved.ok) return saved
+    if (input.proposal.operation === 'create') {
+      const receipt = createReceipt(input.proposal.id, input.transactionId, next)
+      const receiptSaved = await writeCreateReceipt(files, projectRoot, receipt)
+      if (!receiptSaved.ok) {
+        return uncertain(`CardDocument 已创建，但创建 receipt 保存失败：${receiptSaved.error}`)
+      }
+    }
 
     // 文件写入会让出事件循环。期间 CardEditor 仍可能提交编辑或删除 Card；
     // 此时不能用最初捕获的 base 回滚，否则会覆盖用户刚完成的修改。
@@ -290,7 +319,11 @@ export async function reconcilePendingProposalTransition(
   if (current && cardDocumentRevision(current) === cardDocumentRevision(desired)) return { ok: true }
 
   let activeCreateAlreadyMatches = false
-  if (proposal.operation === 'create' && current === undefined) {
+  const acceptingCreate = proposal.operation === 'create' && transition.previousRevision === null
+  const expectedReceipt = acceptingCreate
+    ? createReceipt(proposal.id, transition.transactionId, desired)
+    : null
+  if (acceptingCreate && current === undefined) {
     const active = await inspectCard(files, projectRoot, finalCardId)
     if (active.status === 'occupied') {
       return uncertain(`Card ID ${finalCardId} 已被不可编辑文件占用，未覆盖`)
@@ -300,18 +333,26 @@ export async function reconcilePendingProposalTransition(
         return uncertain(`Card ID ${finalCardId} 已被其他 CardDocument 占用，未覆盖`)
       }
       activeCreateAlreadyMatches = true
-    }
-    if (!activeCreateAlreadyMatches && files.listTrashedCardDocuments) {
-      let trashed: readonly CardDocument[]
-      try {
-        trashed = await files.listTrashedCardDocuments(projectRoot, finalCardId)
-      } catch (error) {
-        return uncertain(`无法确认 Card ${finalCardId} 的回收站状态：${error instanceof Error ? error.message : String(error)}`)
+    } else {
+      const receipt = await readCreateReceipt(files, projectRoot, transition.transactionId)
+      if (receipt.status === 'error') {
+        return uncertain(`无法读取 Card 创建 receipt：${receipt.error}`)
       }
-      // accepted WAL 之后若同一候选已在回收站，说明项目
-      // 实际状态已删除它。只匹配完整内容，避免历史同 ID
-      // 回收站条目阻止一份新的建议。
-      if (trashed.some(document => sameDocument(document, desired))) return { ok: true }
+      if (receipt.status === 'found') {
+        if (!sameReceipt(receipt.receipt, expectedReceipt!)) {
+          return uncertain(`Card ${finalCardId} 的创建 receipt 与待恢复事务不一致`)
+        }
+        if (!files.listTrashedCardDocuments) {
+          return uncertain(`无法确认 Card ${finalCardId} 的回收站状态`)
+        }
+        let trashed: readonly CardDocument[]
+        try {
+          trashed = await files.listTrashedCardDocuments(projectRoot, finalCardId)
+        } catch (error) {
+          return uncertain(`无法确认 Card ${finalCardId} 的回收站状态：${error instanceof Error ? error.message : String(error)}`)
+        }
+        if (trashed.some(document => sameDocument(document, desired))) return { ok: true }
+      }
     }
   }
 
@@ -329,6 +370,12 @@ export async function reconcilePendingProposalTransition(
       ? { ok: true as const }
       : await saveCard(files, projectRoot, desired)
   if (!saved.ok) return saved
+  if (expectedReceipt) {
+    const receiptSaved = await writeCreateReceipt(files, projectRoot, expectedReceipt)
+    if (!receiptSaved.ok) {
+      return uncertain(`CardDocument 已创建，但创建 receipt 保存失败：${receiptSaved.error}`)
+    }
+  }
 
   const latest = getCardCatalogView()
   if (latest.sourceProjectRoot !== projectRoot) {
@@ -444,6 +491,56 @@ async function inspectCard(
 
 function sameDocument(left: CardDocument, right: CardDocument): boolean {
   return canonicalJson(left) === canonicalJson(right)
+}
+
+function createReceipt(
+  proposalId: string,
+  transactionId: string,
+  document: CardDocument,
+): ProposalCreateReceipt {
+  return {
+    schemaVersion: 1,
+    proposalId,
+    transactionId,
+    finalCardId: document.card.id,
+    documentRevision: cardDocumentRevision(document),
+  }
+}
+
+function sameReceipt(left: ProposalCreateReceipt, right: ProposalCreateReceipt): boolean {
+  return left.schemaVersion === right.schemaVersion &&
+    left.proposalId === right.proposalId &&
+    left.transactionId === right.transactionId &&
+    left.finalCardId === right.finalCardId &&
+    left.documentRevision === right.documentRevision
+}
+
+async function readCreateReceipt(
+  files: ProposalCardPersistencePort,
+  projectRoot: string,
+  transactionId: string,
+): Promise<ProposalCreateReceiptLoadResult> {
+  try {
+    return await files.readCreateReceipt(projectRoot, transactionId)
+  } catch (error) {
+    return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+async function writeCreateReceipt(
+  files: ProposalCardPersistencePort,
+  projectRoot: string,
+  receipt: ProposalCreateReceipt,
+): Promise<ProposalCreateReceiptSaveResult> {
+  try {
+    return await files.writeCreateReceipt(projectRoot, receipt)
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      certainty: 'uncertain',
+    }
+  }
 }
 
 function canonicalJson(value: unknown): string {

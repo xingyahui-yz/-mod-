@@ -133,6 +133,8 @@ describe('ProjectConversationProvider 项目切换守卫', () => {
       saveCardDocument: vi.fn(() => cardSave.promise),
       createCardDocument: vi.fn(() => cardSave.promise),
       inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
+      readCreateReceipt: vi.fn(async () => ({ status: 'missing' as const })),
+      writeCreateReceipt: vi.fn(async () => ({ ok: true as const })),
     }
     const model = proposalModel({ operation: 'create', document: candidate })
     const actions = renderActions(
@@ -451,6 +453,8 @@ function successfulCardFiles(): ProposalCardPersistencePort {
     saveCardDocument: vi.fn(async () => ({ ok: true as const })),
     createCardDocument: vi.fn(async () => ({ ok: true as const })),
     inspectCardDocument: vi.fn(async () => ({ status: 'missing' as const })),
+    readCreateReceipt: vi.fn(async () => ({ status: 'missing' as const })),
+    writeCreateReceipt: vi.fn(async () => ({ ok: true as const })),
   }
 }
 

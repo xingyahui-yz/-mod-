@@ -27,6 +27,7 @@ class MemoryFiles implements CardTrashFilePort {
   }
   async readFile(path: string) { return this.files.get(path) ?? null }
   async mkdir(path: string) { this.directories.add(path); return true }
+  async writeFile(path: string, content: string) { this.files.set(path, content); return true }
   async rename(from: string, to: string) {
     if (this.failRenameTo === to) return false
     const content = this.files.get(from)
@@ -133,6 +134,35 @@ describe('Card trash repository', () => {
     expect(files.files.get(`${trashPath}/artifact.cs`)).toBe('generated')
   })
 
+  it('联合终检发现 C# 在文档暂存期间重现时恢复 CardDocument 且不删除外部文件', async () => {
+    const files = new MemoryFiles()
+    const docPath = `${project}/.modstudio/cards/Fireball.json`
+    const artifactPath = `${project}/scripts/Cards/Fireball.cs`
+    const trashPath = `${project}/.modstudio/trash/cards/Fireball-1`
+    const stagingDocument = `${trashPath}/active-document.staging`
+    const stagingArtifact = `${trashPath}/active-artifact.staging`
+    files.files.set(docPath, document)
+    files.files.set(artifactPath, 'generated')
+    const rename = files.rename.bind(files)
+    files.rename = async (from, to) => {
+      const renamed = await rename(from, to)
+      if (renamed && to === stagingDocument) {
+        files.files.set(artifactPath, 'external replacement')
+      }
+      return renamed
+    }
+
+    const result = await createCardTrashRepository({ files, idSuffix: () => '1' }).delete(project, 'Fireball')
+
+    expect(result).toMatchObject({ status: 'failed', certainty: 'uncertain' })
+    expect(files.files.get(docPath)).toBe(document)
+    expect(files.files.get(artifactPath)).toBe('external replacement')
+    expect(files.files.has(stagingDocument)).toBe(false)
+    expect(files.files.get(stagingArtifact)).toBe('generated')
+    expect(files.files.get(`${trashPath}/card.json`)).toBe(document)
+    expect(files.files.get(`${trashPath}/artifact.cs`)).toBe('generated')
+  })
+
   it('两个活动文件都安全停用后，staging 清理失败不会把删除降级为半删除', async () => {
     const files = new MemoryFiles()
     const docPath = `${project}/.modstudio/cards/Fireball.json`
@@ -168,6 +198,22 @@ describe('Card trash repository', () => {
     files.files.delete(`${project}/.modstudio/cards/fireball.json`)
     const restored = await createCardTrashRepository({ files }).restore(project, 'Fireball-1')
     expect(restored).toEqual({ status: 'restored', cardId: 'Fireball' })
+    expect(files.files.get(`${project}/.modstudio/cards/Fireball.json`)).toBe(document)
+  })
+
+  it('恢复内容成功但 claim 无法原子释放时返回 uncertain 而不伪装成功', async () => {
+    const files = new MemoryFiles()
+    const trashPath = `${project}/.modstudio/trash/cards/Fireball-1`
+    files.files.set(`${trashPath}/card.json`, document)
+    const rename = files.rename.bind(files)
+    files.rename = async (from, to) => from.endsWith('/fireball.claim') && to.includes('.claim-released-')
+      ? false
+      : rename(from, to)
+
+    const result = await createCardTrashRepository({ files, idSuffix: () => '1' })
+      .restore(project, 'Fireball-1')
+
+    expect(result).toMatchObject({ status: 'failed', certainty: 'uncertain' })
     expect(files.files.get(`${project}/.modstudio/cards/Fireball.json`)).toBe(document)
   })
 

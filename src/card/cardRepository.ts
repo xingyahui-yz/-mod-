@@ -8,7 +8,7 @@ import { migrateCardDocument } from './cardMigrations'
 import { parseCardDocumentJson } from './cardDocument'
 import { isValidCardId } from './cardValidation'
 import type { FileService } from '../services/FileService'
-import { acquireCardIdClaim } from './cardIdClaim'
+import { acquireCardIdClaim, recoverCardIdClaims } from './cardIdClaim'
 
 export interface CardDocumentFileEntry {
   name: string
@@ -95,6 +95,10 @@ function saveStagingPath(target: string, id: string): string {
   return `${target}.save-staging-${id}-${Math.random().toString(36).slice(2)}`
 }
 
+function savePublishedPath(target: string, id: string): string {
+  return `${target}.save-published-${id}-${Math.random().toString(36).slice(2)}`
+}
+
 async function readDirectoryState(files: CardDocumentFilePort, path: string): Promise<
   | { status: 'found'; value: CardDocumentFileEntry[] }
   | { status: 'missing' }
@@ -149,8 +153,14 @@ function matchingCardEntries(
   return entries.filter(entry => !entry.isDirectory && entry.name.toLowerCase() === expected)
 }
 
-export function createCardDocumentRepository(deps: { files: CardDocumentFilePort }): CardDocumentRepository {
+export function createCardDocumentRepository(deps: {
+  files: CardDocumentFilePort
+  claimSessionId?: string
+  claimOperationId?: () => string
+}): CardDocumentRepository {
   const { files } = deps
+  const claimOperationId = deps.claimOperationId ?? (() =>
+    `operation-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`)
 
   const restoreStagedFile = async (
     staging: string,
@@ -186,8 +196,49 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
 
     let needsRescan = false
     for (const [targetKey, group] of groups) {
-      const hasActive = entries.some(entry => !entry.isDirectory && entry.name.toLowerCase() === targetKey)
-      if (hasActive) continue
+      const activeEntries = entries.filter(entry =>
+        !entry.isDirectory && entry.name.toLowerCase() === targetKey)
+      if (activeEntries.length > 1) {
+        throw new Error('CardDocument 保存恢复发现活动文件大小写冲突，已停止加载')
+      }
+      if (activeEntries.length === 1) {
+        const activeEntry = activeEntries[0]
+        const activePath = activeEntry.path || joinPath(cardsPath, activeEntry.name)
+        const activeBefore = await readFileState(files, activePath)
+        const activeParsed = activeBefore.status === 'found'
+          ? parseCardDocumentJson(activeBefore.value)
+          : null
+        const expectedId = group.targetName.slice(0, -'.json'.length)
+        if (activeBefore.status !== 'found' || activeParsed?.status !== 'editable' ||
+          activeParsed.document.card.id.toLowerCase() !== expectedId.toLowerCase()) {
+          throw new Error('活动 CardDocument 无法证明已发布，已保留 save staging 并停止加载')
+        }
+
+        // target 已存在且严格验证为同 ID 可编辑文档，说明 linkNoReplace 已越过
+        // 发布线性化点。此时 staging 是旧版本而非恢复源；先原子改名为 load
+        // 永不恢复的 published residue，再读回并复核活动文件仍未变化。
+        for (const stagingEntry of group.staging) {
+          const staging = stagingEntry.path || joinPath(cardsPath, stagingEntry.name)
+          const staged = await readFileState(files, staging)
+          if (staged.status !== 'found') {
+            throw new Error('无法读取 CardDocument save staging，已停止加载')
+          }
+          const publishedResidue = savePublishedPath(activePath, expectedId)
+          if (!await files.rename(staging, publishedResidue).catch(() => false)) {
+            throw new Error('无法封存已发布 CardDocument 的旧版本，已停止加载')
+          }
+          const residueReadBack = await readFileState(files, publishedResidue)
+          const activeAfter = await readFileState(files, activePath)
+          if (residueReadBack.status !== 'found' || residueReadBack.value !== staged.value ||
+            activeAfter.status !== 'found' || activeAfter.value !== activeBefore.value) {
+            throw new Error('CardDocument 发布恢复终检失败，已停止加载')
+          }
+          // published residue 即使清理失败也不会再进入恢复路径。
+          await files.remove(publishedResidue).catch(() => false)
+          needsRescan = true
+        }
+        continue
+      }
       if (group.staging.length !== 1) {
         throw new Error(`CardDocument 保存恢复存在 ${group.staging.length} 份候选，已停止加载`)
       }
@@ -250,6 +301,10 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
       const directory = await readDirectoryState(files, cardsPath)
       if (directory.status === 'missing') return []
       if (directory.status === 'error') throw new Error(directory.error)
+      const claimRecovery = await recoverCardIdClaims(files, cardsPath, {
+        sessionId: deps.claimSessionId,
+      })
+      if (claimRecovery.status === 'failed') throw new Error(claimRecovery.error)
       let entries = directory.value
       if (await recoverInterruptedSaveStaging(cardsPath, entries)) {
         const refreshed = await readDirectoryState(files, cardsPath)
@@ -310,14 +365,19 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
         await files.remove(temp).catch(() => false)
         return { ok: false, error: '无法写入 CardDocument 临时文件' }
       }
-      const claim = await acquireCardIdClaim(files, cardsPath, document.card.id, temp)
+      const claim = await acquireCardIdClaim(files, cardsPath, document.card.id, temp, {
+        sessionId: deps.claimSessionId,
+        operationId: claimOperationId(),
+      })
       if (claim.status !== 'acquired') {
         await files.remove(temp).catch(() => false)
         return { ok: false, error: claim.status === 'occupied'
           ? 'Card ID 正被其他写入占用'
           : '无法原子占用 Card ID' }
       }
+      let operationResult: CardDocumentSaveResult
       try {
+        operationResult = await (async (): Promise<CardDocumentSaveResult> => {
         const currentDirectory = await readDirectoryState(files, cardsPath)
         if (currentDirectory.status !== 'found') {
           return { ok: false, error: currentDirectory.status === 'error' ? currentDirectory.error : 'CardDocument 保存前已消失' }
@@ -376,12 +436,37 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
                 certainty: 'uncertain',
               }
         }
-        await files.remove(staging).catch(() => false)
+        // 发布成功后先把“发布前可恢复副本”转成“发布后旧版本残留”。load 只会
+        // 恢复前者；即使随后清理失败，用户之后删除活动 Card 也不会让旧版本复活。
+        const publishedResidue = savePublishedPath(target, document.card.id)
+        if (!await files.rename(staging, publishedResidue).catch(() => false)) {
+          const removed = await files.remove(staging).catch(() => false)
+          return removed
+            ? { ok: true, path: target }
+            : {
+                ok: false,
+                error: 'CardDocument 已发布但无法封存旧版本，请重新加载项目',
+                certainty: 'uncertain',
+              }
+        }
+        await files.remove(publishedResidue).catch(() => false)
         return { ok: true, path: target }
-      } finally {
+        })()
+      } catch (error) {
         await claim.release()
         await files.remove(temp).catch(() => false)
+        throw error
       }
+      const released = await claim.release()
+      await files.remove(temp).catch(() => false)
+      if (released.status === 'failed') {
+        return {
+          ok: false,
+          error: `${operationResult.ok ? 'CardDocument 已保存；' : ''}${released.error}，请重新加载项目`,
+          certainty: 'uncertain',
+        }
+      }
+      return operationResult
     },
 
     async create(projectPath, document) {
@@ -403,14 +488,19 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
         await files.remove(temp).catch(() => false)
         return { ok: false, error: '无法写入 CardDocument 临时文件' }
       }
-      const claim = await acquireCardIdClaim(files, cardsPath, document.card.id, temp)
+      const claim = await acquireCardIdClaim(files, cardsPath, document.card.id, temp, {
+        sessionId: deps.claimSessionId,
+        operationId: claimOperationId(),
+      })
       if (claim.status !== 'acquired') {
         await files.remove(temp).catch(() => false)
         return claim.status === 'occupied'
           ? { ok: false, error: 'Card ID 已被占用（大小写不敏感）' }
           : { ok: false, error: '无法原子占用 Card ID' }
       }
+      let operationResult: CardDocumentSaveResult
       try {
+        operationResult = await (async (): Promise<CardDocumentSaveResult> => {
         // 第一次扫描与 claim 之间可能已有竞争者完成创建；持有归一化
         // claim 后必须再扫一次，才能把大小写不同的目标也纳入原子边界。
         const directoryAfterClaim = await readDirectoryState(files, cardsPath)
@@ -430,10 +520,22 @@ export function createCardDocumentRepository(deps: { files: CardDocumentFilePort
           return { ok: false, error: '无法原子占用 Card ID' }
         }
         return { ok: true, path: target }
-      } finally {
+        })()
+      } catch (error) {
         await claim.release()
         await files.remove(temp).catch(() => false)
+        throw error
       }
+      const released = await claim.release()
+      await files.remove(temp).catch(() => false)
+      if (released.status === 'failed') {
+        return {
+          ok: false,
+          error: `${operationResult.ok ? 'CardDocument 已创建；' : ''}${released.error}，请重新加载项目`,
+          certainty: 'uncertain',
+        }
+      }
+      return operationResult
     },
 
     async migrateAndSave(projectPath, fileName) {

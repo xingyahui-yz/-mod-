@@ -118,6 +118,8 @@ async function readTextFileResult(filePath: string): Promise<FileReadResult<stri
 
 // ============ IPC 处理器 ============
 
+function registerIpcHandlers() {
+
 // 打开文件夹选择对话框
 ipcMain.handle('dialog:openDirectory', async () => {
   if (!mainWindow) return null
@@ -345,19 +347,35 @@ ipcMain.handle('shell:showInFolder', async (_event, filePath: string) => {
     return false
   }
 })
+}
 
 // ============ 应用生命周期 ============
 
-app.whenReady().then(createWindow)
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  registerIpcHandlers()
 
-app.on('activate', () => {
-  if (mainWindow === null) {
-    createWindow()
-  }
-})
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    if (!mainWindow.isVisible()) mainWindow.show()
+    mainWindow.focus()
+  })
+
+  app.whenReady().then(createWindow)
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit()
+    }
+  })
+
+  app.on('activate', () => {
+    if (mainWindow === null) {
+      createWindow()
+    }
+  })
+}

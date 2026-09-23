@@ -149,6 +149,71 @@ describe('v0.9 real filesystem release flow', () => {
     await expect(readFile(staging, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('真实文件系统在 publish 后崩溃会先封存 staging，之后删除活动 Card 也不会复活旧版本', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'mod-studio-card-post-publish-crash-'))
+    projects.push(project)
+    const cardsRoot = join(project, '.modstudio/cards')
+    const target = join(cardsRoot, 'ReleaseCard.json')
+    const staging = `${target}.save-staging-ReleaseCard-crash`
+    const previous = makeDocument()
+    previous.card.name = '旧版本'
+    const published = makeDocument()
+    published.card.name = '已发布版本'
+    await mkdir(cardsRoot, { recursive: true })
+    await writeFile(staging, serializeCardDocument(previous), 'utf8')
+    await writeFile(target, serializeCardDocument(published), 'utf8')
+    const repository = createCardDocumentRepository({ files: realFiles() })
+
+    const firstLoad = await repository.load(project)
+    expect(firstLoad).toHaveLength(1)
+    expect(firstLoad[0]?.result.status === 'editable' && firstLoad[0].result.document.card.name)
+      .toBe('已发布版本')
+    await expect(readFile(staging, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+
+    await rm(target)
+    await expect(repository.load(project)).resolves.toEqual([])
+    await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('真实文件系统启动会回收 prior-session owner claim 并允许重新创建', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'mod-studio-card-stale-claim-'))
+    projects.push(project)
+    const cardsRoot = join(project, '.modstudio/cards')
+    const claimsRoot = join(cardsRoot, '.id-claims')
+    await mkdir(claimsRoot, { recursive: true })
+    await writeFile(join(claimsRoot, 'releasecard.claim'), JSON.stringify({
+      kind: 'mod-studio-card-id-claim',
+      version: 1,
+      normalizedCardId: 'releasecard',
+      sessionId: 'previous-session',
+      operationId: 'crashed-create',
+    }), 'utf8')
+    const repository = createCardDocumentRepository({
+      files: realFiles(),
+      claimSessionId: 'current-session',
+      claimOperationId: () => 'recovered-create',
+    })
+
+    await expect(repository.load(project)).resolves.toEqual([])
+    await expect(repository.create(project, makeDocument())).resolves.toMatchObject({ ok: true })
+    await expect(readFile(join(cardsRoot, 'ReleaseCard.json'), 'utf8')).resolves.toContain('"id": "ReleaseCard"')
+  })
+
+  it('真实文件系统发布后的旧版本残留不会在活动 Card 删除后复活', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'mod-studio-card-published-residue-'))
+    projects.push(project)
+    const cardsRoot = join(project, '.modstudio/cards')
+    const target = join(cardsRoot, 'ReleaseCard.json')
+    const published = `${target}.save-published-ReleaseCard-interrupted-cleanup`
+    await mkdir(cardsRoot, { recursive: true })
+    await writeFile(published, serializeCardDocument(makeDocument()), 'utf8')
+
+    const loaded = await createCardDocumentRepository({ files: realFiles() }).load(project)
+
+    expect(loaded).toEqual([])
+    await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('真实文件系统并发恢复大小写不同的逻辑同 ID 时也只有一个成功', async () => {
     const project = await mkdtemp(join(tmpdir(), 'mod-studio-trash-case-claim-'))
     projects.push(project)

@@ -1,7 +1,7 @@
 # Mod Studio 领域模型（CONTEXT）
 
-> 最后更新：2026-09-14 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
-> 状态：v1.86 — 由项目所有者与协作 agent 通过开发迭代同步
+> 最后更新：2026-09-23 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
+> 状态：v1.90 — 由项目所有者与协作 agent 通过开发迭代同步
 
 ## 1. 项目目标（Goal）
 
@@ -212,7 +212,7 @@ MyMod/                          ← 用户项目根
     └── trash/                  ← Card 文档与生成产物的可恢复删除区
 ```
 
-## 6. 当前状态（截至 2026-09-17，v0.10 第二切片已完成首轮门禁，待新固定点独立复检）
+## 6. 当前状态（截至 2026-09-23，v0.10 第二切片正在收口新一轮独立复检）
 
 ### 6.1 已实现
 
@@ -238,7 +238,7 @@ MyMod/                          ← 用户项目根
 ### 6.2 未实现（按优先级排序）
 
 **v0.10 当前主线**
-- 🛠️ Card AI 对话式迭代（多轮）：对话骨架与逐 Card 提案已实现；第二遍发现的历史排序、原子 ID 占用与项目切换守卫已修复，待新固定提交独立复检后进入上下文智能与历史治理
+- 🛠️ Card AI 对话式迭代（多轮）：对话骨架与逐 Card 提案已实现；第二切片补强 create transaction receipt、单实例 Card ID claim 回收、Card 删除联合终检及 uncertain autosave 恢复。当前工作树第一遍为 52 个测试文件/648 项通过、renderer/node TypeScript 与 diff-check 通过；仍待构建产物检查和新固定提交的独立复检
 
 **后续待做**
 - ❌ Relic 接入与 Card 同等级的项目文档、生成安全和恢复生命周期
@@ -347,3 +347,4 @@ MyMod/                          ← 用户项目根
 | 2026-09-15 | v1.87 收口 Card 持久化竞态 — 创建入口共享 ID reservation，编辑器统一 create/save 队列并在切换前 drain；删除先完整备份再停用 C#；事务失败保持粘性阻断，发送预保存与项目切换均可线性取消 | Codex + 协作 agent |
 | 2026-09-16 | v1.88 加固 Card 存储故障边界 — 覆盖保存在小写 claim 内重验目标内容，typed 读取不再把权限错误当成损坏文档；回收站删除保留两份 staging 直到可补偿停用完成，项目切换会追赶非当前 Card 与写入期间的后续草稿 | Codex + 协作 agent |
 | 2026-09-17 | v1.89 封闭 Card 最终覆盖窗口 — 保存使用可恢复 staging 与 no-replace 发布，重启可恢复中断替换；未确认 create 对账优先尊重同内容回收站事实，删除补偿不确定时立即按磁盘重建投影 | Codex + 协作 agent |
+| 2026-09-23 | v1.90 补全 Card 恢复事务来源 — accepted create 使用可校验 transaction receipt 区分“尚未创建”与后续删除；Electron 单实例锁使 prior-session Card ID claim 可安全回收；删除在文档/C# 联合终检后才确认，uncertain autosave 冻结写入并按磁盘重载 | Codex + 协作 agent

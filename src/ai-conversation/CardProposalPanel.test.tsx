@@ -170,6 +170,44 @@ describe('CardProposalPanel', () => {
     }))
   })
 
+  it('接受或确认拒绝成功后把焦点移回仍然存在的提案摘要', async () => {
+    const candidate = cardDocument('FrostArc', '霜弧·强化')
+    const pending = proposal('proposal-focus', 'pending', candidate, 'update')
+    let acceptedView!: ReturnType<typeof render>
+    const acceptedProps = defaultProps({
+      documents: [cardDocument('FrostArc', '霜弧')],
+      proposals: [pending],
+      onAccept: async () => {
+        acceptedView.rerender(<CardProposalPanel {...acceptedProps} proposals={[
+          proposal('proposal-focus', 'accepted', candidate, 'update'),
+        ]} />)
+      },
+    })
+    acceptedView = render(<CardProposalPanel {...acceptedProps} />)
+    const acceptedSummary = screen.getByRole('button', { name: /@FrostArc.*修改现有 Card/ })
+    fireEvent.click(acceptedSummary)
+    fireEvent.click(screen.getByRole('button', { name: '接受整张修改' }))
+    await waitFor(() => expect(document.activeElement).toBe(acceptedSummary))
+    acceptedView.unmount()
+
+    let rejectedView!: ReturnType<typeof render>
+    const rejectedProps = defaultProps({
+      documents: [cardDocument('FrostArc', '霜弧')],
+      proposals: [pending],
+      onReject: async () => {
+        rejectedView.rerender(<CardProposalPanel {...rejectedProps} proposals={[
+          proposal('proposal-focus', 'rejected', candidate, 'update'),
+        ]} />)
+      },
+    })
+    rejectedView = render(<CardProposalPanel {...rejectedProps} />)
+    const rejectedSummary = screen.getByRole('button', { name: /@FrostArc.*修改现有 Card/ })
+    fireEvent.click(rejectedSummary)
+    fireEvent.click(screen.getByRole('button', { name: '拒绝提案' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认永久拒绝' }))
+    await waitFor(() => expect(document.activeElement).toBe(rejectedSummary))
+  })
+
   it('过期提案仍可查看，并可基于当前内容发起重做', async () => {
     const onRedoFromCurrent = vi.fn()
     const onPreviewUpdate = vi.fn()

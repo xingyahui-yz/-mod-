@@ -3,6 +3,13 @@
   "version": "0.8.0",
   "description": "Slay the Spire 2 Mod Development Tool",
   "main": "dist-electron/main.js",
+  "build": {
+    "files": [
+      "dist-electron/**/*",
+      "dist-renderer/**/*",
+      "package.json"
+    ]
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",

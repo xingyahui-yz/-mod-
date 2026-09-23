@@ -21,6 +21,7 @@ export interface CardTrashFilePort {
     | { status: 'error'; error: string }
   >
   mkdir(path: string): Promise<boolean>
+  writeFile(path: string, content: string): Promise<boolean>
   rename(from: string, to: string): Promise<boolean>
   linkNoReplace(from: string, to: string): Promise<{ status: 'linked' | 'exists' | 'failed' }>
   remove(path: string): Promise<boolean>
@@ -41,7 +42,7 @@ export type CardTrashDeleteResult =
 export type CardTrashRestoreResult =
   | { status: 'restored'; cardId: string; warning?: string }
   | { status: 'conflict'; cardId: string; reason: string }
-  | { status: 'failed'; reason: string }
+  | { status: 'failed'; reason: string; certainty?: 'unchanged' | 'uncertain' }
 
 export interface CardTrashRepository {
   delete(projectPath: string, cardId: string): Promise<CardTrashDeleteResult>
@@ -253,14 +254,21 @@ export function createCardTrashRepository(
           documentStaged.certainty === 'uncertain' || !artifactRestored ? 'uncertain' : 'unchanged',
         )
       }
-      const documentAfterRemove = await readFileState(files, sourceDocument)
-      if (documentAfterRemove.status !== 'missing') {
-        const documentRestored = await restoreStagedFile(files, sourceDocument, stagingDocument, document)
-        const artifactRestored = !artifactStaged || artifact === null ||
+      // 成功必须在线性化到两份活动文件的联合终检之后。C# 可能在先前确认
+      // missing 后、CardDocument 暂存期间被外部进程重新创建；此时不能把
+      // CardDocument 的消失误报为完整删除，也绝不能覆盖或删除外部 C#。
+      const [documentAfterRemove, artifactAfterDocumentRemove] = await Promise.all([
+        readFileState(files, sourceDocument),
+        readFileState(files, sourceArtifact),
+      ])
+      if (documentAfterRemove.status !== 'missing' || artifactAfterDocumentRemove.status !== 'missing') {
+        await restoreStagedFile(files, sourceDocument, stagingDocument, document)
+        if (artifactStaged && artifact !== null) {
           await restoreStagedFile(files, sourceArtifact, stagingArtifact, artifact)
+        }
         return deleteFailure(
-          'CardDocument 删除状态不确定，回收站副本保留，请重新加载项目',
-          documentRestored && artifactRestored ? 'unchanged' : 'uncertain',
+          'Card 活动文件删除状态不确定，回收站副本保留，请重新加载项目',
+          'uncertain',
         )
       }
 
@@ -341,65 +349,77 @@ export function createCardTrashRepository(
           ? { status: 'conflict', cardId, reason: '活动目录正在占用同 ID Card，恢复不会自动改名' }
           : { status: 'failed', reason: '无法原子占用 Card ID，回收站内容保留' }
       }
-      try {
-        // 目录检查必须位于归一化 claim 内，才能同时排斥大小写变体的创建/恢复。
-        const activeDirectory = await readDirectoryState(files, cardsRoot)
-        const artifactDirectory = await readDirectoryState(files, artifactRoot)
-        if (activeDirectory.status === 'error' || artifactDirectory.status === 'error') {
-          return { status: 'failed', reason: '无法确认活动 Card 目录，回收站内容保留' }
-        }
-        const activeEntries = activeDirectory.status === 'found' ? activeDirectory.value : []
-        const artifactEntries = artifactDirectory.status === 'found' ? artifactDirectory.value : []
-        const hasDocumentConflict = activeEntries.some(entry => !entry.isDirectory &&
-          entry.name.toLowerCase() === `${cardId}.json`.toLowerCase())
-        const hasArtifactConflict = artifactEntries.some(entry => !entry.isDirectory &&
-          entry.name.toLowerCase() === `${cardId}.cs`.toLowerCase())
-        if (hasDocumentConflict || hasArtifactConflict) {
-          return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
-        }
 
-        const documentLink = await files.linkNoReplace(trashDocument, targetDocument)
-          .catch(() => ({ status: 'failed' as const }))
-        if (documentLink.status === 'exists') {
-          return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
-        }
-        if (documentLink.status !== 'linked') {
-          return { status: 'failed', reason: '无法原子占用 Card ID，回收站内容保留' }
-        }
-        if (artifact !== null) {
-          const artifactLink = await files.linkNoReplace(trashArtifact, targetArtifact)
+      let operationResult: CardTrashRestoreResult
+      try {
+        operationResult = await (async (): Promise<CardTrashRestoreResult> => {
+          // 目录检查必须位于归一化 claim 内，才能同时排斥大小写变体的创建/恢复。
+          const activeDirectory = await readDirectoryState(files, cardsRoot)
+          const artifactDirectory = await readDirectoryState(files, artifactRoot)
+          if (activeDirectory.status === 'error' || artifactDirectory.status === 'error') {
+            return { status: 'failed', reason: '无法确认活动 Card 目录，回收站内容保留' }
+          }
+          const activeEntries = activeDirectory.status === 'found' ? activeDirectory.value : []
+          const artifactEntries = artifactDirectory.status === 'found' ? artifactDirectory.value : []
+          const hasDocumentConflict = activeEntries.some(entry => !entry.isDirectory &&
+            entry.name.toLowerCase() === `${cardId}.json`.toLowerCase())
+          const hasArtifactConflict = artifactEntries.some(entry => !entry.isDirectory &&
+            entry.name.toLowerCase() === `${cardId}.cs`.toLowerCase())
+          if (hasDocumentConflict || hasArtifactConflict) {
+            return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
+          }
+
+          const documentLink = await files.linkNoReplace(trashDocument, targetDocument)
             .catch(() => ({ status: 'failed' as const }))
-          if (artifactLink.status !== 'linked') {
+          if (documentLink.status === 'exists') {
+            return { status: 'conflict', cardId, reason: '活动目录已有同 ID Card，恢复不会自动改名' }
+          }
+          if (documentLink.status !== 'linked') {
+            return { status: 'failed', reason: '无法原子占用 Card ID，回收站内容保留' }
+          }
+          if (artifact !== null) {
+            const artifactLink = await files.linkNoReplace(trashArtifact, targetArtifact)
+              .catch(() => ({ status: 'failed' as const }))
+            if (artifactLink.status !== 'linked') {
+              return {
+                status: 'restored',
+                cardId,
+                warning: artifactLink.status === 'exists'
+                  ? 'CardDocument 已恢复；同名 C# 产物未覆盖，回收站副本已保留'
+                  : 'CardDocument 已恢复；C# 产物恢复失败，回收站副本已保留',
+              }
+            }
+          }
+
+          const activeDocumentRead = await readFileState(files, targetDocument)
+          const activeArtifactRead = artifact !== null
+            ? await readFileState(files, targetArtifact)
+            : { status: 'missing' as const }
+          if (activeDocumentRead.status !== 'found' || activeDocumentRead.value !== raw ||
+            (artifact !== null && (activeArtifactRead.status !== 'found' || activeArtifactRead.value !== artifact))) {
             return {
               status: 'restored',
               cardId,
-              warning: artifactLink.status === 'exists'
-                ? 'CardDocument 已恢复；同名 C# 产物未覆盖，回收站副本已保留'
-                : 'CardDocument 已恢复；C# 产物恢复失败，回收站副本已保留',
+              warning: 'Card 文件已恢复但无法完成读回校验；回收站副本已保留，请核对活动目录',
             }
           }
+          // link 成功后再解除回收站目录项；若清理失败，活动 Card 已完整，保留的
+          // hard-link 副本不会造成数据丢失，后续列表会以冲突方式保持可见。
+          await files.remove(trashDocument).catch(() => false)
+          if (artifact !== null) await files.remove(trashArtifact).catch(() => false)
+          return { status: 'restored', cardId }
+        })()
+      } catch (error) {
+        const released = await claim.release()
+        if (released.status === 'failed') {
+          return { status: 'failed', reason: released.error, certainty: 'uncertain' }
         }
-
-        const activeDocumentRead = await readFileState(files, targetDocument)
-        const activeArtifactRead = artifact !== null
-          ? await readFileState(files, targetArtifact)
-          : { status: 'missing' as const }
-        if (activeDocumentRead.status !== 'found' || activeDocumentRead.value !== raw ||
-          (artifact !== null && (activeArtifactRead.status !== 'found' || activeArtifactRead.value !== artifact))) {
-          return {
-            status: 'restored',
-            cardId,
-            warning: 'Card 文件已恢复但无法完成读回校验；回收站副本已保留，请核对活动目录',
-          }
-        }
-        // link 成功后再解除回收站目录项；若清理失败，活动 Card 已完整，保留的
-        // hard-link 副本不会造成数据丢失，后续列表会以冲突方式保持可见。
-        await files.remove(trashDocument).catch(() => false)
-        if (artifact !== null) await files.remove(trashArtifact).catch(() => false)
-        return { status: 'restored', cardId }
-      } finally {
-        await claim.release()
+        throw error
       }
+      const released = await claim.release()
+      return released.status === 'failed'
+        ? { status: 'failed', reason: released.error, certainty: 'uncertain' }
+        : operationResult
     },
   }
 }
