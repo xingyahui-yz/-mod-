@@ -6,7 +6,7 @@ import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
 import { createConversationDocument, type ConversationDocument } from './conversationDocument'
 import type { ConversationCapacityLimits } from './conversationCapacity'
-import type { ConversationLoadResult, ConversationRepository } from './conversationRepository'
+import type { ConversationArchiveListResult, ConversationLoadResult, ConversationRepository } from './conversationRepository'
 import { ProjectConversation, type ConversationModel } from './projectConversation'
 import { ProjectConversationProvider } from './ProjectConversationContext'
 import { ProjectConversationDrawer } from './ProjectConversationDrawer'
@@ -26,6 +26,45 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProjectConversationDrawer', () => {
+  it('切换项目后迟到的旧归档列表不会覆盖新项目列表', async () => {
+    const delayedOldList = deferred<ConversationArchiveListResult>()
+    const oldRepository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    oldRepository.listArchives = vi.fn(() => delayedOldList.promise)
+    const newRepository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    newRepository.listArchives = vi.fn(async () => ({
+      ok: true as const,
+      archives: [{ archiveId: 'new-project-archive', createdAt: NOW, updatedAt: NOW, turnCount: 1, bytes: 20 }],
+    }))
+    const conversations = new Map([
+      ['/mods/old', new ProjectConversation('/mods/old', oldRepository, successModel('不会调用'))],
+      ['/mods/new', new ProjectConversation('/mods/new', newRepository, successModel('不会调用'))],
+    ])
+    const factory = (projectRoot: string) => conversations.get(projectRoot)!
+    const rendered = render(
+      <ProjectConversationProvider projectRoot="/mods/old" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    await screen.findByText('先明确玩法主线。')
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    await waitFor(() => expect(oldRepository.listArchives).toHaveBeenCalledOnce())
+
+    rendered.rerender(
+      <ProjectConversationProvider projectRoot="/mods/new" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    await screen.findByText('先明确玩法主线。')
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    expect(await screen.findByRole('button', { name: '查看归档 new-project-archive' })).toBeTruthy()
+
+    await act(async () => { delayedOldList.resolve({
+      ok: true,
+      archives: [{ archiveId: 'stale-old-project-archive', createdAt: NOW, updatedAt: NOW, turnCount: 99, bytes: 99 }],
+    }); await delayedOldList.promise })
+    expect(screen.getByRole('button', { name: '查看归档 new-project-archive' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '查看归档 stale-old-project-archive' })).toBeNull()
+  })
   it('归档只读浏览仅显示历史，不恢复活动对话，并可安全导出 JSON', async () => {
     const active = completedDocument()
     const repository = memoryRepository({ status: 'loaded', document: active })
@@ -65,9 +104,10 @@ describe('ProjectConversationDrawer', () => {
     expect(repository.current).toEqual(active)
 
     fireEvent.click(screen.getByRole('button', { name: '导出此归档 JSON' }))
-    await waitFor(() => expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob)))
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
     expect(downloadedFilename).toBe('conversation-.._archive_one.json')
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:archive')
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:archive'))
   })
 
   it('归档确认取消时不更改活动对话或草稿', async () => {

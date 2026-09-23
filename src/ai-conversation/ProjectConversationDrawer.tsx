@@ -41,6 +41,9 @@ export function ProjectConversationDrawer({
   const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null)
   const [archiveRead, setArchiveRead] = useState<Extract<ConversationArchiveReadResult, { ok: true }> | null>(null)
   const archiveReadRequest = useRef(0)
+  const archiveListRequest = useRef(0)
+  const currentProjectRoot = useRef(view.projectRoot)
+  currentProjectRoot.current = view.projectRoot
   const [hasUnread, setHasUnread] = useState(false)
   const historyRef = useRef<HTMLDivElement>(null)
   const drawerRef = useRef<HTMLElement>(null)
@@ -76,9 +79,11 @@ export function ProjectConversationDrawer({
       setArchiveError(null)
       setArchiveBrowserOpen(false)
       setArchives([])
+      setIsLoadingArchives(false)
       setSelectedArchiveId(null)
       setArchiveRead(null)
       archiveReadRequest.current += 1
+      archiveListRequest.current += 1
       setHasUnread(false)
       previousActivityCount.current = activityCount
       unreadBaselineReadyRef.current = view.loadStatus !== 'loading'
@@ -234,16 +239,23 @@ export function ProjectConversationDrawer({
 
 
   const refreshArchives = async () => {
+    const request = ++archiveListRequest.current
+    const requestedProjectRoot = view.projectRoot
     setIsLoadingArchives(true)
     setArchiveError(null)
     try {
       const result = await actions.listArchives()
+      if (request !== archiveListRequest.current || currentProjectRoot.current !== requestedProjectRoot) return
       if (result.ok) setArchives(result.archives)
       else setArchiveError(result.error)
     } catch (error) {
-      setArchiveError(error instanceof Error ? error.message : '读取归档列表失败')
+      if (request === archiveListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setArchiveError(error instanceof Error ? error.message : '读取归档列表失败')
+      }
     } finally {
-      setIsLoadingArchives(false)
+      if (request === archiveListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setIsLoadingArchives(false)
+      }
     }
   }
 
@@ -257,13 +269,14 @@ export function ProjectConversationDrawer({
     setArchiveRead(null)
     setArchiveError(null)
     const request = ++archiveReadRequest.current
+    const requestedProjectRoot = view.projectRoot
     try {
       const result = await actions.readArchive(archiveId)
-      if (request !== archiveReadRequest.current) return
+      if (request !== archiveReadRequest.current || currentProjectRoot.current !== requestedProjectRoot) return
       if (result.ok) setArchiveRead(result)
       else setArchiveError(result.error)
     } catch (error) {
-      if (request === archiveReadRequest.current) {
+      if (request === archiveReadRequest.current && currentProjectRoot.current === requestedProjectRoot) {
         setArchiveError(error instanceof Error ? error.message : '读取归档失败')
       }
     }
@@ -286,7 +299,7 @@ export function ProjectConversationDrawer({
     document.body.append(anchor)
     anchor.click()
     anchor.remove()
-    URL.revokeObjectURL(url)
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 
   const archiveAndReset = async () => {
