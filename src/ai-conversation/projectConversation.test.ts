@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectConversation, type ConversationModel, type ConversationRequest } from './projectConversation'
 import type { ConversationDocument } from './conversationDocument'
+import type { ConversationSummaryGenerationRequest } from './conversationSummary'
 import type { ConversationRepository } from './conversationRepository'
 import type { CardDocument } from '../card/cardDocument'
 import { cardDocumentRevision } from '../card/cardAiProposal'
@@ -70,6 +71,102 @@ describe('ProjectConversation', () => {
     expect(h.saved()?.turns[0].attempts[0].failureKind).toBe('invalid-response')
   })
 
+  it('预算准备失败时不持久化 running attempt，也不调用模型', async () => {
+    const respond = vi.fn(async () => ({ success: true as const, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }))
+    const h = harness({
+      prepare: () => ({ ok: false as const, error: '最新消息超过可用预算' }),
+      respond,
+    })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('很长的消息')).resolves.toMatchObject({ ok: false, code: 'context-over-budget' })
+    expect(h.saveCalls()).toBe(0)
+    expect(respond).not.toHaveBeenCalled()
+    expect(h.conversation.getSnapshot()).toMatchObject({ isRunning: false, document: null })
+  })
+
+  it('持久化实际采用的预算快照，并仅把预算选中的完整历史发送给模型', async () => {
+    let promptTurnCount = 0
+    const h = harness({
+      prepare: request => ({
+        ok: true as const,
+        turns: request.turns.slice(-1),
+        promptContext: request,
+        contextSnapshot: {
+          directoryTier: 'compact' as const, contextWindowTokens: 8192, reservedOutputTokens: 2048,
+          reservedExpansionTokens: 1024, estimatedInputTokens: 2300, estimatedTotalTokens: 5472,
+          omittedMessageCount: 2, includedTurnIds: [request.turns.at(-1)!.id], providedCards: [],
+        },
+      }),
+      respond: async request => {
+        promptTurnCount = request.turns.length
+        return { success: true, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }
+      },
+    })
+    await h.conversation.load()
+    await h.conversation.send('第一轮')
+    await h.conversation.send('第二轮')
+
+    expect(promptTurnCount).toBe(1)
+    expect(h.saved()?.turns[1].contextSnapshot).toMatchObject({
+      directoryTier: 'compact', omittedMessageCount: 2, includedTurnIds: [h.saved()?.turns[1].id],
+    })
+  })
+
+  it('对有效的首次补取只调用一次内部第二轮并且不改写用户附件', async () => {
+    const calls: ConversationRequest[] = []
+    const h = harness({
+      respond: async request => {
+        calls.push(request)
+        return calls.length === 1
+          ? { success: true as const, content: JSON.stringify({ schemaVersion: 1, action: 'expand-context', cardIds: ['Fireball'] }) }
+          : { success: true as const, content: '{"schemaVersion":1,"text":"已读取火球","quickReplies":[],"proposals":[]}' }
+      },
+    }, { projectDocuments: () => [cardDocument('Fireball', '火焰伤害')] })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('比较火球')).resolves.toEqual({ ok: true })
+    expect(calls).toHaveLength(2)
+    expect(calls[1].expandedAttachmentIds).toEqual(['Fireball'])
+    expect(calls[1].expansionPass).toBe(true)
+    expect(calls[1].resolvedAttachments.map(attachment => attachment.cardId)).toEqual(['Fireball'])
+    expect(calls[1].turns[0].attachments).toEqual([])
+    expect(h.saved()?.turns[0].attachments).toEqual([])
+    expect(h.saved()?.turns[0].contextSnapshot?.reservedExpansionTokens).toBe(0)
+    expect(h.saved()?.turns[0].contextSnapshot?.providedCards).toEqual([{ cardId: 'Fireball', revision: cardDocumentRevision(cardDocument('Fireball', '火焰伤害')), source: 'expanded' }])
+    expect(h.saved()?.turns[0].assistantText).toBe('已读取火球')
+  })
+
+  it('拒绝目录外 Card 补取且不发送第二次请求', async () => {
+    let calls = 0
+    const h = harness({
+      respond: async () => {
+        calls += 1
+        return { success: true as const, content: JSON.stringify({ schemaVersion: 1, action: 'expand-context', cardIds: ['Secret'] }) }
+      },
+    }, { projectDocuments: () => [cardDocument('Fireball', '火焰伤害')] })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('比较火球')).resolves.toMatchObject({ ok: false, code: 'invalid-response' })
+    expect(calls).toBe(1)
+    expect(h.saved()?.turns[0].attempts[0]).toMatchObject({ status: 'failed', failureKind: 'invalid-response' })
+  })
+
+  it('第二次模型调用再次请求补取时终止该轮', async () => {
+    let calls = 0
+    const h = harness({
+      respond: async () => {
+        calls += 1
+        return { success: true as const, content: JSON.stringify({ schemaVersion: 1, action: 'expand-context', cardIds: [calls === 1 ? 'Fireball' : 'IceBolt'] }) }
+      },
+    }, { projectDocuments: () => [cardDocument('Fireball', '火焰伤害'), cardDocument('IceBolt', '冰霜伤害')] })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('比较')).resolves.toMatchObject({ ok: false, code: 'invalid-response' })
+    expect(calls).toBe(2)
+    expect(h.saved()?.turns[0].attempts[0]).toMatchObject({ status: 'failed', failureKind: 'invalid-response' })
+  })
+
   it('加载前禁止发送', async () => {
     const h = harness({ respond: async () => ({ success: true, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }) })
     await expect(h.conversation.send('继续')).resolves.toMatchObject({ ok: false, code: 'not-loaded' })
@@ -112,14 +209,58 @@ describe('ProjectConversation', () => {
     expect(h.saveCalls()).toBe(2)
   })
 
+
+  it('达到估算阈值后异步摘要已完成前缀，并在写回时保留并发新轮次', async () => {
+    let resolveSummary!: (result: { success: true; text: string }) => void
+    let summarizedTurnCount = 0
+    const summarize = vi.fn((request: ConversationSummaryGenerationRequest) => {
+      summarizedTurnCount = request.turns.length
+      return new Promise<{ success: true; text: string }>(resolve => { resolveSummary = resolve })
+    })
+    const h = harness({
+      respond: async () => ({ success: true as const, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }),
+      summarize,
+    })
+    await h.conversation.load()
+    await h.conversation.send('a'.repeat(1800))
+    await h.conversation.send('b'.repeat(1800))
+    await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(1))
+    expect(summarizedTurnCount).toBe(2)
+
+    await h.conversation.send('并发的新轮次')
+    resolveSummary({ success: true, text: '用户正在制作一款卡牌游戏' })
+    await vi.waitFor(() => expect(h.conversation.getSnapshot().document?.rollingSummary?.throughTurnId).toBe(h.saved()?.turns[1].id))
+
+    expect(h.conversation.getSnapshot().document?.turns).toHaveLength(3)
+    expect(h.conversation.getSnapshot().document?.rollingSummary?.text).toBe('用户正在制作一款卡牌游戏')
+    expect(h.saved()?.turns[2].assistantText).toBe('完成')
+  })
+
+  it('摘要尚未达到阈值或生成失败都不影响成功轮次和后续发送', async () => {
+    const summarize = vi.fn(async () => ({ success: false as const, error: '摘要失败', kind: 'provider' as const }))
+    const h = harness({
+      respond: async () => ({ success: true as const, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }),
+      summarize,
+    })
+    await h.conversation.load()
+    await h.conversation.send('短消息')
+    expect(summarize).not.toHaveBeenCalled()
+    await h.conversation.send('x'.repeat(1800))
+    await h.conversation.send('y'.repeat(1800))
+    await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(1))
+    expect(h.conversation.getSnapshot().document?.rollingSummary).toBeNull()
+    expect(h.conversation.getSnapshot().document?.turns).toHaveLength(3)
+    await expect(h.conversation.send('仍然可以继续')).resolves.toEqual({ ok: true })
+  })
   it('恢复 running attempt 保存失败时诚实暴露并禁止发送', async () => {
     const running: ConversationDocument = {
-      schemaVersion: 2,
+      schemaVersion: 4,
+      rollingSummary: null,
       proposals: [],
       createdAt: '2026-09-01T00:00:00Z',
       updatedAt: '2026-09-01T00:00:00Z',
       turns: [{
-        id: 'turn-1', userText: '继续', assistantText: null, quickReplies: [], quickReplySelection: null, attachments: [], createdAt: '2026-09-01T00:00:00Z',
+        id: 'turn-1', userText: '继续', assistantText: null, quickReplies: [], quickReplySelection: null, attachments: [], createdAt: '2026-09-01T00:00:00Z', contextSnapshot: null,
         attempts: [{
           id: 'attempt-1', status: 'running', startedAt: '2026-09-01T00:00:00Z', finishedAt: null, error: null, failureKind: null,
           diagnostics: { provider: 'unknown', model: 'unknown', requestId: 'unknown' },

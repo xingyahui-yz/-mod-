@@ -1,4 +1,4 @@
-import { migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
+import { CURRENT_CONVERSATION_SCHEMA_VERSION, migrateConversationDocument, parseConversationDocument, type ConversationDocument } from './conversationDocument'
 
 export type ConversationFileRead<T> =
   | { status: 'found'; value: T }
@@ -211,7 +211,7 @@ function parseRawDocument(content: string): ParsedRaw {
   return {
     ok: false,
     reason: migrated.reason,
-    canRestoreBackup: schemaVersion === undefined || schemaVersion === 1 || schemaVersion === 2,
+    canRestoreBackup: schemaVersion === undefined || (typeof schemaVersion === 'number' && Number.isSafeInteger(schemaVersion) && schemaVersion >= 1 && schemaVersion <= CURRENT_CONVERSATION_SCHEMA_VERSION),
   }
 }
 

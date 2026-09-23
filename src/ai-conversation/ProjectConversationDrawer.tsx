@@ -513,6 +513,12 @@ function ConversationTurnView({
           </div>
         )}
       </div>
+      {turn.contextSnapshot && (turn.contextSnapshot.directoryTier === "compact" || turn.contextSnapshot.omittedMessageCount > 0) && (
+        <p className="conversation-context-notice" role="note">
+          {turn.contextSnapshot.directoryTier === "compact" && <>本轮使用了精简版项目目录上下文。 </>}
+          {turn.contextSnapshot.omittedMessageCount > 0 && <>省略了 {turn.contextSnapshot.omittedMessageCount} 条较早的对话消息。</>}
+        </p>
+      )}
       {turn.assistantText !== null && (
         <div className="conversation-message assistant">
           {turn.assistantText && <p>{turn.assistantText}</p>}
@@ -608,6 +614,7 @@ const DRAWER_STYLES = `
   .conversation-status-dot.is-active, [data-running="true"] .conversation-status-dot { background: #6db9e9; opacity: 1; box-shadow: 0 0 0 4px rgba(109, 185, 233, .12); animation: conversation-pulse 1.3s ease-in-out infinite; }
   .conversation-status-dot.has-unread { background: #75b6df; opacity: 1; box-shadow: 0 0 0 3px rgba(117,182,223,.12); }
   .conversation-history { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 14px 22px; scroll-behavior: smooth; }
+  .conversation-context-notice { margin: 4px 0 10px; padding: 8px 10px; border-left: 2px solid color-mix(in srgb, var(--accent) 48%, var(--border)); color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
   .conversation-empty { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; color: var(--text-secondary); }
   .conversation-empty strong { color: var(--text-primary); font-size: 14px; font-weight: 600; }
   .conversation-empty p { max-width: 270px; margin: 0; font-size: 12px; line-height: 1.65; }

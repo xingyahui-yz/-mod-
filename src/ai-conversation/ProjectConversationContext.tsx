@@ -19,6 +19,7 @@ import {
 } from './projectConversation'
 import { createConversationFilePort } from '../services/FileService'
 import { createAdapter, createConversationModel } from '../services/llm/adapters'
+import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
 import { useAIStore } from '../stores/useAIStore'
 import {
   getCardCatalogView,
@@ -238,6 +239,10 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
     return latestModel
   }
   const model: ConversationModel = {
+    prepare(request) {
+      const configuredModel = createLatestModel()
+      return configuredModel?.prepare?.(request) ?? prepareConversationPrompt(request)
+    },
     diagnostics() {
       if (activeModel?.diagnostics) return activeModel.diagnostics()
       const { provider } = useAIStore.getState()
@@ -245,6 +250,11 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
       const configuredModel = createLatestModel()
       if (configuredModel?.diagnostics) return configuredModel.diagnostics()
       return { provider, model: 'unknown' }
+    },
+    async summarize(request) {
+      const configuredModel = createLatestModel()
+      if (!configuredModel?.summarize) return { success: false as const, error: '请先在「设置」中配置 API 密钥', kind: 'provider' as const }
+      return configuredModel.summarize(request)
     },
     async respond(request) {
       const configuredModel = createLatestModel()

@@ -34,6 +34,18 @@ export interface ConversationAttempt {
   diagnostics: ConversationAttemptDiagnostics
 }
 
+export interface ConversationContextSnapshot {
+  directoryTier: 'detailed' | 'compact'
+  contextWindowTokens: number
+  reservedOutputTokens: number
+  reservedExpansionTokens: number
+  estimatedInputTokens: number
+  estimatedTotalTokens: number
+  omittedMessageCount: number
+  includedTurnIds: string[]
+  providedCards: { cardId: string; revision: string; source: 'explicit' | 'expanded' }[]
+}
+
 export interface ConversationTurn {
   id: string
   userText: string
@@ -43,10 +55,18 @@ export interface ConversationTurn {
   attachments: ConversationAttachment[]
   attempts: ConversationAttempt[]
   createdAt: string
+  contextSnapshot: ConversationContextSnapshot | null
 }
 
-export interface ConversationDocumentV2 {
-  schemaVersion: 2
+export interface ConversationRollingSummaryV1 {
+  throughTurnId: string
+  text: string
+  updatedAt: string
+}
+
+export interface ConversationDocumentV4 {
+  schemaVersion: 4
+  rollingSummary: ConversationRollingSummaryV1 | null
   turns: ConversationTurn[]
   proposals: ConversationCardProposal[]
   createdAt: string
@@ -54,7 +74,7 @@ export interface ConversationDocumentV2 {
 }
 
 /** The only writable conversation document shape. Older versions exist only at the migration boundary. */
-export type ConversationDocument = ConversationDocumentV2
+export type ConversationDocument = ConversationDocumentV4
 
 export type ConversationDocumentParseResult =
   | { ok: true; document: ConversationDocument }
@@ -64,10 +84,13 @@ export type ConversationDocumentMigrationResult =
   | { ok: true; document: ConversationDocument; migrated: boolean }
   | { ok: false; reason: string; raw: unknown }
 
-const DOCUMENT_KEYS = ['createdAt', 'proposals', 'schemaVersion', 'turns', 'updatedAt']
+const DOCUMENT_KEYS = ['createdAt', 'proposals', 'rollingSummary', 'schemaVersion', 'turns', 'updatedAt']
+const DOCUMENT_V3_KEYS = ['createdAt', 'proposals', 'schemaVersion', 'turns', 'updatedAt']
+const DOCUMENT_V2_KEYS = ['createdAt', 'proposals', 'schemaVersion', 'turns', 'updatedAt']
 const V1_DOCUMENT_KEYS = ['createdAt', 'schemaVersion', 'turns', 'updatedAt']
 const LEGACY_DOCUMENT_KEYS = ['createdAt', 'projectPath', 'schemaVersion', 'turns', 'updatedAt']
-const TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'quickReplySelection', 'userText']
+const TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'contextSnapshot', 'createdAt', 'id', 'quickReplies', 'quickReplySelection', 'userText']
+const TURN_V2_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'quickReplySelection', 'userText']
 const LEGACY_TURN_KEYS = ['assistantText', 'attachments', 'attempts', 'createdAt', 'id', 'quickReplies', 'userText']
 const ATTEMPT_KEYS = ['diagnostics', 'error', 'failureKind', 'finishedAt', 'id', 'startedAt', 'status']
 const LEGACY_ATTEMPT_KEYS = ['error', 'finishedAt', 'id', 'startedAt', 'status']
@@ -79,22 +102,50 @@ const QUICK_REPLY_SELECTION_KEYS = ['replyId', 'turnId']
 const ATTEMPT_STATUSES: readonly ConversationAttemptStatus[] = ['running', 'completed', 'failed', 'cancelled', 'interrupted']
 const FAILURE_KINDS: readonly ConversationAttemptFailureKind[] = ['cancelled', 'timeout', 'provider', 'invalid-response', 'persistence', 'interrupted']
 const MAX_PERSISTED_ERROR_LENGTH = 500
+export const CURRENT_CONVERSATION_SCHEMA_VERSION = 4
+export const MAX_ROLLING_SUMMARY_CODE_POINTS = 12000
 
 export function createConversationDocument(now: string): ConversationDocument {
-  return { schemaVersion: 2, turns: [], proposals: [], createdAt: now, updatedAt: now }
+  return { schemaVersion: 4, turns: [], proposals: [], rollingSummary: null, createdAt: now, updatedAt: now }
 }
 
 export function parseConversationDocument(raw: unknown): ConversationDocumentParseResult {
   if (!isRecord(raw)) return invalid('文档必须是对象', raw)
-  if (Object.prototype.hasOwnProperty.call(raw, 'schemaVersion') && raw.schemaVersion !== 2) {
+  if (Object.prototype.hasOwnProperty.call(raw, 'schemaVersion') && raw.schemaVersion !== 4) {
     return invalid('不支持的 schemaVersion', raw)
   }
   if (!hasExactKeys(raw, DOCUMENT_KEYS)) return invalid('文档包含缺失或未知字段', raw)
   if (!Array.isArray(raw.turns) || !Array.isArray(raw.proposals) ||
-    !isTimestamp(raw.createdAt) || !isTimestamp(raw.updatedAt)) return invalid('文档字段无效', raw)
+    !isTimestamp(raw.createdAt) || !isTimestamp(raw.updatedAt) ||
+    !(raw.rollingSummary === null || isRollingSummary(raw.rollingSummary))) return invalid('文档字段无效', raw)
 
   const turnsResult = parseTurns(raw.turns, raw)
   if (!turnsResult.ok) return turnsResult
+
+  const rollingSummary = raw.rollingSummary as ConversationRollingSummaryV1 | null
+  if (rollingSummary !== null) {
+    const throughTurn = turnsResult.turns.find(turn => turn.id === rollingSummary.throughTurnId)
+    const completedAt = throughTurn?.attempts[throughTurn.attempts.length - 1].finishedAt
+    if (!throughTurn || throughTurn.attempts[throughTurn.attempts.length - 1].status !== 'completed' ||
+      !completedAt || Date.parse(rollingSummary.updatedAt) < Date.parse(completedAt)) {
+      return invalid('rollingSummary 必须引用已完成且不晚于摘要时间的轮次', raw)
+    }
+  }
+  for (const [turnIndex, turn] of turnsResult.turns.entries()) {
+    const snapshot = turn.contextSnapshot
+    if (!snapshot) continue
+    let previousIndex = -1
+    for (const includedTurnId of snapshot.includedTurnIds) {
+      const includedIndex = turnsResult.turns.findIndex(candidate => candidate.id === includedTurnId)
+      if (includedIndex < 0 || includedIndex > turnIndex || includedIndex <= previousIndex) {
+        return invalid('contextSnapshot.includedTurnIds 必须按文档顺序引用当前及此前轮次', raw)
+      }
+      previousIndex = includedIndex
+    }
+    if (snapshot.includedTurnIds[snapshot.includedTurnIds.length - 1] !== turn.id) {
+      return invalid('contextSnapshot.includedTurnIds 必须以当前轮次结束', raw)
+    }
+  }
 
   const proposals: ConversationCardProposal[] = []
   const proposalAndEventIds = new Set<string>()
@@ -148,8 +199,9 @@ export function parseConversationDocument(raw: unknown): ConversationDocumentPar
   return {
     ok: true,
     document: {
-      schemaVersion: 2,
+      schemaVersion: 4,
       turns: turnsResult.turns,
+      rollingSummary: raw.rollingSummary as ConversationRollingSummaryV1 | null,
       proposals,
       createdAt: raw.createdAt,
       updatedAt: raw.updatedAt,
@@ -157,14 +209,31 @@ export function parseConversationDocument(raw: unknown): ConversationDocumentPar
   }
 }
 
-/** Migrate strict PR1 v1 and the released bb5f191 v1 envelope into the current v2 shape. */
+/** Migrate strict v1/v2/v3 and the released legacy v1 envelope into the current v4 shape. */
 export function migrateConversationDocument(raw: unknown): ConversationDocumentMigrationResult {
   const current = parseConversationDocument(raw)
   if (current.ok) return { ...current, migrated: false }
+  if (isRecord(raw) && raw.schemaVersion === 3 && Array.isArray(raw.turns) && hasExactKeys(raw, DOCUMENT_V3_KEYS)) {
+    if (!raw.turns.every(inputTurn => isRecord(inputTurn) && hasExactKeys(inputTurn, TURN_KEYS))) return current
+    const strictV3Candidate: unknown = { ...raw, schemaVersion: 4, rollingSummary: null, turns: raw.turns.map(inputTurn => {
+      const turn = inputTurn as Record<string, unknown>
+      const snapshot = turn.contextSnapshot
+      return { ...turn, contextSnapshot: snapshot === null ? null : { ...(snapshot as Record<string, unknown>), providedCards: [] } }
+    }) }
+    const parsed = parseConversationDocument(strictV3Candidate)
+    return parsed.ok ? { ...parsed, migrated: true } : current
+  }
+  if (isRecord(raw) && raw.schemaVersion === 2 && Array.isArray(raw.turns) && hasExactKeys(raw, DOCUMENT_V2_KEYS)) {
+    if (!raw.turns.every(inputTurn => isRecord(inputTurn) && hasExactKeys(inputTurn, TURN_V2_KEYS))) return current
+    const strictV2Candidate: unknown = { ...raw, schemaVersion: 4, rollingSummary: null, turns: raw.turns.map(inputTurn => ({ ...(inputTurn as Record<string, unknown>), contextSnapshot: null })) }
+    const parsed = parseConversationDocument(strictV2Candidate)
+    if (parsed.ok) return { ...parsed, migrated: true }
+    return current
+  }
   if (!isRecord(raw) || raw.schemaVersion !== 1 || !Array.isArray(raw.turns)) return current
 
-  if (hasExactKeys(raw, V1_DOCUMENT_KEYS)) {
-    const strictV1Candidate: unknown = { ...raw, schemaVersion: 2, proposals: [] }
+  if (hasExactKeys(raw, V1_DOCUMENT_KEYS) && raw.turns.every(inputTurn => isRecord(inputTurn) && hasExactKeys(inputTurn, TURN_V2_KEYS))) {
+    const strictV1Candidate: unknown = { ...raw, schemaVersion: 4, proposals: [], rollingSummary: null, turns: raw.turns.map(inputTurn => ({ ...(inputTurn as Record<string, unknown>), contextSnapshot: null })) }
     const parsed = parseConversationDocument(strictV1Candidate)
     if (parsed.ok) return { ...parsed, migrated: true }
   }
@@ -202,12 +271,14 @@ export function migrateConversationDocument(raw: unknown): ConversationDocumentM
       attachments: attachments as ConversationAttachment[],
       attempts,
       createdAt: createdAt as string,
+      contextSnapshot: null,
     })
   }
   const migrated: unknown = {
-    schemaVersion: 2,
+    schemaVersion: 4,
     turns: migratedTurns,
     proposals: [],
+    rollingSummary: null,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   }
@@ -275,7 +346,7 @@ function isTurn(input: unknown): input is ConversationTurn {
   if (!isRecord(input) || !hasExactKeys(input, TURN_KEYS) || !isNonEmptyString(input.id) || !isNonEmptyString(input.userText) ||
     !(input.assistantText === null || typeof input.assistantText === 'string') || !Array.isArray(input.quickReplies) ||
     input.quickReplies.length > 4 || !isQuickReplySelection(input.quickReplySelection) || !Array.isArray(input.attachments) ||
-    !Array.isArray(input.attempts) || input.attempts.length === 0 || !isTimestamp(input.createdAt)) return false
+    !Array.isArray(input.attempts) || input.attempts.length === 0 || !isTimestamp(input.createdAt) || !(input.contextSnapshot === null || isConversationContextSnapshot(input.contextSnapshot))) return false
 
   const quickReplyIds = new Set<string>()
   for (const inputReply of input.quickReplies) {
@@ -292,6 +363,47 @@ function isTurn(input: unknown): input is ConversationTurn {
   }
 
   return input.attempts.every(isAttempt)
+}
+
+function isRollingSummary(input: unknown): input is ConversationRollingSummaryV1 {
+  return isRecord(input) && hasExactKeys(input, ['text', 'throughTurnId', 'updatedAt']) &&
+    isBoundedString(input.throughTurnId, 200) && isNonEmptyString(input.text) &&
+    input.text.trim().length > 0 && Array.from(input.text).length <= MAX_ROLLING_SUMMARY_CODE_POINTS &&
+    isBoundedString(input.updatedAt, 100) && isTimestamp(input.updatedAt)
+}
+
+function isConversationContextSnapshot(input: unknown): input is ConversationContextSnapshot {
+  if (!isRecord(input) || !hasExactKeys(input, [
+    'contextWindowTokens', 'directoryTier', 'estimatedInputTokens', 'estimatedTotalTokens',
+    'includedTurnIds', 'omittedMessageCount', 'providedCards', 'reservedExpansionTokens', 'reservedOutputTokens',
+  ]) || (input.directoryTier !== 'detailed' && input.directoryTier !== 'compact') ||
+    !isPositiveSafeInteger(input.contextWindowTokens) || !isNonNegativeSafeInteger(input.reservedOutputTokens) ||
+    !isNonNegativeSafeInteger(input.reservedExpansionTokens) || !isNonNegativeSafeInteger(input.estimatedInputTokens) ||
+    !isNonNegativeSafeInteger(input.estimatedTotalTokens) || !isNonNegativeSafeInteger(input.omittedMessageCount) ||
+    !Array.isArray(input.includedTurnIds) || !Array.isArray(input.providedCards)) return false
+  const expectedTotal = input.estimatedInputTokens + input.reservedOutputTokens + input.reservedExpansionTokens
+  if (!Number.isSafeInteger(expectedTotal) || input.estimatedTotalTokens !== expectedTotal || expectedTotal > input.contextWindowTokens) return false
+  const cardIds = new Set<string>()
+  for (const card of input.providedCards) {
+    if (!isRecord(card) || !hasExactKeys(card, ['cardId', 'revision', 'source']) ||
+      !isBoundedString(card.cardId, 200) || !isNonEmptyString(card.revision) ||
+      (card.source !== 'explicit' && card.source !== 'expanded') || cardIds.has(card.cardId.toLowerCase())) return false
+    cardIds.add(card.cardId.toLowerCase())
+  }
+  const ids = new Set<string>()
+  for (const id of input.includedTurnIds) {
+    if (!isNonEmptyString(id) || ids.has(id)) return false
+    ids.add(id)
+  }
+  return true
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function isAttempt(input: unknown): input is ConversationAttempt {
