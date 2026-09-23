@@ -550,6 +550,36 @@ describe('ConversationRepository', () => {
     }
   })
 
+  it('真实目录隔离恢复在 no-replace 发布时保留并发创建的活动文档', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-restore-race-'))
+    const aiDirectory = join(root, '.modstudio/ai')
+    const id = 'conversation.json.quarantine-42-race'
+    const quarantinePath = join(aiDirectory, id)
+    const activePath = join(aiDirectory, 'conversation.json')
+    const quarantined = createConversationDocument('2026-09-01T00:00:00Z')
+    const concurrent = createConversationDocument('2026-09-02T00:00:00Z')
+    const base = realFiles()
+    const files: ConversationFilePort = {
+      ...base,
+      linkNoReplace: async (from, to) => {
+        if (to === activePath) await writeFile(to, JSON.stringify(concurrent, null, 2), 'utf8')
+        return base.linkNoReplace(from, to)
+      },
+    }
+    try {
+      await mkdir(aiDirectory, { recursive: true })
+      await writeFile(quarantinePath, JSON.stringify(quarantined, null, 2), 'utf8')
+
+      await expect(createConversationRepository(files).restoreQuarantine(root, id)).resolves.toMatchObject({
+        ok: false, certainty: 'unchanged', error: '活动对话已存在，拒绝覆盖',
+      })
+      expect(JSON.parse(await readFile(activePath, 'utf8'))).toEqual(concurrent)
+      expect(JSON.parse(await readFile(quarantinePath, 'utf8'))).toEqual(quarantined)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('真实目录上的 EACCES tagged error 阻止恢复猜测', async () => {
     const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-eacces-'))
     const base = realFiles()
