@@ -10,6 +10,7 @@ export interface ConversationFilePort {
   readDirectory(path: string): Promise<ConversationFileRead<readonly string[]>>
   writeFile(path: string, content: string): Promise<boolean>
   rename(from: string, to: string): Promise<boolean>
+  linkNoReplace(from: string, to: string): Promise<{ status: 'linked' | 'exists' | 'failed' }>
   mkdir(path: string): Promise<boolean>
   remove(path: string): Promise<boolean>
 }
@@ -283,7 +284,7 @@ export function createConversationRepository(
             return { ok: false as const, error: '归档临时文件读回校验失败', certainty: 'unchanged' as const }
           }
           const stagedDocument = parseSavedDocument(staged.value)
-          if (!stagedDocument || staged.value !== content || !documentsEqual(stagedDocument, document)) {
+          if (staged.status !== 'found' || !stagedDocument || staged.value !== content || !documentsEqual(stagedDocument, document)) {
             await files.remove(temporary)
             return { ok: false as const, error: '归档临时文件读回校验失败', certainty: 'unchanged' as const }
           }
@@ -377,11 +378,8 @@ export function createConversationRepository(
           const quarantine = await readQuarantineInternal(projectPath, quarantineId)
           if (!quarantine.ok) return { ok: false as const, error: quarantine.error, certainty: 'unchanged' as const }
           if (!quarantine.recoverable || !quarantine.document) return { ok: false as const, error: '隔离文档不可恢复：' + quarantine.reason, certainty: 'unchanged' as const }
-          const saved = await saveInternal(projectPath, quarantine.document, true)
+          const saved = await saveIfMissing(files, path, quarantine.document, uniqueSibling(path, 'tmp'))
           if (!saved.ok) return { ok: false as const, error: saved.error, certainty: saved.certainty }
-          const restored = await files.readFile(path)
-          const restoredDocument = restored.status === 'found' ? parseSavedDocument(restored.value) : null
-          if (!restoredDocument || !documentsEqual(restoredDocument, quarantine.document)) return { ok: false as const, error: '恢复后活动文档读回校验失败', certainty: 'uncertain' as const }
           return { ok: true as const, quarantineId, document: quarantine.document, migrated: quarantine.migrated }
         } catch (error) { return { ok: false as const, error: errorMessage(error), certainty: 'uncertain' as const } }
       })
@@ -393,6 +391,46 @@ type ParsedRaw =
   | { ok: true; document: ConversationDocument; migrated: boolean }
   | { ok: false; reason: string; canRestoreBackup: boolean }
 
+
+async function saveIfMissing(
+  files: ConversationFilePort,
+  target: string,
+  document: ConversationDocument,
+  temporary: string,
+): Promise<ConversationSaveResult> {
+  const content = JSON.stringify(document, null, 2)
+  if (!await files.writeFile(temporary, content)) {
+    const cleaned = await files.remove(temporary)
+    return unchanged(cleaned ? '无法写入恢复临时文件' : '无法写入恢复临时文件，且清理失败')
+  }
+  const staged = await files.readFile(temporary)
+  if (staged.status !== 'found') {
+    await files.remove(temporary)
+    return unchanged('恢复临时文档读回校验失败')
+  }
+  const stagedDocument = parseSavedDocument(staged.value)
+  if (!stagedDocument || staged.value !== content || !documentsEqual(stagedDocument, document)) {
+    await files.remove(temporary)
+    return unchanged('恢复临时文档读回校验失败')
+  }
+  const published = await files.linkNoReplace(temporary, target)
+  if (published.status === 'exists') {
+    await files.remove(temporary)
+    return unchanged('活动对话已存在，拒绝覆盖')
+  }
+  if (published.status !== 'linked') {
+    await files.remove(temporary)
+    return { ok: false, error: '无法以 no-replace 方式发布恢复文档', certainty: 'uncertain' }
+  }
+  const restored = await files.readFile(target)
+  const restoredDocument = restored.status === 'found' ? parseSavedDocument(restored.value) : null
+  if (restored.status !== 'found' || !restoredDocument || restored.value !== content || !documentsEqual(restoredDocument, document)) {
+    await files.remove(temporary)
+    return { ok: false, error: '恢复后活动文档读回校验失败', certainty: 'uncertain' }
+  }
+  const cleaned = await files.remove(temporary)
+  return cleaned ? { ok: true } : { ok: true, warning: '活动对话已恢复，但临时文件清理失败' }
+}
 
 async function allocateArchiveId(files: ConversationFilePort, archiveDir: string, createId: () => string): Promise<string | null> {
   for (let attempt = 0; attempt < 10; attempt += 1) {

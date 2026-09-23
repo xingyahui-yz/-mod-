@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { link, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createConversationDocument } from './conversationDocument'
@@ -24,6 +24,13 @@ function memoryFiles(initial: Record<string, string> = {}) {
       data.delete(from)
       return true
     },
+    linkNoReplace: async (from, to) => {
+      const value = data.get(from)
+      if (value === undefined) return { status: 'failed' }
+      if (data.has(to)) return { status: 'exists' }
+      data.set(to, value)
+      return { status: 'linked' }
+    },
     mkdir: async () => true,
     remove: async path => data.delete(path),
   }
@@ -45,6 +52,10 @@ function realFiles(): ConversationFilePort {
     },
     rename: async (from, to) => {
       try { await rename(from, to); return true } catch { return false }
+    },
+    linkNoReplace: async (from, to) => {
+      try { await link(from, to); return { status: 'linked' } }
+      catch (error) { return isExists(error) ? { status: 'exists' } : { status: 'failed' } }
     },
     mkdir: async path => {
       try { await mkdir(path, { recursive: true }); return true } catch { return false }
@@ -457,6 +468,29 @@ describe('ConversationRepository', () => {
     await expect(repository.restoreQuarantine('/project', 'conversation.json.quarantine-1-../../active')).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
   })
 
+  it('隔离恢复期间若另一实例原子创建 active，不覆盖并发文档', async () => {
+    const id = 'conversation.json.quarantine-42-old'
+    const quarantinePath = '/project/.modstudio/ai/' + id
+    const activePath = '/project/.modstudio/ai/conversation.json'
+    const quarantineDocument = createConversationDocument('2026-09-01T00:00:00Z')
+    const concurrentDocument = createConversationDocument('2026-09-02T00:00:00Z')
+    const memory = memoryFiles({ [quarantinePath]: JSON.stringify(quarantineDocument) })
+    const files: ConversationFilePort = {
+      ...memory.files,
+      linkNoReplace: async (from, to) => {
+        if (to === activePath) memory.data.set(activePath, JSON.stringify(concurrentDocument))
+        return memory.files.linkNoReplace(from, to)
+      },
+    }
+    const quarantinedRaw = memory.data.get(quarantinePath)
+
+    await expect(createConversationRepository(files).restoreQuarantine('/project', id)).resolves.toMatchObject({
+      ok: false, certainty: 'unchanged', error: '活动对话已存在，拒绝覆盖',
+    })
+    expect(JSON.parse(memory.data.get(activePath)!)).toEqual(concurrentDocument)
+    expect(memory.data.get(quarantinePath)).toBe(quarantinedRaw)
+  })
+
   it('原子写入失败时恢复不改 active 且保留 quarantine', async () => {
     const id = 'conversation.json.quarantine-42-valid'
     const quarantinePath = '/project/.modstudio/ai/' + id
@@ -512,6 +546,10 @@ describe('ConversationRepository', () => {
 
 function isMissing(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'ENOENT')
+}
+
+function isExists(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'EEXIST')
 }
 
 function errorMessage(error: unknown): string {
