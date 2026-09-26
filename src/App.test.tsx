@@ -73,7 +73,7 @@ describe('App 项目切换接线', () => {
       cardDocument('CardB'),
     ], '/mods/a')
     const { getByRole, getByText } = render(<App />)
-    fireEvent.click(getByRole('button', { name: '📁 文件浏览' }))
+    fireEvent.click(getByRole('button', { name: '文件浏览' }))
     expect((getByText('Card Editor').closest('.editor-area') as HTMLElement).style.display).toBe('none')
 
     fireEvent.click(getByRole('button', { name: '预览 CardB 提案' }))

@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectConversation, type ConversationModel, type ConversationRequest } from './projectConversation'
-import type { ConversationDocument } from './conversationDocument'
+import { createConversationDocument, type ConversationDocument } from './conversationDocument'
 import type { ConversationSummaryGenerationRequest } from './conversationSummary'
 import type { ConversationRepository } from './conversationRepository'
 import type { CardDocument } from '../card/cardDocument'
 import { cardDocumentRevision } from '../card/cardAiProposal'
+import type { ConversationCapacityLimits } from './conversationCapacity'
+
+const unusedArchiveMethods: Pick<ConversationRepository, 'archiveAndReset' | 'listArchives' | 'readArchive' | 'listQuarantines' | 'readQuarantine' | 'restoreQuarantine'> = {
+  archiveAndReset: async () => ({ ok: false, error: 'not used', certainty: 'unchanged' }),
+  listArchives: async () => ({ ok: true, archives: [] }),
+  readArchive: async () => ({ ok: false, error: 'not used' }),
+  listQuarantines: async () => ({ ok: true, quarantines: [] }),
+  readQuarantine: async () => ({ ok: false, error: 'not used' }),
+  restoreQuarantine: async () => ({ ok: false, error: 'not used', certainty: 'unchanged' }),
+}
 
 function harness(
   model: ConversationModel,
@@ -13,17 +23,36 @@ function harness(
     failSaveCalls?: readonly number[]
     failCertainty?: 'unchanged' | 'uncertain'
     projectDocuments?: () => readonly CardDocument[]
+    capacityLimits?: ConversationCapacityLimits
   } = {},
 ) {
   let saved: ConversationDocument | null = options.initial ? structuredClone(options.initial) : null
   let saveCall = 0
+  const archives = new Map<string, ConversationDocument>()
   const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
+    getPerformanceMetrics: () => ({ scope: 'current-project-session', hardLimitBlockCount: 0, sampleLimit: 100, load: { sampleCount: 0, p95Ms: null }, save: { sampleCount: 0, p95Ms: null }, softScale: { criteria: '>=10MB or >=5000 messages', load: { sampleCount: 0, p95Ms: null }, save: { sampleCount: 0, p95Ms: null } }, samples: [] }),
     load: async () => saved ? { status: 'loaded', document: saved } : { status: 'missing' },
     save: async (_path, document) => {
       saveCall += 1
       if (options.failSaveCalls?.includes(saveCall)) return { ok: false, error: `save-${saveCall}-failed`, certainty: options.failCertainty ?? 'unchanged' }
       saved = structuredClone(document)
       return { ok: true }
+    },
+    archiveAndReset: async (_path, document, resetAt) => {
+      const archiveId = `archive-${archives.size + 1}`
+      archives.set(archiveId, structuredClone(document))
+      saved = createConversationDocument(resetAt)
+      return { ok: true, archiveId }
+    },
+    listArchives: async () => ({ ok: true, archives: [...archives].map(([archiveId, document]) => ({
+      archiveId, createdAt: document.createdAt, updatedAt: document.updatedAt, turnCount: document.turns.length, bytes: 0,
+    })) }),
+    readArchive: async (_path, archiveId) => {
+      const document = archives.get(archiveId)
+      return document
+        ? { ok: true as const, archiveId, document: structuredClone(document), rawJson: JSON.stringify(document, null, 2) }
+        : { ok: false as const, error: '归档不存在' }
     },
   }
   let id = 0
@@ -34,11 +63,63 @@ function harness(
     () => new Date('2026-09-01T00:00:00Z'),
     () => `id-${++id}`,
     options.projectDocuments,
+    options.capacityLimits,
   )
   return { conversation, saved: () => saved, saveCalls: () => saveCall }
 }
 
 describe('ProjectConversation', () => {
+
+  it('允许当前轮完成后达到硬容量，但拒绝下一轮', async () => {
+    const respond = vi.fn(async () => ({ success: true as const, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' }))
+    const h = harness({ respond }, {
+      capacityLimits: { warningBytes: 100_000, warningMessages: 1, hardBytes: 200_000, hardMessages: 1 },
+    })
+    await h.conversation.load()
+
+    await expect(h.conversation.send('最后一轮')).resolves.toEqual({ ok: true })
+    expect(h.conversation.getSnapshot().capacity).toMatchObject({ level: 'hard', messageCount: 2 })
+    await expect(h.conversation.send('下一轮')).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
+    expect(respond).toHaveBeenCalledTimes(1)
+    expect(h.saved()?.turns).toHaveLength(1)
+    expect(h.conversation.getPerformanceMetrics()?.hardLimitBlockCount).toBe(1)
+  })
+
+  it('显式恢复可迁移隔离文档后更新活动状态并保留源文件', async () => {
+    const restored = createConversationDocument('2026-09-01T00:00:00.000Z')
+    const restore = vi.fn(async () => ({ ok: true as const, quarantineId: 'conversation.json.quarantine-1-old', document: restored, migrated: true }))
+    const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
+      load: async () => ({ status: 'quarantined', reason: '损坏活动文档', path: '/p/.modstudio/ai/conversation.json.quarantine-1-old' }),
+      save: async () => ({ ok: true }),
+      restoreQuarantine: restore,
+    }
+    const conversation = new ProjectConversation('/p', repository, { respond: async () => ({ success: true, content: '{"schemaVersion":1,"text":"ok","quickReplies":[],"proposals":[]}' }) })
+    await conversation.load()
+    expect(conversation.getSnapshot().loadStatus).toBe('quarantined')
+
+
+    await expect(conversation.restoreQuarantine('conversation.json.quarantine-1-old')).resolves.toEqual({ ok: true })
+    expect(restore).toHaveBeenCalledWith('/p', 'conversation.json.quarantine-1-old')
+    expect(conversation.getSnapshot()).toMatchObject({ loadStatus: 'loaded', document: restored, quarantineReason: null, requiresReload: false })
+    expect(conversation.getSnapshot().lastError).toContain('原始隔离文件仍保留')
+  })
+
+  it('归档完整活动历史后重置为空文档，并支持只读读取', async () => {
+    const h = harness({ respond: async () => ({ success: true, content: '{"schemaVersion":1,"text":"已完成","quickReplies":[],"proposals":[]}' }) })
+    await h.conversation.load()
+    await h.conversation.send('归档前消息')
+    const original = structuredClone(h.saved()!)
+
+    await expect(h.conversation.archiveAndReset()).resolves.toEqual({ ok: true })
+    expect(h.saved()).toEqual(createConversationDocument('2026-09-01T00:00:00.000Z'))
+    const listed = await h.conversation.listArchives()
+    expect(listed).toMatchObject({ ok: true, archives: [{ archiveId: 'archive-1', turnCount: 1 }] })
+    await expect(h.conversation.readArchive('archive-1')).resolves.toMatchObject({
+      ok: true, archiveId: 'archive-1', document: original,
+    })
+  })
+
   it('先保存 running，再在最终原子保存后展示回复', async () => {
     let statusDuringCall = ''
     const h = harness({ respond: async () => { statusDuringCall = h.saved()!.turns[0].attempts[0].status; return { success: true, content: '{"schemaVersion":1,"text":"完成","quickReplies":[],"proposals":[]}' } } })
@@ -177,6 +258,7 @@ describe('ProjectConversation', () => {
     let resolveLoad!: () => void
     let responded = false
     const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
       load: () => new Promise(resolve => { resolveLoad = () => resolve({ status: 'missing' }) }),
       save: async () => ({ ok: true }),
     }
@@ -294,6 +376,22 @@ describe('ProjectConversation', () => {
     expect(turn.attempts[0].failureKind).toBe('timeout')
   })
 
+  it('硬容量达到后拒绝重试失败轮次', async () => {
+    const respond = vi.fn(async () => ({ success: false as const, error: '超时', kind: 'timeout' as const }))
+    const h = harness({ respond }, {
+      capacityLimits: { warningBytes: 1, warningMessages: 10, hardBytes: 1, hardMessages: 20 },
+    })
+    await h.conversation.load()
+    await expect(h.conversation.send('保留原消息')).resolves.toMatchObject({ ok: false, code: 'timeout' })
+    const turnId = h.conversation.getSnapshot().document!.turns[0].id
+    const saved = h.saved()
+
+    await expect(h.conversation.retryTurn(turnId)).resolves.toMatchObject({ ok: false, code: 'capacity-limit' })
+    expect(h.saved()).toEqual(saved)
+    expect(respond).toHaveBeenCalledTimes(1)
+    expect(h.conversation.getPerformanceMetrics()?.hardLimitBlockCount).toBe(1)
+  })
+
   it('拒绝重试非最后轮次', async () => {
     let call = 0
     const h = harness({ respond: async () => {
@@ -400,6 +498,7 @@ describe('ProjectConversation', () => {
     let markModelStarted!: () => void
     const modelStarted = new Promise<void>(resolve => { markModelStarted = resolve })
     const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
       load: async () => ({ status: 'missing' }),
       save: async (_path, document) => {
         if (firstSave) {
@@ -450,6 +549,7 @@ describe('ProjectConversation', () => {
     const finalStarted = new Promise<void>(resolve => { finalSaveStarted = resolve })
     let releaseFinalSave!: () => void
     const repository: ConversationRepository = {
+      ...unusedArchiveMethods,
       load: async () => ({ status: 'missing' }),
       save: async (_path, document) => {
         saveCall += 1

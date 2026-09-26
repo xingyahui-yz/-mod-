@@ -17,6 +17,11 @@ interface Window {
     copyDirectory: (src: string, dest: string) => Promise<boolean>
     getUserDataPath: () => Promise<string>
     launchGame: (gamePath: string, modPath: string) => Promise<{ success: boolean; error?: string }>
+    listMods: (gamePath: string) => Promise<{ ok: boolean; mods?: Array<{ id: string; folderName: string; name: string; version: string; author: string; description: string; enabled: boolean }>; error?: string }>
+    installMod: (gamePath: string) => Promise<{ success: boolean; cancelled?: boolean; error?: string }>
+    setModEnabled: (gamePath: string, folderName: string, enabled: boolean) => Promise<{ success: boolean; error?: string }>
+    uninstallMod: (gamePath: string, folderName: string) => Promise<{ success: boolean; error?: string }>
+    openModsFolder: (gamePath: string) => Promise<boolean>
     showInFolder: (filePath: string) => Promise<boolean>
   }
 }

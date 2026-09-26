@@ -31,7 +31,7 @@
 - 🎨 **主题切换** — 支持暗/亮主题
 - 🛡️ **错误边界** — 友好的错误处理
 - 💾 **本地项目源数据** — `.modstudio/cards/` 保存权威 Card 文档，`scripts/Cards/` 只保存可重新生成的 C# 产物
-- ✅ **自动化验证** — 当前完整测试套件 **617 项**，另有 Renderer/Electron 两套 TypeScript 检查与 Electron 完整构建门禁
+- ✅ **自动化验证** — 当前完整测试套件 **733 项**（2026-09-25 全部通过），另有 Renderer/Electron 两套 TypeScript 检查与 Electron 完整构建门禁
 
 ## 🛠️ 技术栈
 
@@ -93,12 +93,13 @@ mod-studio/
 
 | 图表 | 类型 | 说明 |
 |---|---|---|
-| [Mod Studio 项目架构](./docs/diagrams/project-architecture.architecture.html) | Architecture | React、CardCatalog、Card 领域服务、项目源数据、LLM 与游戏之间的模块关系 |
-| [Card 编辑、保存与生成流程](./docs/diagrams/card-edit-generation.workflow.html) | Workflow | 编辑事务、草稿自动保存、显式生成、校验、产物写入与失败保护 |
-| [项目打开与 Card 恢复流程](./docs/diagrams/project-open-recovery.workflow.html) | Workflow | 项目切换、CardDocument 扫描、迁移、只读隔离与目录装载 |
-| [项目级 AI 对话单轮时序](./docs/diagrams/ai-conversation-turn.sequence.html) | Sequence | 发送前持久化、模型调用、响应校验、最终原子提交与可见时点 |
-| [AI Card 提案生命周期](./docs/diagrams/ai-proposal-lifecycle.lifecycle.html) | Lifecycle | pending、accepted、reverted、stale、rejected 与 superseded 状态 |
-| [AI 对话存储与归档生命周期](./docs/diagrams/conversation-governance.lifecycle.html) | Lifecycle | 首次创建、软/硬阈值、原子归档、隔离与 schema 迁移 |
+| [Mod Studio 项目架构](./docs/diagrams/project-architecture.architecture.html) | Architecture | 多协议 Provider 配置、React 编辑器、Card 领域服务、Electron Mod 管理、项目数据与游戏边界 |
+| [Card 编辑、保存与生成流程](./docs/diagrams/card-edit-generation.workflow.html) | Workflow | 编辑事务、防抖草稿保存、显式生成、覆盖保护、读回校验与指纹回写 |
+| [项目打开与 Card 恢复流程](./docs/diagrams/project-open-recovery.workflow.html) | Workflow | 切换前等待 AI 事务并 flush 草稿、CardDocument 扫描、版本迁移与只读隔离 |
+| [项目级 AI 对话单轮时序](./docs/diagrams/ai-conversation-turn.sequence.html) | Sequence | 发送前持久化、可选一次 Card 上下文补取、最终校验与原子提交后展示 |
+| [AI Card 提案生命周期](./docs/diagrams/ai-proposal-lifecycle.lifecycle.html) | Lifecycle | revision 过期、WAL 与 Card 事务、拒绝/取代，以及 undo / redo 状态回转 |
+| [AI 对话存储与归档生命周期](./docs/diagrams/conversation-governance.lifecycle.html) | Lifecycle | 软/硬容量门槛、旧 schema 迁移、原子归档、损坏恢复与未来版本隔离 |
+| [AI 媒体创作与 Mod 导出目标流程（方案）](./docs/diagrams/ai-media-generation-proposal.workflow.html) | Workflow | 标出未来媒体生成、素材确认、引用绑定、Mod 导出和游戏内验证目标（尚未实现） |
 
 可编辑规格位于 [`docs/diagrams/`](./docs/diagrams/)，所有规格均通过 Archify showcase 质量验证。
 
@@ -149,7 +150,7 @@ npm run test:watch
 4. 接受修改作为一个 Card 历史事务；撤销后提案标记为 `reverted`，重做后恢复 `accepted`。接受提案不会自动生成 C#。
 5. 提案接受、撤销和重做使用可恢复的跨文件事务日志；异常退出后只续做尚未确认的最后一步，不会覆盖用户后续编辑或复活已删除 Card。
 
-多轮历史、取消/重试、快捷回答、显式 Card 附件和版本化 JSON 恢复已接通。旧单次 AI 标签及平行 LLM 入口已删除；后续切片将补齐 token 预算、一次自动补取、混合摘要与历史归档。详见 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md)。
+多轮历史、取消/重试、快捷回答、显式 Card 附件和版本化 JSON 恢复已接通。归档管理中的“存储性能与 SQLite 评估数据”展示当前项目会话实例最近 100 次活动文档仓储样本（加载仅计成功结果，保存计入已序列化尝试）。p95 是常规活动文档仓储端到端耗时（含排队、解析/校验，不含归档重置），不是纯磁盘 I/O；达到 10 MB 或 5,000 条消息的软阈值样本单独统计 p95。该遥测只保存在内存且不包含对话文本，并显示本会话被硬限制拦截的发送/重试次数；软阈值规模下加载或保存 p95 超过 500 ms，或硬限制拦截频繁时，应立项评估 SQLite。跨归档查询、局部/并发写入和频繁触达硬上限也是独立升级触发条件。后续切片将补齐 token 预算、一次自动补取与混合摘要。详见 [ADR-0007](./docs/adr/0007-project-card-ai-conversation.md)。
 
 ### 5. 测试游戏
 切换到「🎮 游戏测试」标签，设置游戏路径，点击启动游戏测试。
@@ -173,7 +174,7 @@ npm run test:watch
 | v0.1-v0.8 | ✅ 已完成 | 节点编辑器、Relic 模块、项目文件服务、AI 结构化输出与架构加深 |
 | v0.9 | ✅ 已完成 | Card 单一文档模型、行为图、自动保存、显式生成、迁移/恢复、回收站、批量生成、测试预检与 Electron release gate |
 | CardCatalog | ✅ 已完成 | Card 文档唯一权威、逐 Card 历史、文本/拖动事务合并与 revision-safe AI/生成操作 |
-| **v0.10** | 🛠️ 实施中 | 对话骨架已通过双重门禁；逐 Card 提案补强创建恢复收据、Card ID claim 回收及 uncertain 写入保护，当前提交点 651 项测试、双 TypeScript 检查与正式打包通过，正在独立复检；后续为上下文智能与历史治理 |
+| **v0.10** | 🛠️ 实施中 | 四个切片的功能已完成；2026-09-25 完整测试（733 项）、TypeScript/Vite/Electron 构建及 diff-check 通过，仍需 Electron 手工 smoke 后才能关闭发布门禁 |
 | 后续 | 📋 计划 | Relic 接入 Card 同等级项目生命周期，再扩展 Character / Potion / Event / Enemy / Buff / UI |
 | v1.0+ | 📋 计划 | Steam Workshop 发布流程 |
 

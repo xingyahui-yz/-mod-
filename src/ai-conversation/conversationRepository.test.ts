@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { link, mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createConversationDocument } from './conversationDocument'
@@ -24,6 +24,13 @@ function memoryFiles(initial: Record<string, string> = {}) {
       data.delete(from)
       return true
     },
+    linkNoReplace: async (from, to) => {
+      const value = data.get(from)
+      if (value === undefined) return { status: 'failed' }
+      if (data.has(to)) return { status: 'exists' }
+      data.set(to, value)
+      return { status: 'linked' }
+    },
     mkdir: async () => true,
     remove: async path => data.delete(path),
   }
@@ -46,6 +53,10 @@ function realFiles(): ConversationFilePort {
     rename: async (from, to) => {
       try { await rename(from, to); return true } catch { return false }
     },
+    linkNoReplace: async (from, to) => {
+      try { await link(from, to); return { status: 'linked' } }
+      catch (error) { return isExists(error) ? { status: 'exists' } : { status: 'failed' } }
+    },
     mkdir: async path => {
       try { await mkdir(path, { recursive: true }); return true } catch { return false }
     },
@@ -62,6 +73,27 @@ describe('ConversationRepository', () => {
     expect(await repository.save('/project', createConversationDocument('2026-09-01T00:00:00Z'))).toEqual({ ok: true })
     expect((await repository.load('/project')).status).toBe('loaded')
     expect([...memory.data.keys()]).toEqual(['/project/.modstudio/ai/conversation.json'])
+  })
+
+  it('为活动文档 load/save 记录进程内 p95 样本，不写入文档', async () => {
+    const memory = memoryFiles()
+    const repository = createConversationRepository(memory.files, () => 1, () => 'metrics')
+    const document = createConversationDocument('2026-09-01T00:00:00Z')
+    await repository.save('/project', document)
+    await repository.load('/project')
+
+    const metrics = repository.getPerformanceMetrics?.()
+    expect(metrics).toMatchObject({
+      scope: 'current-project-session', hardLimitBlockCount: 0,
+      sampleLimit: 100,
+      load: { sampleCount: 1 },
+      save: { sampleCount: 1 },
+      softScale: { load: { sampleCount: 0, p95Ms: null }, save: { sampleCount: 0, p95Ms: null } },
+    })
+    expect(metrics?.load.p95Ms).toEqual(expect.any(Number))
+    expect(metrics?.samples.find(sample => sample.operation === 'save')?.bytes).toBe(new TextEncoder().encode(JSON.stringify(document, null, 2)).byteLength)
+    expect(memory.data.get('/project/.modstudio/ai/conversation.json')).toBe(JSON.stringify(document, null, 2))
+    expect(JSON.stringify(metrics)).not.toContain('conversation.json')
   })
 
   it('加载并原子改写严格 v1 为当前 v4', async () => {
@@ -87,9 +119,11 @@ describe('ConversationRepository', () => {
       ...memory.files,
       readDirectory: async () => ({ status: 'error', error: 'EACCES' }),
     }
-    await expect(createConversationRepository(files).load('/project')).resolves.toEqual({
+    const repository = createConversationRepository(files)
+    await expect(repository.load('/project')).resolves.toEqual({
       status: 'failed', reason: 'EACCES', path: '/project/.modstudio/ai/conversation.json',
     })
+    expect(repository.getPerformanceMetrics?.().load.sampleCount).toBe(0)
   })
 
   it('隔离损坏活动文档后恢复最新有效备份', async () => {
@@ -310,6 +344,242 @@ describe('ConversationRepository', () => {
     }
   })
 
+  it('原子归档成功后重置 active，列表与读取仅暴露已校验文档', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const memory = memoryFiles({ [path]: JSON.stringify(original) })
+    const repository = createConversationRepository(memory.files, () => 5, () => 'archive-1')
+
+    const result = await repository.archiveAndReset('/project', original, '2026-09-02T00:00:00Z')
+
+    expect(result).toEqual({ ok: true, archiveId: 'archive-1' })
+    expect(JSON.parse(memory.data.get(path)!)).toEqual(createConversationDocument('2026-09-02T00:00:00.000Z'))
+    await expect(repository.listArchives('/project')).resolves.toEqual({
+      ok: true,
+      archives: [{ archiveId: 'archive-1', createdAt: original.createdAt, updatedAt: original.updatedAt, turnCount: 0, bytes: new TextEncoder().encode(JSON.stringify(original, null, 2)).byteLength }],
+    })
+    await expect(repository.readArchive('/project', 'archive-1')).resolves.toEqual({
+      ok: true, archiveId: 'archive-1', document: original, rawJson: JSON.stringify(original, null, 2),
+    })
+  })
+
+  it('归档写入或发布读回失败时不重置 active', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    for (const mode of ['write', 'readback'] as const) {
+      const memory = memoryFiles({ [path]: JSON.stringify(original) })
+      const base = memory.files
+      let archiveReads = 0
+      const files: ConversationFilePort = {
+        ...base,
+        writeFile: async (candidate, content) => mode === 'write' && candidate.includes('/archives/') ? false : base.writeFile(candidate, content),
+        readFile: async candidate => mode === 'readback' && candidate.endsWith('/archive-1.json') && ++archiveReads > 1
+          ? { status: 'found', value: '{tampered' }
+          : base.readFile(candidate),
+      }
+      const result = await createConversationRepository(files, () => 1, () => 'archive-1')
+        .archiveAndReset('/project', original, '2026-09-02T00:00:00Z')
+      expect(result).toMatchObject({ ok: false, certainty: 'unchanged' })
+      expect(JSON.parse(memory.data.get(path)!)).toEqual(original)
+    }
+  })
+
+  it('active reset 失败时保留已验证归档', async () => {
+    const path = '/project/.modstudio/ai/conversation.json'
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const memory = memoryFiles({ [path]: JSON.stringify(original) })
+    const base = memory.files
+    const files: ConversationFilePort = {
+      ...base,
+      rename: async (from, to) => from.includes('.tmp-') && to === path ? false : base.rename(from, to),
+    }
+
+    const result = await createConversationRepository(files, () => 1, () => 'archive-1')
+      .archiveAndReset('/project', original, '2026-09-02T00:00:00Z')
+
+    expect(result).toMatchObject({ ok: false, certainty: 'unchanged' })
+    expect(JSON.parse(memory.data.get(path)!)).toEqual(original)
+    expect(JSON.parse(memory.data.get('/project/.modstudio/ai/archives/archive-1.json')!)).toEqual(original)
+  })
+
+  it('归档读取拒绝路径穿越和未知 schema', async () => {
+    const memory = memoryFiles({
+      '/project/.modstudio/ai/archives/future.json': JSON.stringify({ schemaVersion: 99 }),
+    })
+    const repository = createConversationRepository(memory.files)
+    await expect(repository.readArchive('/project', '../conversation')).resolves.toMatchObject({ ok: false })
+    await expect(repository.readArchive('/project', 'future')).resolves.toMatchObject({ ok: false })
+    await expect(repository.listArchives('/project')).resolves.toEqual({ ok: true, archives: [] })
+  })
+
+  it('真实目录可原子归档、列出、读回并拒绝路径穿越', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-archive-'))
+    const active = join(root, '.modstudio/ai/conversation.json')
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    try {
+      await mkdir(join(root, '.modstudio/ai'), { recursive: true })
+      await writeFile(active, JSON.stringify(original), 'utf8')
+      const repository = createConversationRepository(realFiles(), () => 2, () => 'real-archive')
+      await expect(repository.archiveAndReset(root, original, '2026-09-02T00:00:00Z')).resolves.toEqual({ ok: true, archiveId: 'real-archive' })
+      await expect(repository.listArchives(root)).resolves.toMatchObject({ ok: true, archives: [{ archiveId: 'real-archive', turnCount: 0 }] })
+      await expect(repository.readArchive(root, 'real-archive')).resolves.toMatchObject({ ok: true, document: original })
+      await expect(repository.readArchive(root, '../conversation')).resolves.toMatchObject({ ok: false })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('读取并恢复可迁移隔离文档，保留原始隔离字节', async () => {
+    const path = '/project/.modstudio/ai/conversation.json.quarantine-42-old'
+    const current = createConversationDocument('2026-09-01T00:00:00Z')
+    const v1 = { schemaVersion: 1, turns: current.turns, createdAt: current.createdAt, updatedAt: current.updatedAt }
+    const raw = JSON.stringify(v1, null, 2)
+    const memory = memoryFiles({ [path]: raw })
+    const repository = createConversationRepository(memory.files)
+
+    const read = await repository.readQuarantine('/project', 'conversation.json.quarantine-42-old')
+    expect(read).toMatchObject({ ok: true, recoverable: true, migrated: true, document: current, rawJson: raw })
+    await expect(repository.listQuarantines('/project')).resolves.toEqual({
+      ok: true,
+      quarantines: [{ quarantineId: 'conversation.json.quarantine-42-old', reason: '支持的旧版本，可迁移恢复', schemaVersion: 1, bytes: new TextEncoder().encode(raw).byteLength, recoverable: true }],
+    })
+    await expect(repository.restoreQuarantine('/project', 'conversation.json.quarantine-42-old')).resolves.toEqual({
+      ok: true, quarantineId: 'conversation.json.quarantine-42-old', document: current, migrated: true,
+    })
+    expect(memory.data.get(path)).toBe(raw)
+    expect(JSON.parse(memory.data.get('/project/.modstudio/ai/conversation.json')!)).toEqual(current)
+  })
+
+  it('未来 schema quarantine 可导出原始内容但不可恢复', async () => {
+    const id = 'conversation.json.quarantine-future-88-future'
+    const path = '/project/.modstudio/ai/' + id
+    const raw = JSON.stringify({ schemaVersion: 99, opaque: 'preserve' })
+    const memory = memoryFiles({ [path]: raw })
+    const repository = createConversationRepository(memory.files)
+
+    await expect(repository.readQuarantine('/project', id)).resolves.toEqual({
+      ok: true, quarantineId: id, reason: '不支持的 schemaVersion', schemaVersion: 99,
+      recoverable: false, migrated: false, document: null, rawJson: raw,
+    })
+    await expect(repository.listQuarantines('/project')).resolves.toMatchObject({
+      ok: true, quarantines: [{ quarantineId: id, schemaVersion: 99, recoverable: false, bytes: new TextEncoder().encode(raw).byteLength }],
+    })
+    await expect(repository.restoreQuarantine('/project', id)).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
+    expect(memory.data.has(path)).toBe(true)
+    expect(memory.data.has('/project/.modstudio/ai/conversation.json')).toBe(false)
+  })
+
+  it('quarantine restore 在 active 存在时拒绝覆盖', async () => {
+    const id = 'conversation.json.quarantine-42-valid'
+    const quarantinePath = '/project/.modstudio/ai/' + id
+    const activePath = '/project/.modstudio/ai/conversation.json'
+    const active = createConversationDocument('2026-09-02T00:00:00Z')
+    const quarantined = createConversationDocument('2026-09-01T00:00:00Z')
+    const memory = memoryFiles({ [quarantinePath]: JSON.stringify(quarantined), [activePath]: JSON.stringify(active) })
+
+    await expect(createConversationRepository(memory.files).restoreQuarantine('/project', id)).resolves.toMatchObject({
+      ok: false, certainty: 'unchanged', error: '活动对话已存在，拒绝覆盖',
+    })
+    expect(JSON.parse(memory.data.get(activePath)!)).toEqual(active)
+    expect(JSON.parse(memory.data.get(quarantinePath)!)).toEqual(quarantined)
+  })
+
+  it('quarantine API 拒绝路径穿越与不匹配的 basename', async () => {
+    const repository = createConversationRepository(memoryFiles().files)
+    await expect(repository.readQuarantine('/project', '../conversation.json.quarantine-1-x')).resolves.toMatchObject({ ok: false })
+    await expect(repository.readQuarantine('/project', 'conversation.json.quarantine-x-id')).resolves.toMatchObject({ ok: false })
+    await expect(repository.restoreQuarantine('/project', 'conversation.json.quarantine-1-../../active')).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
+  })
+
+  it('隔离恢复期间若另一实例原子创建 active，不覆盖并发文档', async () => {
+    const id = 'conversation.json.quarantine-42-old'
+    const quarantinePath = '/project/.modstudio/ai/' + id
+    const activePath = '/project/.modstudio/ai/conversation.json'
+    const quarantineDocument = createConversationDocument('2026-09-01T00:00:00Z')
+    const concurrentDocument = createConversationDocument('2026-09-02T00:00:00Z')
+    const memory = memoryFiles({ [quarantinePath]: JSON.stringify(quarantineDocument) })
+    const files: ConversationFilePort = {
+      ...memory.files,
+      linkNoReplace: async (from, to) => {
+        if (to === activePath) memory.data.set(activePath, JSON.stringify(concurrentDocument))
+        return memory.files.linkNoReplace(from, to)
+      },
+    }
+    const quarantinedRaw = memory.data.get(quarantinePath)
+
+    await expect(createConversationRepository(files).restoreQuarantine('/project', id)).resolves.toMatchObject({
+      ok: false, certainty: 'unchanged', error: '活动对话已存在，拒绝覆盖',
+    })
+    expect(JSON.parse(memory.data.get(activePath)!)).toEqual(concurrentDocument)
+    expect(memory.data.get(quarantinePath)).toBe(quarantinedRaw)
+  })
+
+  it('原子写入失败时恢复不改 active 且保留 quarantine', async () => {
+    const id = 'conversation.json.quarantine-42-valid'
+    const quarantinePath = '/project/.modstudio/ai/' + id
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const raw = JSON.stringify(original)
+    const memory = memoryFiles({ [quarantinePath]: raw })
+    const files: ConversationFilePort = {
+      ...memory.files,
+      writeFile: async (path, content) => path.includes('/conversation.json.tmp-') ? false : memory.files.writeFile(path, content),
+    }
+
+    await expect(createConversationRepository(files).restoreQuarantine('/project', id)).resolves.toMatchObject({ ok: false, certainty: 'unchanged' })
+    expect(memory.data.has('/project/.modstudio/ai/conversation.json')).toBe(false)
+    expect(memory.data.get(quarantinePath)).toBe(raw)
+  })
+
+  it('真实目录可读取并恢复 quarantine，且源文件保留', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-quarantine-'))
+    const aiDirectory = join(root, '.modstudio/ai')
+    const id = 'conversation.json.quarantine-42-valid'
+    const quarantinePath = join(aiDirectory, id)
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const raw = JSON.stringify(original, null, 2)
+    try {
+      await mkdir(aiDirectory, { recursive: true })
+      await writeFile(quarantinePath, raw, 'utf8')
+      const repository = createConversationRepository(realFiles())
+      await expect(repository.listQuarantines(root)).resolves.toMatchObject({ ok: true, quarantines: [{ quarantineId: id, recoverable: true }] })
+      await expect(repository.restoreQuarantine(root, id)).resolves.toMatchObject({ ok: true, document: original, migrated: false })
+      expect(await readFile(quarantinePath, 'utf8')).toBe(raw)
+      expect(JSON.parse(await readFile(join(aiDirectory, 'conversation.json'), 'utf8'))).toEqual(original)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('真实目录隔离恢复在 no-replace 发布时保留并发创建的活动文档', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-restore-race-'))
+    const aiDirectory = join(root, '.modstudio/ai')
+    const id = 'conversation.json.quarantine-42-race'
+    const quarantinePath = join(aiDirectory, id)
+    const activePath = join(aiDirectory, 'conversation.json')
+    const quarantined = createConversationDocument('2026-09-01T00:00:00Z')
+    const concurrent = createConversationDocument('2026-09-02T00:00:00Z')
+    const base = realFiles()
+    const files: ConversationFilePort = {
+      ...base,
+      linkNoReplace: async (from, to) => {
+        if (to === activePath) await writeFile(to, JSON.stringify(concurrent, null, 2), 'utf8')
+        return base.linkNoReplace(from, to)
+      },
+    }
+    try {
+      await mkdir(aiDirectory, { recursive: true })
+      await writeFile(quarantinePath, JSON.stringify(quarantined, null, 2), 'utf8')
+
+      await expect(createConversationRepository(files).restoreQuarantine(root, id)).resolves.toMatchObject({
+        ok: false, certainty: 'unchanged', error: '活动对话已存在，拒绝覆盖',
+      })
+      expect(JSON.parse(await readFile(activePath, 'utf8'))).toEqual(concurrent)
+      expect(JSON.parse(await readFile(quarantinePath, 'utf8'))).toEqual(quarantined)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('真实目录上的 EACCES tagged error 阻止恢复猜测', async () => {
     const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-eacces-'))
     const base = realFiles()
@@ -329,6 +599,10 @@ describe('ConversationRepository', () => {
 
 function isMissing(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'ENOENT')
+}
+
+function isExists(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'EEXIST')
 }
 
 function errorMessage(error: unknown): string {

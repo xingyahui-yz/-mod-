@@ -13,6 +13,8 @@ import {
 } from './ProjectConversationContext'
 import { CardProposalPanel } from './CardProposalPanel'
 import type { ConversationProposalRejectionFeedback } from './proposalLifecycle'
+import type { ConversationArchiveSummary, ConversationArchiveReadResult, ConversationQuarantineSummary, ConversationQuarantineReadResult } from './conversationRepository'
+import type { ConversationPerformanceMetrics } from './conversationPerformance'
 
 const RETRIABLE_STATUSES = new Set<ConversationAttemptStatus>(['failed', 'cancelled', 'interrupted'])
 const NO_CARD_DOCUMENTS: readonly never[] = []
@@ -33,6 +35,25 @@ export function ProjectConversationDrawer({
   const [selectedQuickReply, setSelectedQuickReply] = useState<ConversationQuickReplySelection | null>(null)
   const [attachmentIds, setAttachmentIds] = useState<string[]>([])
   const [actionError, setActionError] = useState<string | null>(null)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [archiveBrowserOpen, setArchiveBrowserOpen] = useState(false)
+  const [archives, setArchives] = useState<readonly ConversationArchiveSummary[]>([])
+  const [isLoadingArchives, setIsLoadingArchives] = useState(false)
+  const [selectedArchiveId, setSelectedArchiveId] = useState<string | null>(null)
+  const [archiveRead, setArchiveRead] = useState<Extract<ConversationArchiveReadResult, { ok: true }> | null>(null)
+  const [performanceMetrics, setPerformanceMetrics] = useState<ConversationPerformanceMetrics | null>(null)
+  const [quarantineError, setQuarantineError] = useState<string | null>(null)
+  const [quarantines, setQuarantines] = useState<readonly ConversationQuarantineSummary[]>([])
+  const [isLoadingQuarantines, setIsLoadingQuarantines] = useState(false)
+  const [quarantineBrowserOpen, setQuarantineBrowserOpen] = useState(false)
+  const [selectedQuarantineId, setSelectedQuarantineId] = useState<string | null>(null)
+  const [quarantineRead, setQuarantineRead] = useState<Extract<ConversationQuarantineReadResult, { ok: true }> | null>(null)
+  const quarantineListRequest = useRef(0)
+  const quarantineReadRequest = useRef(0)
+  const archiveReadRequest = useRef(0)
+  const archiveListRequest = useRef(0)
+  const currentProjectRoot = useRef(view.projectRoot)
+  currentProjectRoot.current = view.projectRoot
   const [hasUnread, setHasUnread] = useState(false)
   const historyRef = useRef<HTMLDivElement>(null)
   const drawerRef = useRef<HTMLElement>(null)
@@ -65,6 +86,23 @@ export function ProjectConversationDrawer({
       setSelectedQuickReply(null)
       setAttachmentIds([])
       setActionError(null)
+      setArchiveError(null)
+      setArchiveBrowserOpen(false)
+      setPerformanceMetrics(null)
+      setArchives([])
+      setIsLoadingArchives(false)
+      setSelectedArchiveId(null)
+      setArchiveRead(null)
+      archiveReadRequest.current += 1
+      archiveListRequest.current += 1
+      setQuarantineError(null)
+      setQuarantines([])
+      setIsLoadingQuarantines(false)
+      setQuarantineBrowserOpen(false)
+      setSelectedQuarantineId(null)
+      setQuarantineRead(null)
+      quarantineListRequest.current += 1
+      quarantineReadRequest.current += 1
       setHasUnread(false)
       previousActivityCount.current = activityCount
       unreadBaselineReadyRef.current = view.loadStatus !== 'loading'
@@ -150,11 +188,13 @@ export function ProjectConversationDrawer({
   const availableDocuments = projectDocuments.filter(document => !attachmentIds.includes(document.card.id))
   const canSend = Boolean(
     view.projectRoot &&
+    !selectedArchiveId &&
     isCardCatalogReady &&
     view.loadStatus !== 'loading' &&
     view.loadStatus !== 'error' &&
     view.loadStatus !== 'quarantined' &&
     !view.persistenceError &&
+    view.capacity.level !== 'hard' &&
     !view.isBusy &&
     draft.trim(),
   )
@@ -214,6 +254,179 @@ export function ProjectConversationDrawer({
   const updateDraft = (value: string) => {
     setDraft(value)
     setSelectedQuickReply(null)
+  }
+
+
+  const refreshArchives = async () => {
+    const request = ++archiveListRequest.current
+    const requestedProjectRoot = view.projectRoot
+    setIsLoadingArchives(true)
+    setArchiveError(null)
+    try {
+      const result = await actions.listArchives()
+      if (request !== archiveListRequest.current || currentProjectRoot.current !== requestedProjectRoot) return
+      if (result.ok) setArchives(result.archives)
+      else setArchiveError(result.error)
+    } catch (error) {
+      if (request === archiveListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setArchiveError(error instanceof Error ? error.message : '读取归档列表失败')
+      }
+    } finally {
+      if (request === archiveListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setIsLoadingArchives(false)
+      }
+    }
+  }
+
+  const refreshQuarantines = async () => {
+    const request = ++quarantineListRequest.current
+    const requestedProjectRoot = view.projectRoot
+    setIsLoadingQuarantines(true)
+    setQuarantineError(null)
+    try {
+      const result = await actions.listQuarantines()
+      if (request !== quarantineListRequest.current || currentProjectRoot.current !== requestedProjectRoot) return
+      if (result.ok) setQuarantines(result.quarantines)
+      else setQuarantineError(result.error)
+    } catch (error) {
+      if (request === quarantineListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setQuarantineError(error instanceof Error ? error.message : '读取隔离文件列表失败')
+      }
+    } finally {
+      if (request === quarantineListRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setIsLoadingQuarantines(false)
+      }
+    }
+  }
+
+  const openArchiveBrowser = () => {
+    setArchiveBrowserOpen(true)
+    void refreshArchives()
+    void refreshQuarantines()
+  }
+
+  const showArchive = async (archiveId: string) => {
+    setSelectedArchiveId(archiveId)
+    setArchiveRead(null)
+    setArchiveError(null)
+    const request = ++archiveReadRequest.current
+    const requestedProjectRoot = view.projectRoot
+    try {
+      const result = await actions.readArchive(archiveId)
+      if (request !== archiveReadRequest.current || currentProjectRoot.current !== requestedProjectRoot) return
+      if (result.ok) setArchiveRead(result)
+      else setArchiveError(result.error)
+    } catch (error) {
+      if (request === archiveReadRequest.current && currentProjectRoot.current === requestedProjectRoot) {
+        setArchiveError(error instanceof Error ? error.message : '读取归档失败')
+      }
+    }
+  }
+
+  const leaveArchive = () => {
+    archiveReadRequest.current += 1
+    setSelectedArchiveId(null)
+    setArchiveRead(null)
+    setArchiveError(null)
+  }
+
+
+  const showQuarantine = async (quarantineId: string) => {
+    setSelectedQuarantineId(quarantineId)
+    setQuarantineRead(null)
+    setQuarantineError(null)
+    const request = ++quarantineReadRequest.current
+    try {
+      const result = await actions.readQuarantine(quarantineId)
+      if (request !== quarantineReadRequest.current || currentProjectRoot.current !== view.projectRoot) return
+      if (result.ok) setQuarantineRead(result)
+      else setQuarantineError(result.error)
+    } catch (error) {
+      if (request === quarantineReadRequest.current && currentProjectRoot.current === view.projectRoot) {
+        setQuarantineError(error instanceof Error ? error.message : '读取隔离文件失败')
+      }
+    }
+  }
+
+  const leaveQuarantine = () => {
+    quarantineReadRequest.current += 1
+    setSelectedQuarantineId(null)
+    setQuarantineRead(null)
+    setQuarantineError(null)
+  }
+
+  const exportQuarantine = () => {
+    if (!quarantineRead) return
+    const blob = new Blob([quarantineRead.rawJson], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'quarantine-' + safeArchiveFilename(quarantineRead.quarantineId) + '.json'
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  const canRestoreQuarantine = Boolean(
+    quarantineRead?.recoverable &&
+    !view.document &&
+    !view.isBusy &&
+    (view.loadStatus === 'quarantined' || view.loadStatus === 'missing'),
+  )
+
+  const restoreQuarantine = async () => {
+    if (!selectedQuarantineId || !canRestoreQuarantine) return
+    const confirmed = window.confirm(
+      '将隔离文档迁移并恢复为当前项目的活动对话。原始隔离文件会保留。确定恢复吗？',
+    )
+    if (!confirmed) return
+    setQuarantineError(null)
+    try {
+      const result = await actions.restoreQuarantine(selectedQuarantineId)
+      if (!result.ok) {
+        setQuarantineError(result.error)
+        return
+      }
+      await refreshQuarantines()
+    } catch (error) {
+      setQuarantineError(error instanceof Error ? error.message : '恢复隔离对话失败')
+    }
+  }
+
+  const exportArchive = () => {
+    if (!archiveRead) return
+    const blob = new Blob([archiveRead.rawJson], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'conversation-' + safeArchiveFilename(archiveRead.archiveId) + '.json'
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  const archiveAndReset = async () => {
+    if (view.isBusy || !view.document) return
+    const confirmed = window.confirm('将当前项目对话完整归档，并清空活动对话。归档只能只读查看或导出，不会自动恢复。确定继续吗？')
+    if (!confirmed) return
+    setArchiveError(null)
+    try {
+      const result = await actions.archiveAndReset()
+      if (!result.ok) {
+        setArchiveError(result.error)
+        return
+      }
+      setDraft('')
+      setSelectedQuickReply(null)
+      setAttachmentIds([])
+      leaveArchive()
+      setArchiveBrowserOpen(true)
+      await refreshArchives()
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : '归档并重置失败')
+    }
   }
 
   const previewUpdateProposal = async (proposalId: string, cardId: string) => {
@@ -348,7 +561,177 @@ export function ProjectConversationDrawer({
               {view.isBusy && <strong>处理中</strong>}
             </div>
 
-            <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label="对话历史">
+            {view.capacity.level === 'warning' && (
+              <div className="conversation-capacity-notice is-warning" role="status">
+                对话已达到容量提醒阈值：{formatCapacityBytes(view.capacity.bytes)} / 10 MB，
+                {view.capacity.messageCount.toLocaleString('zh-CN')} / 5,000 条消息。仍可继续对话；建议适时归档并重置。
+              </div>
+            )}
+            {view.capacity.level === 'hard' && (
+              <div className="conversation-capacity-notice is-hard" role="alert">
+                <strong>项目对话已达到硬容量上限，不能开始新一轮。</strong>
+                <span>
+                  {view.isBusy
+                    ? '当前轮次会完成或取消，之后将封锁新消息；请先归档并重置活动对话。'
+                    : '请先归档并重置活动对话，然后再继续。'}
+                </span>
+                <button type="button" onClick={openArchiveBrowser}>打开归档管理</button>
+              </div>
+            )}
+
+            <section className="conversation-archive-controls" aria-label="对话归档">
+              <button type="button" onClick={openArchiveBrowser} aria-expanded={archiveBrowserOpen}>
+                {archiveBrowserOpen ? '刷新归档列表' : '浏览归档' + (archives.length ? '（' + archives.length + '）' : '')}
+              </button>
+              {archiveBrowserOpen && (
+                <div className="conversation-archive-browser">
+                  <p className="conversation-archive-readonly-note">
+                    归档为只读历史，不会自动恢复到活动对话；可浏览或额外导出 JSON。
+                  </p>
+                  <button type="button" onClick={() => setPerformanceMetrics(actions.getPerformanceMetrics())}>刷新存储性能与 SQLite 评估数据</button>
+                  {performanceMetrics && <section aria-label="对话存储性能指标">
+                    <strong>本项目会话实例最近 {performanceMetrics.sampleLimit} 次可测量仓储样本（仅成功加载；保存包括已序列化的失败尝试）</strong>
+                    <p>常规活动文档仓储端到端耗时（含排队、解析/校验；不含归档重置）：加载 p95：{formatMetric(performanceMetrics.load.p95Ms)}（{performanceMetrics.load.sampleCount} 次）；原子保存 p95：{formatMetric(performanceMetrics.save.p95Ms)}（{performanceMetrics.save.sampleCount} 次）。</p>
+                    <p>软阈值规模样本（≥10 MB 或 ≥5,000 条消息）：加载 p95 {formatMetric(performanceMetrics.softScale.load.p95Ms)}（{performanceMetrics.softScale.load.sampleCount} 次）；保存 p95 {formatMetric(performanceMetrics.softScale.save.p95Ms)}（{performanceMetrics.softScale.save.sampleCount} 次）。</p>
+                    <p>若软阈值规模的加载或保存 p95 超过 500 ms，或硬容量限制拦截频繁，应立项评估 SQLite；当前项目会话内硬限制拦截 {performanceMetrics.hardLimitBlockCount} 次。样本仅保留于内存，不含对话文本，也不会持久化。</p>
+                  </section>}
+                  <button
+                    type="button"
+                    className="conversation-archive-reset-button"
+                    onClick={() => void archiveAndReset()}
+                    disabled={view.isBusy || !view.document || (!view.document.turns.length && !view.document.proposals.length) || view.loadStatus !== 'loaded'}
+                  >归档当前对话并重置</button>
+                  <button type="button" onClick={() => void refreshArchives()} disabled={isLoadingArchives}>
+                    {isLoadingArchives ? '正在读取…' : '刷新列表'}
+                  </button>
+                  {isLoadingArchives && <span role="status">正在读取归档列表…</span>}
+                  {!isLoadingArchives && archives.length === 0 && <p>尚无归档。</p>}
+                  {archives.length > 0 && (
+                    <ul aria-label="项目对话归档列表">
+                      {archives.map(archive => (
+                        <li key={archive.archiveId}>
+                          <button
+                            type="button"
+                            aria-label={'查看归档 ' + archive.archiveId}
+                            aria-pressed={selectedArchiveId === archive.archiveId}
+                            onClick={() => void showArchive(archive.archiveId)}
+                          >
+                            {new Date(archive.createdAt).toLocaleString('zh-CN')} · {archive.turnCount} 轮 · {formatCapacityBytes(archive.bytes)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {selectedArchiveId && (
+                    <div className="conversation-archive-viewer" aria-label="归档只读查看">
+                      <strong>归档只读查看 · {selectedArchiveId}</strong>
+                      <p>此内容不会替换或恢复活动对话。</p>
+                      <button type="button" onClick={leaveArchive}>返回当前对话</button>
+                      <button type="button" onClick={exportArchive} disabled={!archiveRead}>导出此归档 JSON</button>
+                      {archiveRead && <span>{archiveRead.document.turns.length} 轮历史</span>}
+                    </div>
+                  )}
+                  <section className="conversation-quarantines" aria-label="隔离对话文件">
+                    <h3>隔离文件</h3>
+                    <button
+                      type="button"
+                      aria-expanded={quarantineBrowserOpen}
+                      onClick={() => {
+                        setQuarantineBrowserOpen(true)
+                        void refreshQuarantines()
+                      }}
+                    >{quarantineBrowserOpen ? '刷新隔离文件列表' : '查看隔离文件'}</button>
+                    {quarantineBrowserOpen && (
+                      <>
+                        <p>隔离文件会保留原始内容；未知未来 schema 或损坏文件仅可导出，不可恢复。</p>
+                        <button type="button" onClick={() => void refreshQuarantines()} disabled={isLoadingQuarantines}>
+                          {isLoadingQuarantines ? '正在读取…' : '刷新隔离列表'}
+                        </button>
+                        {isLoadingQuarantines && <span role="status">正在读取隔离文件列表…</span>}
+                        {!isLoadingQuarantines && quarantines.length === 0 && <p>没有隔离文件。</p>}
+                        {quarantines.length > 0 && (
+                          <ul aria-label="隔离文件列表">
+                            {quarantines.map(item => (
+                              <li key={item.quarantineId}>
+                                <button
+                                  type="button"
+                                  aria-label={'查看隔离文件 ' + item.quarantineId}
+                                  aria-pressed={selectedQuarantineId === item.quarantineId}
+                                  onClick={() => void showQuarantine(item.quarantineId)}
+                                >
+                                  {item.quarantineId} · schema {item.schemaVersion ?? '未知'} · {formatCapacityBytes(item.bytes)} · {item.recoverable ? '可恢复' : '仅可导出'}
+                                </button>
+                                <small>{item.reason}</small>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {selectedQuarantineId && (
+                          <div className="conversation-quarantine-viewer" aria-label="隔离文件只读查看">
+                            <strong>隔离原始文档 · {selectedQuarantineId}</strong>
+                            {quarantineRead ? (
+                              <>
+                                <p>原因：{quarantineRead.reason}</p>
+                                <p>schemaVersion：{quarantineRead.schemaVersion ?? '未知或损坏'}</p>
+                                <p>状态：{quarantineRead.recoverable ? quarantineRead.migrated ? '可迁移恢复' : '可恢复' : '仅可导出，不能恢复'}</p>
+                                <button type="button" onClick={leaveQuarantine}>关闭隔离查看</button>
+                                <button type="button" onClick={exportQuarantine}>导出隔离原始 JSON</button>
+                                <button
+                                  type="button"
+                                  onClick={() => void restoreQuarantine()}
+                                  disabled={!canRestoreQuarantine}
+                                >确认恢复隔离对话</button>
+                                {view.document && <p role="status">当前活动对话包含内容，因此禁止用隔离文档覆盖。</p>}
+                                {!view.document && view.loadStatus !== 'quarantined' && view.loadStatus !== 'missing' && (
+                                  <p role="status">当前项目状态不允许恢复隔离文档。</p>
+                                )}
+                                <pre aria-label="隔离文件原始 JSON">{quarantineRead.rawJson}</pre>
+                              </>
+                            ) : <p>正在读取隔离文件…</p>}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </section>
+                </div>
+              )}
+            </section>
+            {archiveError && <div className="conversation-error" role="alert">归档操作失败：{archiveError}</div>}
+            {quarantineError && <div className="conversation-error" role="alert">隔离文件操作失败：{quarantineError}</div>}
+
+            <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label={selectedArchiveId ? '归档对话历史' : '对话历史'}>
+              {selectedArchiveId ? (archiveRead
+                ? <>
+                    {archiveRead.document.turns.length > 0
+                      ? archiveRead.document.turns.map(turn => (
+                        <ConversationTurnView
+                          key={turn.id}
+                          turn={turn}
+                          isLatest={false}
+                          isRunning={false}
+                          persistenceBlocked
+                          selectedQuickReply={null}
+                          onSelectQuickReply={() => undefined}
+                          onRetry={() => undefined}
+                        />
+                      ))
+                      : <div className="conversation-empty">该归档没有对话轮次。</div>}
+                    {archiveRead.document.proposals.length > 0 && (
+                      <section className="conversation-archive-proposals" aria-label="归档提案摘要">
+                        <h3>归档提案摘要（只读）</h3>
+                        <ul>
+                          {archiveRead.document.proposals.map(proposal => (
+                            <li key={proposal.id}>
+                              <strong>{proposal.operation === 'create' ? '创建新 Card' : '修改现有 Card'}</strong>
+                              <span>目标：@{proposal.targetCardId}</span>
+                              <span>状态：{proposalStatusLabel(proposal.status)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                  </>
+                : <div className="conversation-empty">正在读取归档历史…</div>) : <>
               <ConversationState view={view} />
               {turns.map(turn => (
                 <ConversationTurnView
@@ -378,6 +761,7 @@ export function ProjectConversationDrawer({
                   onRedoFromCurrent={redoFromCurrent}
                 />
               )}
+              </>}
             </div>
 
             {(view.persistenceError || actionError || (view.lastError && !view.isBusy)) && (
@@ -386,7 +770,7 @@ export function ProjectConversationDrawer({
               </div>
             )}
 
-            <form className="conversation-composer" onSubmit={event => void handleSubmit(event)}>
+            {!selectedArchiveId && <form className="conversation-composer" onSubmit={event => void handleSubmit(event)}>
               {attachedDocuments.length > 0 && (
                 <div className="conversation-attachments" aria-label="已添加的 Card 上下文">
                   {attachedDocuments.map(document => (
@@ -437,7 +821,7 @@ export function ProjectConversationDrawer({
                   placeholder={composerPlaceholder(view.loadStatus, isCardCatalogReady)}
                   aria-label="发送给项目 AI 的消息"
                   rows={3}
-                  disabled={!isCardCatalogReady || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.isBusy}
+                  disabled={!isCardCatalogReady || view.loadStatus === 'loading' || view.loadStatus === 'error' || view.loadStatus === 'quarantined' || Boolean(view.persistenceError) || view.capacity.level === 'hard' || view.isBusy}
                 />
                 {view.isBusy ? (
                   <button type="button" className="conversation-send-button is-cancel" onClick={() => void actions.cancel()}>
@@ -452,9 +836,11 @@ export function ProjectConversationDrawer({
               <p className="conversation-composer-hint">
                 {view.projectRoot && !isCardCatalogReady
                   ? '正在等待当前项目 Card 目录加载完成…'
-                  : 'Enter 发送 · Shift + Enter 换行 · 附件仅记录发送时版本'}
+                  : view.capacity.level === 'hard'
+                    ? '容量达到硬限制；请先归档并重置后再发送'
+                    : 'Enter 发送 · Shift + Enter 换行 · 附件仅记录发送时版本'}
               </p>
-            </form>
+            </form>}
           </div>
         )}
       </aside>
@@ -559,12 +945,36 @@ function ConversationTurnView({
   )
 }
 
+function proposalStatusLabel(status: string): string {
+  switch (status) {
+    case 'pending': return '待确认'
+    case 'accepted': return '已接受'
+    case 'rejected': return '已拒绝'
+    case 'stale': return '已过期'
+    case 'superseded': return '已被替代'
+    case 'reverted': return '已撤销'
+    default: return status
+  }
+}
+
+function safeArchiveFilename(archiveId: string): string {
+  return archiveId.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'archive'
+}
+
 function projectName(projectRoot: string): string {
   return projectRoot.split(/[/\\]/).filter(Boolean).at(-1) ?? projectRoot
 }
 
 function shortRevision(revision: string): string {
   return revision.slice(0, 8)
+}
+
+function formatMetric(value: number | null): string {
+  return value === null ? '暂无样本' : `${Math.round(value)} ms`
+}
+
+function formatCapacityBytes(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)} MB`
 }
 
 function composerPlaceholder(status: ProjectConversationView['loadStatus'], isCardCatalogReady: boolean): string {
@@ -610,6 +1020,10 @@ const DRAWER_STYLES = `
   .conversation-project-status { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 7px 18px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 11px; }
   .conversation-project-status > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conversation-project-status strong { margin-left: auto; color: color-mix(in srgb, var(--accent) 70%, #7fb8e8); font-weight: 600; }
+  .conversation-capacity-notice { display: flex; flex-direction: column; gap: 3px; margin: 8px 12px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; font-size: 10px; line-height: 1.45; }
+  .conversation-capacity-notice.is-warning { border-color: color-mix(in srgb, #d5a64c 48%, var(--border)); background: color-mix(in srgb, var(--bg-secondary) 94%, #d5a64c 6%); color: var(--text-secondary); }
+  .conversation-capacity-notice.is-hard { border-color: color-mix(in srgb, var(--accent) 58%, var(--border)); background: color-mix(in srgb, var(--bg-secondary) 90%, var(--accent) 10%); color: var(--text-primary); }
+  .conversation-capacity-notice strong { font-size: 11px; }
   .conversation-status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-secondary); opacity: .42; }
   .conversation-status-dot.is-active, [data-running="true"] .conversation-status-dot { background: #6db9e9; opacity: 1; box-shadow: 0 0 0 4px rgba(109, 185, 233, .12); animation: conversation-pulse 1.3s ease-in-out infinite; }
   .conversation-status-dot.has-unread { background: #75b6df; opacity: 1; box-shadow: 0 0 0 3px rgba(117,182,223,.12); }

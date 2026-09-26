@@ -18,6 +18,7 @@ export function ThemeToggle() {
       className="theme-toggle"
       onClick={handleToggle}
       title={theme === 'dark' ? '切换到亮色' : '切换到暗色'}
+      aria-label={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
     >
       {theme === 'dark' ? '☀️' : '🌙'}
     </button>

@@ -4,8 +4,9 @@ import { createEmptyGraph } from '../node-editor/graph'
 import { cardCatalogActions, getCardCatalogView } from '../card/cardCatalog'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
-import type { ConversationDocument } from './conversationDocument'
-import type { ConversationLoadResult, ConversationRepository } from './conversationRepository'
+import { createConversationDocument, type ConversationDocument } from './conversationDocument'
+import type { ConversationCapacityLimits } from './conversationCapacity'
+import type { ConversationArchiveListResult, ConversationLoadResult, ConversationRepository } from './conversationRepository'
 import { ProjectConversation, type ConversationModel } from './projectConversation'
 import { ProjectConversationProvider } from './ProjectConversationContext'
 import { ProjectConversationDrawer } from './ProjectConversationDrawer'
@@ -25,6 +26,367 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProjectConversationDrawer', () => {
+  it('归档管理展示当前项目会话存储 p95 与 SQLite 评估阈值', async () => {
+    const repository = memoryRepository({ status: 'missing' })
+    repository.getPerformanceMetrics = vi.fn(() => ({
+      scope: 'current-project-session', hardLimitBlockCount: 2, sampleLimit: 100,
+      load: { sampleCount: 3, p95Ms: 120 }, save: { sampleCount: 2, p95Ms: 240 },
+      softScale: { criteria: '>=10MB or >=5000 messages', load: { sampleCount: 1, p95Ms: 620 }, save: { sampleCount: 1, p95Ms: 520 } },
+      samples: [],
+    }))
+    renderDrawer('/mods/quiet-depth', repository, successModel('unused'))
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(screen.getByRole('button', { name: '刷新存储性能与 SQLite 评估数据' }))
+
+    expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('120 ms')
+    expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('超过 500 ms')
+    expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('硬限制拦截 2 次')
+  })
+
+  it('可导出已知旧 schema 隔离原文，并二次确认后恢复且保留原隔离文件', async () => {
+    const repository = memoryRepository({
+      status: 'quarantined',
+      reason: '旧 schema，可迁移',
+      path: '/mods/quiet-depth/.modstudio/ai/conversation.json.quarantine-1-id',
+    })
+    const quarantineId = 'conversation.json.quarantine-1-old'
+    const migratedDocument = completedDocument()
+    const rawJson = JSON.stringify({ schemaVersion: 3, turns: [{ id: 'legacy' }] })
+    const quarantineSummary = {
+      quarantineId,
+      reason: '支持的旧版本，可迁移恢复',
+      schemaVersion: 3,
+      bytes: new TextEncoder().encode(rawJson).byteLength,
+      recoverable: true,
+    }
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [quarantineSummary] }))
+    repository.readQuarantine = vi.fn(async (_projectRoot, id) => ({
+      ok: true as const,
+      quarantineId: id,
+      reason: quarantineSummary.reason,
+      schemaVersion: 3,
+      recoverable: true,
+      migrated: true,
+      document: migratedDocument,
+      rawJson,
+    }))
+    repository.restoreQuarantine = vi.fn(async (_projectRoot, id) => ({
+      ok: true as const,
+      quarantineId: id,
+      document: migratedDocument,
+      migrated: true,
+    }))
+    const createObjectURL = vi.fn((blob: Blob) => { exportedBlob = blob; return 'blob:quarantine' })
+    const revokeObjectURL = vi.fn()
+    let exportedBlob: Blob | null = null
+    let downloadedFilename = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { downloadedFilename = this.download })
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+    const viewer = await screen.findByLabelText('隔离文件只读查看')
+    expect(viewer.textContent).toContain('schemaVersion：3')
+    expect(viewer.textContent).toContain('可迁移恢复')
+    expect(screen.getByLabelText('隔离文件原始 JSON').textContent).toBe(rawJson)
+
+    fireEvent.click(screen.getByRole('button', { name: '导出隔离原始 JSON' }))
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    expect(downloadedFilename).toBe('quarantine-conversation.json.quarantine-1-old.json')
+    if (!exportedBlob) throw new Error('隔离原始 JSON Blob 未导出')
+    const exportedText = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(exportedBlob!)
+    })
+    expect(exportedText).toBe(rawJson)
+
+    fireEvent.click(screen.getByRole('button', { name: '确认恢复隔离对话' }))
+    expect(confirm).toHaveBeenCalledOnce()
+    await waitFor(() => expect(repository.restoreQuarantine).toHaveBeenCalledWith('/mods/quiet-depth', quarantineId))
+    expect(await screen.findByText(/已从隔离文档恢复并迁移版本/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '查看隔离文件 ' + quarantineId })).toBeTruthy()
+    expect(repository.listQuarantines).toHaveBeenCalledTimes(3)
+  })
+
+  it('未来 schema 隔离文件只可查看和导出，恢复按钮禁用', async () => {
+    const repository = memoryRepository({ status: 'quarantined', reason: '未来 schema', path: '/mods/p/future' })
+    const quarantineId = 'conversation.json.quarantine-future-2-id'
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [{
+      quarantineId, reason: '未来 schemaVersion 99', schemaVersion: 99, bytes: 40, recoverable: false,
+    }] }))
+    repository.readQuarantine = vi.fn(async () => ({
+      ok: true as const,
+      quarantineId,
+      reason: '未知未来 schema，不可安全迁移',
+      schemaVersion: 99,
+      recoverable: false,
+      migrated: false,
+      document: null,
+      rawJson: '{"schemaVersion":99,"future":true}',
+    }))
+    const createObjectURL = vi.fn(() => 'blob:future')
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    renderDrawer('/mods/p', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+    expect(await screen.findByText('状态：仅可导出，不能恢复')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '确认恢复隔离对话' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '导出隔离原始 JSON' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(repository.restoreQuarantine).not.toHaveBeenCalled()
+  })
+
+  it('取消隔离恢复二次确认时不调用 restoreQuarantine', async () => {
+    const repository = memoryRepository({ status: 'quarantined', reason: '旧文档', path: '/mods/p/old' })
+    const quarantineId = 'conversation.json.quarantine-3-old'
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [{
+      quarantineId, reason: '支持旧版本', schemaVersion: 3, bytes: 12, recoverable: true,
+    }] }))
+    repository.readQuarantine = vi.fn(async () => ({
+      ok: true as const,
+      quarantineId,
+      reason: '支持旧版本',
+      schemaVersion: 3,
+      recoverable: true,
+      migrated: true,
+      document: completedDocument(),
+      rawJson: '{"schemaVersion":3}',
+    }))
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    renderDrawer('/mods/p', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+    fireEvent.click(await screen.findByRole('button', { name: '确认恢复隔离对话' }))
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(repository.restoreQuarantine).not.toHaveBeenCalled()
+    expect(screen.getByText('对话已进入只读隔离')).toBeTruthy()
+  })
+
+  it('活动对话已有内容时禁止覆盖恢复隔离文档', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    const quarantineId = 'conversation.json.quarantine-4-old'
+    repository.listQuarantines = vi.fn(async () => ({ ok: true as const, quarantines: [{
+      quarantineId, reason: '另一个旧文档', schemaVersion: 3, bytes: 12, recoverable: true,
+    }] }))
+    repository.readQuarantine = vi.fn(async () => ({
+      ok: true as const,
+      quarantineId,
+      reason: '支持旧版本',
+      schemaVersion: 3,
+      recoverable: true,
+      migrated: true,
+      document: completedDocument(),
+      rawJson: '{"schemaVersion":3}',
+    }))
+    renderDrawer('/mods/p', repository, successModel('不会调用'))
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件' }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看隔离文件 ' + quarantineId }))
+
+    expect(await screen.findByText('当前活动对话包含内容，因此禁止用隔离文档覆盖。')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '确认恢复隔离对话' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(repository.restoreQuarantine).not.toHaveBeenCalled()
+  })
+  it('切换项目后迟到的旧归档列表不会覆盖新项目列表', async () => {
+    const delayedOldList = deferred<ConversationArchiveListResult>()
+    const oldRepository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    oldRepository.listArchives = vi.fn(() => delayedOldList.promise)
+    const newRepository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    newRepository.listArchives = vi.fn(async () => ({
+      ok: true as const,
+      archives: [{ archiveId: 'new-project-archive', createdAt: NOW, updatedAt: NOW, turnCount: 1, bytes: 20 }],
+    }))
+    const conversations = new Map([
+      ['/mods/old', new ProjectConversation('/mods/old', oldRepository, successModel('不会调用'))],
+      ['/mods/new', new ProjectConversation('/mods/new', newRepository, successModel('不会调用'))],
+    ])
+    const factory = (projectRoot: string) => conversations.get(projectRoot)!
+    const rendered = render(
+      <ProjectConversationProvider projectRoot="/mods/old" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    await screen.findByText('先明确玩法主线。')
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    await waitFor(() => expect(oldRepository.listArchives).toHaveBeenCalledOnce())
+
+    rendered.rerender(
+      <ProjectConversationProvider projectRoot="/mods/new" createConversation={factory}>
+        <ProjectConversationDrawer />
+      </ProjectConversationProvider>,
+    )
+    await screen.findByText('先明确玩法主线。')
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    expect(await screen.findByRole('button', { name: '查看归档 new-project-archive' })).toBeTruthy()
+
+    await act(async () => { delayedOldList.resolve({
+      ok: true,
+      archives: [{ archiveId: 'stale-old-project-archive', createdAt: NOW, updatedAt: NOW, turnCount: 99, bytes: 99 }],
+    }); await delayedOldList.promise })
+    expect(screen.getByRole('button', { name: '查看归档 new-project-archive' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '查看归档 stale-old-project-archive' })).toBeNull()
+  })
+  it('归档只读浏览仅显示历史，不恢复活动对话，并可安全导出 JSON', async () => {
+    const active = completedDocument()
+    const repository = memoryRepository({ status: 'loaded', document: active })
+    const archived = structuredClone(active)
+    archived.proposals = [proposal('archived-p1', cardDocument('ArchivedCard', '仅供历史查看'), 'update', 'pending', 'base-revision')]
+    const rawJson = JSON.stringify(archived)
+    repository.listArchives = vi.fn(async () => ({
+      ok: true as const,
+      archives: [{ archiveId: '../archive:one', createdAt: NOW, updatedAt: NOW, turnCount: 1, bytes: rawJson.length }],
+    }))
+    repository.readArchive = vi.fn(async () => ({
+      ok: true as const,
+      archiveId: '../archive:one',
+      document: structuredClone(archived),
+      rawJson,
+    }))
+    const createObjectURL = vi.fn(() => 'blob:archive')
+    const revokeObjectURL = vi.fn()
+    let downloadedFilename = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { downloadedFilename = this.download })
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL })
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+
+    fireEvent.click(await screen.findByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看归档 ../archive:one' }))
+
+    expect(await screen.findByLabelText('归档只读查看')).toBeTruthy()
+    expect(screen.getByText('此内容不会替换或恢复活动对话。')).toBeTruthy()
+    expect(screen.getByRole('log', { name: '归档对话历史' }).textContent).toContain('我们先做什么？')
+    const archivedProposals = screen.getByRole('region', { name: '归档提案摘要' })
+    expect(archivedProposals.textContent).toContain('修改现有 Card')
+    expect(archivedProposals.textContent).toContain('@ArchivedCard')
+    expect(archivedProposals.textContent).toContain('待确认')
+    expect(screen.queryByRole('button', { name: /接受提案|拒绝提案|创建并接受/ })).toBeNull()
+    expect(screen.queryByLabelText('发送给项目 AI 的消息')).toBeNull()
+    expect(repository.current).toEqual(active)
+
+    fireEvent.click(screen.getByRole('button', { name: '导出此归档 JSON' }))
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    expect(downloadedFilename).toBe('conversation-.._archive_one.json')
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:archive'))
+  })
+
+  it('归档确认取消时不更改活动对话或草稿', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '保留这份草稿' } })
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(repository.archiveAndReset).not.toHaveBeenCalled()
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('保留这份草稿')
+    expect(repository.current?.turns).toHaveLength(1)
+  })
+
+  it('确认后归档并清空活动草稿和附件，再刷新归档列表', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '待归档的问题' } })
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
+
+    await waitFor(() => expect(repository.archiveAndReset).toHaveBeenCalledOnce())
+    expect(await screen.findByRole('button', { name: '查看归档 archive-1' })).toBeTruthy()
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('')
+    expect(repository.current?.turns).toEqual([])
+    expect(repository.listArchives).toHaveBeenCalled()
+  })
+
+  it('归档失败显示错误且不清空活动草稿', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
+    repository.archiveAndReset = vi.fn(async () => ({ ok: false as const, error: '磁盘不可写', certainty: 'unchanged' as const }))
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '失败后仍保留' } })
+    fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
+
+    expect(await screen.findByText('归档操作失败：磁盘不可写')).toBeTruthy()
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('失败后仍保留')
+    expect(repository.current?.turns).toHaveLength(1)
+  })
+  it('容量 warning 显示非阻塞提醒且仍允许发送', async () => {
+    const model = successModel('继续讨论。')
+    renderDrawer(
+      '/mods/quiet-depth',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      model,
+      undefined,
+      { warningBytes: Number.MAX_SAFE_INTEGER, warningMessages: 1, hardBytes: Number.MAX_SAFE_INTEGER, hardMessages: 100 },
+    )
+
+    const notice = await screen.findByRole('status')
+    expect(notice.textContent).toContain('10 MB')
+    expect(notice.textContent).toContain('5,000 条消息')
+    const composer = screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement
+    expect(composer.disabled).toBe(false)
+    fireEvent.change(composer, { target: { value: '继续聊' } })
+    expect((screen.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('容量 hard 显示归档重置要求并禁用新消息', async () => {
+    const model = successModel('不应调用')
+    renderDrawer(
+      '/mods/quiet-depth',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      model,
+      undefined,
+      { warningBytes: Number.MAX_SAFE_INTEGER, warningMessages: 1, hardBytes: Number.MAX_SAFE_INTEGER, hardMessages: 1 },
+    )
+
+    expect((await screen.findByRole('alert')).textContent).toContain('请先归档并重置活动对话')
+    expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: '发送' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(model.respond).not.toHaveBeenCalled()
+  })
+
+  it('运行中达到 hard 时说明当前轮次收尾后封锁，停止按钮仍可用', async () => {
+    let resolveModel: ((value: { success: true; content: string }) => void) | null = null
+    const model: ConversationModel = { respond: vi.fn(() => new Promise(resolve => { resolveModel = resolve })) }
+    renderDrawer(
+      '/mods/quiet-depth',
+      memoryRepository({ status: 'loaded', document: completedDocument() }),
+      model,
+      undefined,
+      { warningBytes: Number.MAX_SAFE_INTEGER, warningMessages: 1, hardBytes: Number.MAX_SAFE_INTEGER, hardMessages: 2 },
+    )
+
+    const composer = await screen.findByLabelText('发送给项目 AI 的消息')
+    fireEvent.change(composer, { target: { value: '开始下一轮' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('当前轮次会完成或取消，之后将封锁新消息')
+    const stop = screen.getByRole('button', { name: '停止' }) as HTMLButtonElement
+    expect(stop.disabled).toBe(false)
+    fireEvent.click(stop)
+    expect(await screen.findByText('本次回复已取消')).toBeTruthy()
+    await act(async () => { resolveModel?.({ success: true, content: responseText('迟到') }) })
+  })
   it('缺少历史时不创建空文档，首次消息完成后显示回复', async () => {
     const repository = memoryRepository({ status: 'missing' })
     const model = successModel('我们先确定项目主题。')
@@ -595,6 +957,7 @@ function renderDrawer(
   repository: ReturnType<typeof memoryRepository>,
   model: ConversationModel,
   onOpenCard?: (cardId: string) => void,
+  capacityLimits?: ConversationCapacityLimits,
 ) {
   const catalog = getCardCatalogView()
   if (catalog.sourceProjectRoot === null && catalog.documents.length === 0) {
@@ -610,6 +973,7 @@ function renderDrawer(
       const catalog = getCardCatalogView()
       return catalog.sourceProjectRoot === projectRoot ? catalog.documents : []
     },
+    capacityLimits,
   )
   return render(
     <ProjectConversationProvider
@@ -634,6 +998,7 @@ function successfulCardFiles(): ProposalCardPersistencePort {
 
 function memoryRepository(initial: ConversationLoadResult) {
   let current = initial.status === 'loaded' ? initial.document : null
+  const archived = new Map<string, ConversationDocument>()
   const repository: ConversationRepository & { current: ConversationDocument | null } = {
     get current() { return current },
     set current(value) { current = value },
@@ -642,6 +1007,31 @@ function memoryRepository(initial: ConversationLoadResult) {
       current = structuredClone(document)
       return { ok: true as const }
     }),
+    archiveAndReset: vi.fn(async (_projectRoot, document) => {
+      const archiveId = 'archive-' + String(archived.size + 1)
+      archived.set(archiveId, structuredClone(document))
+      current = createConversationDocument(document.updatedAt)
+      return { ok: true as const, archiveId }
+    }),
+    listArchives: vi.fn(async () => ({
+      ok: true as const,
+      archives: [...archived].map(([archiveId, document]) => ({
+        archiveId,
+        createdAt: document.createdAt,
+        updatedAt: document.updatedAt,
+        turnCount: document.turns.length,
+        bytes: JSON.stringify(document).length,
+      })),
+    })),
+    readArchive: vi.fn(async archiveId => {
+      const document = archived.get(archiveId)
+      return document
+        ? { ok: true as const, archiveId, document: structuredClone(document), rawJson: JSON.stringify(document) }
+        : { ok: false as const, error: '归档不存在' }
+    }),
+    listQuarantines: vi.fn(async () => ({ ok: true as const, quarantines: [] })),
+    readQuarantine: vi.fn(async (_projectRoot, quarantineId) => ({ ok: false as const, error: `missing quarantine: ${quarantineId}` })),
+    restoreQuarantine: vi.fn(async () => ({ ok: false as const, error: 'not used', certainty: 'unchanged' as const })),
   }
   return repository
 }

@@ -45,6 +45,20 @@ export function sanitizeProviderError(error: unknown, secrets: readonly string[]
 export interface LLMConfig {
   apiKey: string
   baseUrl?: string
+  model?: string
+  name?: string
+  protocol?: import('../providerCatalog').LLMProtocol
+  keyPlacement?: import('../providerCatalog').ApiKeyPlacement
+  chatPath?: string
+  modelsPath?: string
+  apiKeyQueryParam?: string
+  extraHeadersJson?: string
+  extraQueryJson?: string
+  extraBodyJson?: string
+  temperature?: number
+  maxTokens?: number
+  topP?: number
+  enableThinking?: boolean
 }
 
 export abstract class BaseLLMAdapter {

@@ -5079,15 +5079,15 @@
           <text data-node-label="" x="88" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">编辑 Card</text>
         </g>
 
-        <g id="node-commit" data-node-id="commit" data-node-label="提交 Card 编辑事务" tabindex="0" role="button" aria-label="聚焦提交 Card 编辑事务，文本 / 拖动 / 离散操作, CardEditor / CardCatalog › 编辑" aria-pressed="false" data-node-kind="backend" data-node-sublabel="文本 / 拖动 / 离散操作" data-node-context="CardEditor / CardCatalog › 编辑">
-          <title>提交 Card 编辑事务 · 文本 / 拖动 / 离散操作 · CardEditor / CardCatalog › 编辑</title>
+        <g id="node-commit" data-node-id="commit" data-node-label="提交 Card 编辑事务" tabindex="0" role="button" aria-label="聚焦提交 Card 编辑事务，历史事务；防抖自动保存, CardEditor / CardCatalog › 编辑" aria-pressed="false" data-node-kind="backend" data-node-sublabel="历史事务；防抖自动保存" data-node-context="CardEditor / CardCatalog › 编辑">
+          <title>提交 Card 编辑事务 · 历史事务；防抖自动保存 · CardEditor / CardCatalog › 编辑</title>
           <rect x="145" y="217" width="150" height="52" rx="6" class="c-mask"/>
           <rect x="145" y="217" width="150" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(151 223) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="220" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">提交 Card 编辑事务</text>
-          <text data-detail="context" x="220" y="255" class="t-muted" font-size="8" text-anchor="middle">文本 / 拖动 / 离散操作</text>
+          <text data-detail="context" x="220" y="255" class="t-muted" font-size="8" text-anchor="middle">历史事务；防抖自动保存</text>
         </g>
 
         <g id="node-autosave" data-node-id="autosave" data-node-label="自动保存 CardDocument" tabindex="0" role="button" aria-label="聚焦自动保存 CardDocument，.modstudio/cards/&lt;id&gt;.json, 项目源数据与生成服务 › 保存" aria-pressed="false" data-node-kind="database" data-node-sublabel=".modstudio/cards/&lt;id&gt;.json" data-node-context="项目源数据与生成服务 › 保存">
@@ -5113,38 +5113,39 @@
           <text data-node-label="" x="430" y="114" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">用户点击显式生成</text>
         </g>
 
-        <g id="node-validate" data-node-id="validate" data-node-label="生成语义预检" tabindex="0" role="button" aria-label="聚焦生成语义预检，CardEditor / CardCatalog › 生成" aria-pressed="false" data-node-kind="security" data-node-context="CardEditor / CardCatalog › 生成">
-          <title>生成语义预检 · CardEditor / CardCatalog › 生成</title>
+        <g id="node-validate" data-node-id="validate" data-node-label="预检 / 覆盖保护" tabindex="0" role="button" aria-label="聚焦预检 / 覆盖保护，语义校验 + 备份确认, CardEditor / CardCatalog › 生成" aria-pressed="false" data-node-kind="security" data-node-sublabel="语义校验 + 备份确认" data-node-context="CardEditor / CardCatalog › 生成">
+          <title>预检 / 覆盖保护 · 语义校验 + 备份确认 · CardEditor / CardCatalog › 生成</title>
           <rect x="445" y="217" width="110" height="52" rx="6" class="c-mask"/>
           <rect x="445" y="217" width="110" height="52" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(451 223) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" x="500" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">生成语义预检</text>
+          <text data-node-label="" data-detail-anchor="" x="500" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">预检 / 覆盖保护</text>
+          <text data-detail="context" x="500" y="255" class="t-muted" font-size="8" text-anchor="middle">语义校验 + 备份确认</text>
         </g>
 
-        <g id="node-writeArtifact" data-node-id="writeArtifact" data-node-label="原子写入 C#" tabindex="0" role="button" aria-label="聚焦原子写入 C#，备份并读回校验, 项目源数据与生成服务 › 生成" aria-pressed="false" data-node-kind="backend" data-node-sublabel="备份并读回校验" data-node-context="项目源数据与生成服务 › 生成">
-          <title>原子写入 C# · 备份并读回校验 · 项目源数据与生成服务 › 生成</title>
+        <g id="node-writeArtifact" data-node-id="writeArtifact" data-node-label="原子写入 C#" tabindex="0" role="button" aria-label="聚焦原子写入 C#，临时文件、原子替换、读回, 项目源数据与生成服务 › 生成" aria-pressed="false" data-node-kind="backend" data-node-sublabel="临时文件、原子替换、读回" data-node-context="项目源数据与生成服务 › 生成">
+          <title>原子写入 C# · 临时文件、原子替换、读回 · 项目源数据与生成服务 › 生成</title>
           <rect x="572.5" y="341" width="105" height="52" rx="6" class="c-mask"/>
           <rect x="572.5" y="341" width="105" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(578.5 347) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="625" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">原子写入 C#</text>
-          <text data-detail="context" x="625" y="379" class="t-muted" font-size="8" text-anchor="middle">备份并读回校验</text>
+          <text data-detail="context" x="625" y="379" class="t-muted" font-size="6.7" text-anchor="middle">临时文件、原子替换、读回</text>
         </g>
 
-        <g id="node-markSynced" data-node-id="markSynced" data-node-label="记录生成指纹" tabindex="0" role="button" aria-label="聚焦记录生成指纹，三类哈希, CardEditor / CardCatalog › 生成" aria-pressed="false" data-node-kind="database" data-node-sublabel="三类哈希" data-node-context="CardEditor / CardCatalog › 生成">
-          <title>记录生成指纹 · 三类哈希 · CardEditor / CardCatalog › 生成</title>
+        <g id="node-markSynced" data-node-id="markSynced" data-node-label="保存生成指纹" tabindex="0" role="button" aria-label="聚焦保存生成指纹，写回 CardDocument, CardEditor / CardCatalog › 生成" aria-pressed="false" data-node-kind="database" data-node-sublabel="写回 CardDocument" data-node-context="CardEditor / CardCatalog › 生成">
+          <title>保存生成指纹 · 写回 CardDocument · CardEditor / CardCatalog › 生成</title>
           <rect x="575" y="217" width="100" height="52" rx="6" class="c-mask"/>
           <rect x="575" y="217" width="100" height="52" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(581 223) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="625" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">记录生成指纹</text>
-          <text data-detail="context" x="625" y="255" class="t-muted" font-size="8" text-anchor="middle">三类哈希</text>
+          <text data-node-label="" data-detail-anchor="" x="625" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">保存生成指纹</text>
+          <text data-detail="context" x="625" y="255" class="t-muted" font-size="8" text-anchor="middle">写回 CardDocument</text>
         </g>
 
         <g id="node-invalid" data-node-id="invalid" data-node-label="校验失败" tabindex="0" role="button" aria-label="聚焦校验失败，保留草稿和旧 C#, 异常与恢复 › 生成" aria-pressed="false" data-node-kind="security" data-node-sublabel="保留草稿和旧 C#" data-node-context="异常与恢复 › 生成">
@@ -5409,7 +5410,7 @@
         </div>
         <ul>
           <li>&bull; 草稿保存失败不回滚内存编辑</li>
-          <li>&bull; 生成失败不覆盖上一次有效 C#</li>
+          <li>&bull; 外部修改或未跟踪 C# 须先备份确认，禁止静默覆盖</li>
           <li>&bull; 定位或修复问题后由用户手动重试</li>
         </ul>
       </div>
@@ -5421,7 +5422,7 @@
         </div>
         <ul>
           <li>&bull; 保存与生成不进入 undo/redo</li>
-          <li>&bull; 普通编辑、undo、redo 都使生成指纹失效</li>
+          <li>&bull; 编辑、undo、redo 都使生成指纹失效</li>
         </ul>
       </div>
     </div>
