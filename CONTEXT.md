@@ -1,7 +1,7 @@
 # Mod Studio 领域模型（CONTEXT）
 
-> 最后更新：2026-09-23 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
-> 状态：v1.93 — 由项目所有者与协作 agent 通过开发迭代同步
+> 最后更新：2026-09-25 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
+> 状态：v1.94 — 由项目所有者与协作 agent 通过开发迭代同步
 
 ## 1. 项目目标（Goal）
 
@@ -238,7 +238,7 @@ MyMod/                          ← 用户项目根
 ### 6.2 未实现（按优先级排序）
 
 **v0.10 当前主线**
-- 🛠️ Card AI 对话式迭代（多轮）：对话骨架与逐 Card 提案已实现；第二切片补强 create transaction receipt、单实例 Card ID claim 回收、Card 删除联合终检及 uncertain autosave 恢复。当前工作树第一遍为 52 个测试文件/651 项通过、renderer/node TypeScript、diff-check 与正式打包通过；正在对修复后的提交点做独立复检
+- 🛠️ Card AI 对话式迭代（多轮）：四个切片的功能已实现；2026-09-25 完整测试 57 个文件/733 项通过，TypeScript、Vite、Electron 打包与 diff-check 通过。关闭 v0.10 前仍需完成 Electron 手工 smoke
 
 **后续待做**
 - ❌ Relic 接入与 Card 同等级的项目文档、生成安全和恢复生命周期
@@ -351,3 +351,4 @@ MyMod/                          ← 用户项目根
 | 2026-09-23 | v1.92 修复 Card ID claim 并发 owner 标记竞态，并允许发布后读回失败的失效 claim 在后续操作中安全回收 | Codex + 协作 agent |
 | 2026-09-23 | v1.91 收紧 Card 崩溃恢复证明：保存恢复必须匹配唯一候选临时文件；accepted create 在缺少 receipt 且同内容已进入回收站时失败关闭，避免误删旧版本或复活用户删除 | Codex + 协作 agent |
 | 2026-09-23 | v1.90 补全 Card 恢复事务来源 — accepted create 使用可校验 transaction receipt 区分“尚未创建”与后续删除；Electron 单实例锁使 prior-session Card ID claim 可安全回收；删除在文档/C# 联合终检后才确认，uncertain autosave 冻结写入并按磁盘重载 | Codex + 协作 agent
+| 2026-09-25 | v1.94 同步 v0.10 历史治理发布状态 — 完整测试 733 项及 TypeScript/Vite/Electron 构建通过，保留 Electron 手工 smoke 待办 | Codex |

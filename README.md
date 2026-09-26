@@ -31,7 +31,7 @@
 - 🎨 **主题切换** — 支持暗/亮主题
 - 🛡️ **错误边界** — 友好的错误处理
 - 💾 **本地项目源数据** — `.modstudio/cards/` 保存权威 Card 文档，`scripts/Cards/` 只保存可重新生成的 C# 产物
-- ✅ **自动化验证** — 当前完整测试套件 **617 项**，另有 Renderer/Electron 两套 TypeScript 检查与 Electron 完整构建门禁
+- ✅ **自动化验证** — 当前完整测试套件 **733 项**（2026-09-25 全部通过），另有 Renderer/Electron 两套 TypeScript 检查与 Electron 完整构建门禁
 
 ## 🛠️ 技术栈
 
@@ -93,12 +93,13 @@ mod-studio/
 
 | 图表 | 类型 | 说明 |
 |---|---|---|
-| [Mod Studio 项目架构](./docs/diagrams/project-architecture.architecture.html) | Architecture | React、CardCatalog、Card 领域服务、项目源数据、LLM 与游戏之间的模块关系 |
-| [Card 编辑、保存与生成流程](./docs/diagrams/card-edit-generation.workflow.html) | Workflow | 编辑事务、草稿自动保存、显式生成、校验、产物写入与失败保护 |
-| [项目打开与 Card 恢复流程](./docs/diagrams/project-open-recovery.workflow.html) | Workflow | 项目切换、CardDocument 扫描、迁移、只读隔离与目录装载 |
-| [项目级 AI 对话单轮时序](./docs/diagrams/ai-conversation-turn.sequence.html) | Sequence | 发送前持久化、模型调用、响应校验、最终原子提交与可见时点 |
-| [AI Card 提案生命周期](./docs/diagrams/ai-proposal-lifecycle.lifecycle.html) | Lifecycle | pending、accepted、reverted、stale、rejected 与 superseded 状态 |
-| [AI 对话存储与归档生命周期](./docs/diagrams/conversation-governance.lifecycle.html) | Lifecycle | 首次创建、软/硬阈值、原子归档、隔离与 schema 迁移 |
+| [Mod Studio 项目架构](./docs/diagrams/project-architecture.architecture.html) | Architecture | 多协议 Provider 配置、React 编辑器、Card 领域服务、Electron Mod 管理、项目数据与游戏边界 |
+| [Card 编辑、保存与生成流程](./docs/diagrams/card-edit-generation.workflow.html) | Workflow | 编辑事务、防抖草稿保存、显式生成、覆盖保护、读回校验与指纹回写 |
+| [项目打开与 Card 恢复流程](./docs/diagrams/project-open-recovery.workflow.html) | Workflow | 切换前等待 AI 事务并 flush 草稿、CardDocument 扫描、版本迁移与只读隔离 |
+| [项目级 AI 对话单轮时序](./docs/diagrams/ai-conversation-turn.sequence.html) | Sequence | 发送前持久化、可选一次 Card 上下文补取、最终校验与原子提交后展示 |
+| [AI Card 提案生命周期](./docs/diagrams/ai-proposal-lifecycle.lifecycle.html) | Lifecycle | revision 过期、WAL 与 Card 事务、拒绝/取代，以及 undo / redo 状态回转 |
+| [AI 对话存储与归档生命周期](./docs/diagrams/conversation-governance.lifecycle.html) | Lifecycle | 软/硬容量门槛、旧 schema 迁移、原子归档、损坏恢复与未来版本隔离 |
+| [AI 媒体创作与 Mod 导出目标流程（方案）](./docs/diagrams/ai-media-generation-proposal.workflow.html) | Workflow | 标出未来媒体生成、素材确认、引用绑定、Mod 导出和游戏内验证目标（尚未实现） |
 
 可编辑规格位于 [`docs/diagrams/`](./docs/diagrams/)，所有规格均通过 Archify showcase 质量验证。
 
@@ -173,7 +174,7 @@ npm run test:watch
 | v0.1-v0.8 | ✅ 已完成 | 节点编辑器、Relic 模块、项目文件服务、AI 结构化输出与架构加深 |
 | v0.9 | ✅ 已完成 | Card 单一文档模型、行为图、自动保存、显式生成、迁移/恢复、回收站、批量生成、测试预检与 Electron release gate |
 | CardCatalog | ✅ 已完成 | Card 文档唯一权威、逐 Card 历史、文本/拖动事务合并与 revision-safe AI/生成操作 |
-| **v0.10** | 🛠️ 实施中 | 对话骨架与 Card 提案已完成；上下文智能已接入目录/相关 Card 上下文、摘要与预算。历史治理切片已完成容量门禁、原子归档/只读浏览、隔离恢复及运行时 p95 指标，仍需最终 Electron 手工路径与全量发布门禁 |
+| **v0.10** | 🛠️ 实施中 | 四个切片的功能已完成；2026-09-25 完整测试（733 项）、TypeScript/Vite/Electron 构建及 diff-check 通过，仍需 Electron 手工 smoke 后才能关闭发布门禁 |
 | 后续 | 📋 计划 | Relic 接入 Card 同等级项目生命周期，再扩展 Character / Potion / Event / Enemy / Buff / UI |
 | v1.0+ | 📋 计划 | Steam Workshop 发布流程 |
 

@@ -1,53 +1,22 @@
-/**
- * LLM适配器注册表
- */
-import { BaseLLMAdapter } from './base'
+/** Registry and factory for the provider protocol adapters. */
+import { BaseLLMAdapter, type LLMConfig } from './base'
 import { HTTPAdapter } from './httpAdapter'
+import { LLM_PROVIDERS, type LLMProviderInfo } from '../providerCatalog'
 
-export type LLMProvider = 'minimax' | 'qwen' | 'ernie' | 'chatglm'
+export type LLMProvider = string
+export { LLM_PROVIDERS }
+export type { LLMProviderInfo }
+export type { LLMProtocol, ApiKeyPlacement } from '../providerCatalog'
 
-export interface LLMProviderInfo {
-  id: LLMProvider
-  name: string
-  description: string
-  website: string
-}
-
-export const LLM_PROVIDERS: LLMProviderInfo[] = [
-  {
-    id: 'minimax',
-    name: 'MiniMax',
-    description: '国产大模型，支持中文',
-    website: 'https://www.minimax.chat/'
-  },
-  {
-    id: 'qwen',
-    name: '通义千问',
-    description: '阿里云大模型',
-    website: 'https://qwen.ai/'
-  },
-  {
-    id: 'ernie',
-    name: '文心一言',
-    description: '百度大模型',
-    website: 'https://yiyan.baidu.com/'
-  },
-  {
-    id: 'chatglm',
-    name: 'ChatGLM',
-    description: '智谱AI大模型',
-    website: 'https://www.zhipuai.cn/'
-  }
-]
-
-/**
- * 创建适配器实例
- */
-export function createAdapter(provider: LLMProvider, apiKey: string): BaseLLMAdapter {
-  return new HTTPAdapter(provider, { apiKey })
+export function createAdapter(provider: LLMProvider, apiKeyOrConfig: string | LLMConfig): BaseLLMAdapter {
+  const config = typeof apiKeyOrConfig === 'string' ? { apiKey: apiKeyOrConfig } : apiKeyOrConfig
+  return new HTTPAdapter(provider, config)
 }
 
 export { BaseLLMAdapter } from './base'
 export type { LLMResponse, LLMErrorType, LLMRequestOptions, LLMAdapterDiagnostics, LLMConfig } from './base'
-export { HTTPAdapter } from './httpAdapter'
+export { HTTPAdapter, fetchProviderModels, testProviderConnection, PROVIDER_CONFIGS } from './httpAdapter'
+export type { ProviderConfig, DiscoveredModel } from './httpAdapter'
 export { createConversationModel } from './conversationModel'
+export { createProviderSettings, normalizeProviderSettings, providerHasUsableKey, providerIsReady } from '../providerSettings'
+export type { ProviderSettings, ProviderApiKey } from '../providerSettings'

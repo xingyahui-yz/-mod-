@@ -73,6 +73,18 @@ const electronAPI = {
   getUserDataPath: (): Promise<string> =>
     ipcRenderer.invoke('app:getUserDataPath'),
 
+  // 通用 Mod 管理器：管理游戏目录中的已安装 Mod
+  listMods: (gamePath: string): Promise<{ ok: boolean; mods?: Array<{ id: string; folderName: string; name: string; version: string; author: string; description: string; enabled: boolean }>; error?: string }> =>
+    ipcRenderer.invoke('mods:list', gamePath),
+  installMod: (gamePath: string): Promise<{ success: boolean; cancelled?: boolean; error?: string }> =>
+    ipcRenderer.invoke('mods:install', gamePath),
+  setModEnabled: (gamePath: string, folderName: string, enabled: boolean): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('mods:setEnabled', gamePath, folderName, enabled),
+  uninstallMod: (gamePath: string, folderName: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('mods:uninstall', gamePath, folderName),
+  openModsFolder: (gamePath: string): Promise<boolean> =>
+    ipcRenderer.invoke('mods:openFolder', gamePath),
+
   // 启动游戏
   launchGame: (gamePath: string, modPath: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('game:launch', gamePath, modPath),

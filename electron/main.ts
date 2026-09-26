@@ -3,6 +3,7 @@ import { join, resolve, isAbsolute } from 'path'
 import { existsSync } from 'fs'
 import { readdir, stat, readFile, writeFile, mkdir, cp, rename, unlink, link } from 'fs/promises'
 import { spawn } from 'child_process'
+import { registerModManagerHandlers } from './modManager'
 
 type FileReadErrorCode = 'invalid-path' | 'permission-denied' | 'io'
 type FileReadResult<T> =
@@ -119,6 +120,7 @@ async function readTextFileResult(filePath: string): Promise<FileReadResult<stri
 // ============ IPC 处理器 ============
 
 function registerIpcHandlers() {
+  registerModManagerHandlers()
 
 // 打开文件夹选择对话框
 ipcMain.handle('dialog:openDirectory', async () => {

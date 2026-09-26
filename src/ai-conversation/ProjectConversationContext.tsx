@@ -240,12 +240,18 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
   let latestModel: ConversationModel | null = null
   let latestProvider: string | null = null
   let activeModel: ConversationModel | null = null
-  const createLatestModel = (): ConversationModel | null => {
-    const { provider, apiKey, isConfigured } = useAIStore.getState()
-    if (!isConfigured) return null
-    latestModel = createConversationModel(createAdapter(provider, apiKey))
+  const createLatestModel = (apiKeyOverride?: string): ConversationModel | null => {
+    const { provider, apiKey: currentApiKey, isConfigured, providerSettings } = useAIStore.getState()
+    const settings = providerSettings[provider]
+    if (!isConfigured || !settings) return null
+    const apiKey = apiKeyOverride ?? currentApiKey
+    latestModel = createConversationModel(createAdapter(provider, { ...settings, apiKey, model: settings.selectedModel }))
     latestProvider = provider
     return latestModel
+  }
+  const createRequestModel = (): ConversationModel | null => {
+    const { provider, getNextApiKey } = useAIStore.getState()
+    return createLatestModel(getNextApiKey(provider))
   }
   const model: ConversationModel = {
     prepare(request) {
@@ -261,12 +267,12 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
       return { provider, model: 'unknown' }
     },
     async summarize(request) {
-      const configuredModel = createLatestModel()
+      const configuredModel = createRequestModel()
       if (!configuredModel?.summarize) return { success: false as const, error: '请先在「设置」中配置 API 密钥', kind: 'provider' as const }
       return configuredModel.summarize(request)
     },
     async respond(request) {
-      const configuredModel = createLatestModel()
+      const configuredModel = createRequestModel()
       if (!configuredModel) {
         return { success: false as const, error: '请先在「设置」中配置 API 密钥' }
       }
