@@ -1,7 +1,7 @@
 # Mod Studio 领域模型（CONTEXT）
 
-> 最后更新：2026-09-25 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
-> 状态：v1.94 — 由项目所有者与协作 agent 通过开发迭代同步
+> 最后更新：2026-10-02 · 来源：v0.5.2 → v0.10 实施 + 架构评审 + `/grill-with-docs`
+> 状态：v1.95 — 由项目所有者与协作 agent 通过开发迭代同步
 
 ## 1. 项目目标（Goal）
 
@@ -35,6 +35,8 @@
 
 ### 3.1 项目层
 - **Mod 项目（Mod Project）**：用户的一个 mod 创作，根目录含 `mod_manifest.json`
+- **Card 卡池归属（Card Pool Assignment）**：一张 Card 被分配到某个角色的卡池后，可在该角色的正常对局中出现。
+- **游戏版本兼容状态（Game Version Compatibility）**：Mod Studio 对已安装 STS2 版本及其构建接口的验证状态；尚未验证的版本仍可尝试，但必须明确标记为未验证。
 - **实体（Entity）**：8 类可编辑对象（E1-E8）的统称
 - **卡牌（Card）**：一种实体，其基本属性与行为图共同描述同一张卡；不存在独立的“表单版卡牌”或“节点版卡牌”。
   _避免：节点版 Card、第二套 Card_
@@ -82,6 +84,11 @@
 - **表单（Form）**：键值对编辑界面
 - **预览（Preview）**：实时展示 C# / GDScript 代码或游戏内效果
 - **生成（Generate）**：从 `.modstudio/` 元数据 → 编译产物（`.cs` / `.gd`）
+- **Mod 构建（Mod Build）**：把 Mod 项目中的生成代码与资源转换为 STS2 可加载的 Mod 产物；不同于只生成 `.cs` / `.gd` 源文件。
+- **本地部署（Local Deployment）**：将 Mod 构建产物放入本机 STS2 的 Mod 加载目录，以便在实际游戏中测试。
+- **实机验证（In-game Validation）**：在实际对局中确认已部署的 Card 可以从所属卡池获得，且行为符合预期；仅启动游戏不等于实机验证通过。
+- **Workshop 发布工作区（Workshop Publish Workspace）**：提交给 STS2 Workshop 上传器的发布内容与元数据；不得包含 `.modstudio/` 项目源数据。
+- **Workshop 上传（Workshop Upload）**：用户明确确认后，将通过构建与发布预检的工作区提交到 Steam Workshop。
 - **同步（Sync）**：保持 `.modstudio/` 元数据与编译产物一致
 - **生成未同步（Generation Out of Sync）**：项目源数据已成功保存，但对应生成产物尚未更新成功的可恢复状态；不表示用户编辑丢失。
   _避免：把生成失败称为保存失败_
@@ -184,6 +191,7 @@
 - **ADR-0005**：节点编辑器撤销 / 重做 — History Stack（不可变快照），不采用 Command Pattern
 - **ADR-0006**：v0.9 Card 节点 schema — 单一 Card 模型与线性 trigger→effect 链（详见 `docs/adr/0006-v0.9-card-node-schema.md`）
 - **ADR-0007**：v0.10 项目级 Card AI 对话 — 当前项目事实、逐 Card 原子提案、版本化 JSON 历史与归档上限（详见 `docs/adr/0007-project-card-ai-conversation.md`）
+- **ADR-0008**：Card 构建与实机验证路线 — 先验证游戏版本及生成器兼容性，再完成本地构建/部署闭环；Workshop 发布另行实现（详见 `docs/adr/0008-card-build-and-playtest.md`）
 
 非 ADR 但已沉淀的决策：
 
@@ -352,3 +360,4 @@ MyMod/                          ← 用户项目根
 | 2026-09-23 | v1.91 收紧 Card 崩溃恢复证明：保存恢复必须匹配唯一候选临时文件；accepted create 在缺少 receipt 且同内容已进入回收站时失败关闭，避免误删旧版本或复活用户删除 | Codex + 协作 agent |
 | 2026-09-23 | v1.90 补全 Card 恢复事务来源 — accepted create 使用可校验 transaction receipt 区分“尚未创建”与后续删除；Electron 单实例锁使 prior-session Card ID claim 可安全回收；删除在文档/C# 联合终检后才确认，uncertain autosave 冻结写入并按磁盘重载 | Codex + 协作 agent
 | 2026-09-25 | v1.94 同步 v0.10 历史治理发布状态 — 完整测试 733 项及 TypeScript/Vite/Electron 构建通过，保留 Electron 手工 smoke 待办 | Codex |
+| 2026-10-02 | v1.95 明确 Card 构建与实机验证领域词汇 — 区分代码生成、Mod 构建、本地部署与 Workshop 发布，并接受 ADR-0008 的分阶段路线 | 用户 + Codex `/grill-with-docs` |
