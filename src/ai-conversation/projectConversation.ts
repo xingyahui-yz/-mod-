@@ -12,9 +12,18 @@ import {
   type ConversationQuickReplySelection,
   type ConversationTurn,
 } from './conversationDocument'
-import type { ConversationRepository, ConversationLoadResult } from './conversationRepository'
+import type {
+  ConversationArchiveListResult,
+  ConversationArchiveReadResult,
+  ConversationQuarantineListResult,
+  ConversationQuarantineReadResult,
+  ConversationRepository,
+  ConversationLoadResult,
+} from './conversationRepository'
+import type { ConversationPerformanceMetrics } from './conversationPerformance'
 import { parseConversationModelResponseText, type ConversationResponseV1 } from './conversationResponse'
 import { prepareConversationPrompt } from '../services/llm/conversationPreparation'
+import { DEFAULT_CONVERSATION_CAPACITY_LIMITS, measureConversationCapacity, type ConversationCapacity, type ConversationCapacityLimits } from './conversationCapacity'
 import { CONVERSATION_SUMMARY_REFRESH_THRESHOLD_TOKENS, estimateUnsummarizedConversationTokens, getUnsummarizedTurns, toRollingSummary, type ConversationSummaryGenerationRequest, type ConversationSummaryGenerationResult } from './conversationSummary'
 import { cardDocumentRevision } from '../card/cardAiProposal'
 import type { CardDocument } from '../card/cardDocument'
@@ -61,6 +70,10 @@ export type ProjectConversationErrorCode =
   | 'quarantined'
   | 'already-running'
   | 'context-over-budget'
+  | 'capacity-limit'
+  | 'archive-failed'
+  | 'quarantine-recovery-failed'
+  | 'nothing-to-archive'
   | 'not-retryable'
   | 'cancelled'
   | 'timeout'
@@ -86,6 +99,7 @@ export interface ProjectConversationSnapshot {
   lastError: string | null
   persistenceError: string | null
   requiresReload: boolean
+  capacity: ConversationCapacity
 }
 
 export interface ProposalCardCommit {
@@ -119,6 +133,7 @@ interface ResolvedProjectContext {
 }
 
 export class ProjectConversation {
+  private hardLimitBlockCount = 0
   private snapshot: ProjectConversationSnapshot = {
     document: null,
     loadStatus: 'loading',
@@ -127,6 +142,7 @@ export class ProjectConversation {
     lastError: null,
     persistenceError: null,
     requiresReload: false,
+    capacity: measureConversationCapacity(null),
   }
   private listeners = new Set<Listener>()
   private abortController: AbortController | null = null
@@ -145,6 +161,7 @@ export class ProjectConversation {
     private readonly clock: () => Date = () => new Date(),
     private readonly createId: () => string = () => crypto.randomUUID(),
     private readonly getProjectDocuments: () => readonly CardDocument[] = () => [],
+    private readonly capacityLimits: ConversationCapacityLimits = DEFAULT_CONVERSATION_CAPACITY_LIMITS,
   ) {}
 
   getSnapshot = (): ProjectConversationSnapshot => this.snapshot
@@ -217,6 +234,94 @@ export class ProjectConversation {
           requiresReload: false,
         })
       }
+    })
+  }
+
+  getPerformanceMetrics(): ConversationPerformanceMetrics | null {
+    const metrics = this.repository.getPerformanceMetrics?.()
+    return metrics ? { ...metrics, hardLimitBlockCount: metrics.hardLimitBlockCount + this.hardLimitBlockCount } : null
+  }
+
+  listArchives(): Promise<ConversationArchiveListResult> {
+    return this.repository.listArchives(this.projectPath)
+  }
+
+  readArchive(archiveId: string): Promise<ConversationArchiveReadResult> {
+    return this.repository.readArchive(this.projectPath, archiveId)
+  }
+
+  listQuarantines(): Promise<ConversationQuarantineListResult> {
+    return this.repository.listQuarantines(this.projectPath)
+  }
+
+  readQuarantine(quarantineId: string): Promise<ConversationQuarantineReadResult> {
+    return this.repository.readQuarantine(this.projectPath, quarantineId)
+  }
+
+  async restoreQuarantine(quarantineId: string): Promise<ProjectConversationResult> {
+    if (this.hasActiveWork()) return failure('already-running', '当前轮次仍在处理，不能恢复隔离文档')
+    return this.runMutation(async () => {
+      if (this.snapshot.isRunning) return failure('already-running', '当前轮次仍在处理，不能恢复隔离文档')
+      if (this.snapshot.requiresReload) return failure('persistence', '对话持久化状态不确定，请重新加载')
+      if (this.snapshot.loadStatus === 'loading' || this.snapshot.loadStatus === 'failed') {
+        return failure('load-failed', '对话状态未就绪，无法恢复隔离文档')
+      }
+      const result = await this.repository.restoreQuarantine(this.projectPath, quarantineId)
+      if (!result.ok) {
+        const uncertain = result.certainty === 'uncertain'
+        this.update({
+          ...this.snapshot,
+          lastError: result.error,
+          persistenceError: uncertain ? result.error : null,
+          requiresReload: uncertain,
+        })
+        return failure(uncertain ? 'persistence' : 'quarantine-recovery-failed', result.error)
+      }
+      this.update({
+        ...this.snapshot,
+        document: result.document,
+        loadStatus: 'loaded',
+        quarantineReason: null,
+        isRunning: false,
+        lastError: result.migrated ? '已从隔离文档恢复并迁移版本；原始隔离文件仍保留。' : '已从隔离文档恢复；原始隔离文件仍保留。',
+        persistenceError: null,
+        requiresReload: false,
+      })
+      return { ok: true }
+    })
+  }
+
+  async archiveAndReset(): Promise<ProjectConversationResult> {
+    return this.runMutation(async () => {
+      const ready = this.ensureReady()
+      if (!ready.ok) return ready
+      const current = this.snapshot.document
+      if (!current || (current.turns.length === 0 && current.proposals.length === 0)) {
+        return failure('nothing-to-archive', '当前对话没有可归档内容')
+      }
+      const resetAt = this.now()
+      const empty = createConversationDocument(resetAt)
+      const result = await this.repository.archiveAndReset(this.projectPath, current, resetAt)
+      if (!result.ok) {
+        const uncertain = result.certainty === 'uncertain'
+        this.update({
+          ...this.snapshot,
+          lastError: result.error,
+          persistenceError: uncertain ? result.error : null,
+          requiresReload: uncertain,
+        })
+        return failure(uncertain ? 'persistence' : 'archive-failed', result.error)
+      }
+      this.update({
+        ...this.snapshot,
+        document: empty,
+        loadStatus: 'loaded',
+        quarantineReason: null,
+        lastError: null,
+        persistenceError: null,
+        requiresReload: false,
+      })
+      return { ok: true }
     })
   }
 
@@ -520,6 +625,12 @@ export class ProjectConversation {
     if (!ready.ok) return ready
     if (!this.isValidQuickReplySelection(text, quickReplySelection)) return failure('invalid-input', '快捷回答引用无效')
 
+    const currentCapacity = this.snapshot.capacity
+    if (currentCapacity.level === 'hard') {
+      this.hardLimitBlockCount += 1
+      return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
+    }
+
     const now = this.now()
     const attemptId = this.createId()
     const base = this.snapshot.document ?? createConversationDocument(now)
@@ -554,6 +665,10 @@ export class ProjectConversation {
   private async startRetry(turnId: string): Promise<{ ok: true; value: StartedAttempt } | Extract<ProjectConversationResult, { ok: false }>> {
     const ready = this.ensureReady()
     if (!ready.ok) return ready
+    if (this.snapshot.capacity.level === 'hard') {
+      this.hardLimitBlockCount += 1
+      return failure('capacity-limit', '项目对话已超过硬容量阈值，请先归档并重置后继续')
+    }
     const document = this.snapshot.document
     const turn = document?.turns[document.turns.length - 1]
     const lastAttempt = turn?.attempts[turn.attempts.length - 1]
@@ -1173,8 +1288,11 @@ export class ProjectConversation {
   }
 
   private now(): string { return this.clock().toISOString() }
-  private update(snapshot: ProjectConversationSnapshot): void {
-    this.snapshot = snapshot
+  private update(snapshot: Omit<ProjectConversationSnapshot, 'capacity'> & { capacity?: ConversationCapacity }): void {
+    const capacity = snapshot.document === this.snapshot.document
+      ? snapshot.capacity ?? this.snapshot.capacity
+      : measureConversationCapacity(snapshot.document, this.capacityLimits)
+    this.snapshot = { ...snapshot, capacity }
     this.listeners.forEach(listener => listener())
   }
 }

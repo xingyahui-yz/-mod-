@@ -5048,6 +5048,7 @@
         <path data-edge-from="archiveCheck" data-edge-to="archived" data-edge-key="4" data-edge-id="g6" data-composition-points="710,188;710,319;710,319;710,450" d="M 710 188 L 710 319 L 710 319 L 710 450" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="active" data-edge-to="quarantine" data-edge-key="5" data-edge-id="g9" data-composition-points="307,157;307,318;343,318;343,479" d="M 307 157 L 307 308 Q 307 318 317 318 L 333 318 Q 343 318 343 328 L 343 479" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
         <path data-edge-from="quarantine" data-edge-to="migrate" data-edge-key="6" data-edge-id="g10" data-composition-points="461,479;497,479" d="M 461 479 L 497 479" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="active" data-edge-to="migrate" data-edge-key="7" data-edge-id="g4" data-composition-points="307,157;307,318;497,318;497,479" d="M 307 157 L 307 308 Q 307 318 317 318 L 487 318 Q 497 318 497 328 L 497 479" class="a-default" stroke-width="1.1" marker-end="url(#arrowhead)"/>
 
         <!-- States -->
         <g id="node-empty" data-node-id="empty" data-node-label="尚未建立" tabindex="0" role="button" aria-label="聚焦尚未建立，仅打开抽屉不写文件, 活动对话与容量治理" aria-pressed="false" data-node-kind="start" data-node-sublabel="仅打开抽屉不写文件" data-node-context="活动对话与容量治理">
@@ -5062,15 +5063,15 @@
           <text data-detail="context" x="94" y="163" class="t-muted" font-size="7" text-anchor="middle">仅打开抽屉不写文件</text>
         </g>
 
-        <g id="node-active" data-node-id="active" data-node-label="活动对话文档" tabindex="0" role="button" aria-label="聚焦活动对话文档，首次发送时原子创建, 活动对话与容量治理" aria-pressed="false" data-node-kind="active" data-node-sublabel="首次发送时原子创建" data-node-context="活动对话与容量治理">
-          <title>活动对话文档 · 首次发送时原子创建 · 活动对话与容量治理</title>
+        <g id="node-active" data-node-id="active" data-node-label="活动对话文档" tabindex="0" role="button" aria-label="聚焦活动对话文档，首次发送创建；加载校验版本, 活动对话与容量治理" aria-pressed="false" data-node-kind="active" data-node-sublabel="首次发送创建；加载校验版本" data-node-context="活动对话与容量治理">
+          <title>活动对话文档 · 首次发送创建；加载校验版本 · 活动对话与容量治理</title>
           <rect x="189" y="126" width="118" height="62" rx="7" class="c-mask"/>
           <rect x="189" y="126" width="118" height="62" rx="7" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-backend" transform="translate(290 132) scale(0.6875)">
             <path d="M2 8h3l1.5-3.5L9 12l1.6-4H14"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="248" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">活动对话文档</text>
-          <text data-detail="context" x="248" y="163" class="t-muted" font-size="7" text-anchor="middle">首次发送时原子创建</text>
+          <text data-detail="context" x="248" y="163" class="t-muted" font-size="7" text-anchor="middle">首次发送创建；加载校验版本</text>
         </g>
 
         <g id="node-soft" data-node-id="soft" data-node-label="软警告" tabindex="0" role="button" aria-label="聚焦软警告，&gt;10 MB 或 &gt;5,000 消息, 活动对话与容量治理" aria-pressed="false" data-node-kind="waiting" data-node-sublabel="&gt;10 MB 或 &gt;5,000 消息" data-node-context="活动对话与容量治理">
@@ -5119,19 +5120,19 @@
           <text data-detail="context" x="402" y="487" class="t-muted" font-size="7" text-anchor="middle">损坏或未来 schema</text>
         </g>
 
-        <g id="node-migrate" data-node-id="migrate" data-node-label="已知 schema 迁移" tabindex="0" role="button" aria-label="聚焦已知 schema 迁移，备份后逐版本升级, 归档与恢复结果" aria-pressed="false" data-node-kind="active" data-node-sublabel="备份后逐版本升级" data-node-context="归档与恢复结果">
-          <title>已知 schema 迁移 · 备份后逐版本升级 · 归档与恢复结果</title>
+        <g id="node-migrate" data-node-id="migrate" data-node-label="已知旧 schema 迁移" tabindex="0" role="button" aria-label="聚焦已知旧 schema 迁移，备份后逐版本升级, 归档与恢复结果" aria-pressed="false" data-node-kind="active" data-node-sublabel="备份后逐版本升级" data-node-context="归档与恢复结果">
+          <title>已知旧 schema 迁移 · 备份后逐版本升级 · 归档与恢复结果</title>
           <rect x="497" y="450" width="118" height="58" rx="7" class="c-mask"/>
           <rect x="497" y="450" width="118" height="58" rx="7" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="active" class="semantic-sigil s-backend" transform="translate(598 456) scale(0.6875)">
             <path d="M2 8h3l1.5-3.5L9 12l1.6-4H14"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="556" y="471" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">已知 schema 迁移</text>
+          <text data-node-label="" data-detail-anchor="" x="556" y="471" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">已知旧 schema 迁移</text>
           <text data-detail="context" x="556" y="487" class="t-muted" font-size="7" text-anchor="middle">备份后逐版本升级</text>
         </g>
 
-        <g id="node-archived" data-node-id="archived" data-node-label="只读归档" tabindex="0" role="button" aria-label="聚焦只读归档，旧 pending 提案失效, 归档与恢复结果" aria-pressed="false" data-node-kind="success" data-node-sublabel="旧 pending 提案失效" data-node-context="归档与恢复结果">
-          <title>只读归档 · 旧 pending 提案失效 · 归档与恢复结果</title>
+        <g id="node-archived" data-node-id="archived" data-node-label="只读归档" tabindex="0" role="button" aria-label="聚焦只读归档，旧对话只读；活动文档已重置, 归档与恢复结果" aria-pressed="false" data-node-kind="success" data-node-sublabel="旧对话只读；活动文档已重置" data-node-context="归档与恢复结果">
+          <title>只读归档 · 旧对话只读；活动文档已重置 · 归档与恢复结果</title>
           <rect x="651" y="450" width="118" height="58" rx="7" class="c-mask"/>
           <rect x="651" y="450" width="118" height="58" rx="7" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="success" class="semantic-sigil s-database" transform="translate(752 456) scale(0.6875)">
@@ -5139,10 +5140,11 @@
             <path d="m5.2 8 1.8 1.8 3.8-4"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="710" y="471" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">只读归档</text>
-          <text data-detail="context" x="710" y="487" class="t-muted" font-size="7" text-anchor="middle">旧 pending 提案失效</text>
+          <text data-detail="context" x="710" y="487" class="t-muted" font-size="7" text-anchor="middle">旧对话只读；活动文档已重置</text>
         </g>
 
         <!-- Transition labels -->
+
 
 
 
@@ -5371,20 +5373,31 @@
           <h3>硬限制与归档</h3>
         </div>
         <ul>
-          <li>&bull; 允许已发送轮次完成</li>
-          <li>&bull; 用户可主动归档；归档失败保持原活动对话</li>
-          <li>&bull; 归档校验成功后重置，等待新对话</li>
+          <li>&bull; 超过硬阈值时阻止新发送；已开始轮次可完成</li>
+          <li>&bull; 归档先写入并读回校验，再原子发布后重置活动文档</li>
+          <li>&bull; 归档或重置失败时保留原活动内容；已发布归档不会丢失</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>SQLite 触发</h3>
+          <h3>存储扩展评估</h3>
         </div>
         <ul>
-          <li>&bull; 软阈值 p95 超过 500ms</li>
-          <li>&bull; 跨归档查询、并发写入或频繁触达硬上限</li>
+          <li>&bull; 软阈值样本记录 load / save 的 p95；超过 500ms 时评估 SQLite</li>
+          <li>&bull; 跨归档查询、并发写入或频繁触及硬阈值时评估升级</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>迁移与隔离</h3>
+        </div>
+        <ul>
+          <li>&bull; 支持的旧 schema 先备份再迁移；损坏文档可从有效备份恢复</li>
+          <li>&bull; 未知未来 schema 保持隔离，不降级覆盖；隔离文档可查看或恢复</li>
         </ul>
       </div>
     </div>

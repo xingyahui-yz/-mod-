@@ -38,6 +38,21 @@ const TYPE_COLORS: Record<string, string> = {
   branch: '#eab308'
 }
 
+const NODE_TYPE_LABELS: Record<string, string> = {
+  trigger: 'trigger（触发器）',
+  condition: 'condition（条件）',
+  effect: 'effect（效果）',
+  branch: 'branch（分支）',
+}
+
+const NODE_DATA_LABELS: Record<string, string> = {
+  event: 'event（事件）',
+  kind: 'kind（类型）',
+  buffType: 'buffType（Buff）',
+  amount: 'amount（数值）',
+  cardId: 'cardId（卡牌）',
+}
+
 export function NodeGraphCanvas({
   graph,
   onMoveNode,
@@ -215,10 +230,16 @@ function NodeBox({ node, pendingFrom, onMouseDown, onRemove, onPortClick }: Node
         strokeWidth={2}
       />
       <text x={10} y={20} fontSize={12} fill={color} fontWeight="bold">
-        {node.type}
+        {NODE_TYPE_LABELS[node.type] ?? `${node.type}（节点类型）`}
       </text>
-      <text x={10} y={40} fontSize={10} fill="var(--text-secondary, #aaa)">
-        {Object.keys(node.data).join(', ') || '(无数据)'}
+      <text fontSize={9} fill="var(--text-secondary, #aaa)">
+        {Object.keys(node.data).length > 0
+          ? Object.keys(node.data).map((key, index) => (
+            <tspan key={key} x={10} y={35 + index * 10}>
+              {NODE_DATA_LABELS[key] ?? `${key}（参数）`}
+            </tspan>
+          ))
+          : <tspan x={10} y={40}>（无数据）</tspan>}
       </text>
       {/* 端口 */}
       {ports.map(p => {

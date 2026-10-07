@@ -1,32 +1,165 @@
 {
   "schema_version": 1,
   "diagram_type": "lifecycle",
-  "meta": { "title": "项目 AI 对话存储与归档生命周期", "locale": "zh-CN", "quality_profile": "showcase", "viewBox": [900, 820] },
+  "meta": {
+    "title": "项目 AI 对话存储与归档生命周期",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [
+      900,
+      820
+    ]
+  },
   "lanes": [
-    { "id": "main", "label": "活动对话与容量治理" },
-    { "id": "terminal", "label": "归档与恢复结果" }
+    {
+      "id": "main",
+      "label": "活动对话与容量治理"
+    },
+    {
+      "id": "terminal",
+      "label": "归档与恢复结果"
+    }
   ],
   "states": [
-    { "id": "empty", "type": "start", "label": "尚未建立", "sublabel": "仅打开抽屉不写文件", "lane": "main", "col": 0 },
-    { "id": "active", "type": "active", "label": "活动对话文档", "sublabel": "首次发送时原子创建", "lane": "main", "col": 1 },
-    { "id": "soft", "type": "waiting", "label": "软警告", "sublabel": ">10 MB 或 >5,000 消息", "lane": "main", "col": 2 },
-    { "id": "hard", "type": "failure", "label": "硬限制", "sublabel": ">50 MB 或 >20,000 消息", "lane": "main", "col": 3 },
-    { "id": "archiveCheck", "type": "decision", "label": "归档写入并读回校验", "lane": "main", "col": 4 },
-    { "id": "quarantine", "type": "failure", "label": "对话隔离", "sublabel": "损坏或未来 schema", "lane": "terminal", "col": 0 },
-    { "id": "migrate", "type": "active", "label": "已知 schema 迁移", "sublabel": "备份后逐版本升级", "lane": "terminal", "col": 1 },
-    { "id": "archived", "type": "success", "label": "只读归档", "sublabel": "旧 pending 提案失效", "lane": "terminal", "col": 2 }
+    {
+      "id": "empty",
+      "type": "start",
+      "label": "尚未建立",
+      "sublabel": "仅打开抽屉不写文件",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "active",
+      "type": "active",
+      "label": "活动对话文档",
+      "sublabel": "首次发送创建；加载校验版本",
+      "lane": "main",
+      "col": 1
+    },
+    {
+      "id": "soft",
+      "type": "waiting",
+      "label": "软警告",
+      "sublabel": ">10 MB 或 >5,000 消息",
+      "lane": "main",
+      "col": 2
+    },
+    {
+      "id": "hard",
+      "type": "failure",
+      "label": "硬限制",
+      "sublabel": ">50 MB 或 >20,000 消息",
+      "lane": "main",
+      "col": 3
+    },
+    {
+      "id": "archiveCheck",
+      "type": "decision",
+      "label": "归档写入并读回校验",
+      "lane": "main",
+      "col": 4
+    },
+    {
+      "id": "quarantine",
+      "type": "failure",
+      "label": "对话隔离",
+      "sublabel": "损坏或未来 schema",
+      "lane": "terminal",
+      "col": 0
+    },
+    {
+      "id": "migrate",
+      "type": "active",
+      "label": "已知旧 schema 迁移",
+      "sublabel": "备份后逐版本升级",
+      "lane": "terminal",
+      "col": 1
+    },
+    {
+      "id": "archived",
+      "type": "success",
+      "label": "只读归档",
+      "sublabel": "旧对话只读；活动文档已重置",
+      "lane": "terminal",
+      "col": 2
+    }
   ],
   "transitions": [
-    { "id": "g1", "from": "empty", "to": "active", "route": "straight" },
-    { "id": "g2", "from": "active", "to": "soft", "route": "straight" },
-    { "id": "g3", "from": "soft", "to": "hard", "route": "straight" },
-    { "id": "g5", "from": "hard", "to": "archiveCheck", "route": "straight" },
-    { "id": "g6", "from": "archiveCheck", "to": "archived", "route": "drop" },
-    { "id": "g9", "from": "active", "to": "quarantine", "route": "drop" },
-    { "id": "g10", "from": "quarantine", "to": "migrate", "route": "straight" }
+    {
+      "id": "g1",
+      "from": "empty",
+      "to": "active",
+      "route": "straight"
+    },
+    {
+      "id": "g2",
+      "from": "active",
+      "to": "soft",
+      "route": "straight"
+    },
+    {
+      "id": "g3",
+      "from": "soft",
+      "to": "hard",
+      "route": "straight"
+    },
+    {
+      "id": "g5",
+      "from": "hard",
+      "to": "archiveCheck",
+      "route": "straight"
+    },
+    {
+      "id": "g6",
+      "from": "archiveCheck",
+      "to": "archived",
+      "route": "drop"
+    },
+    {
+      "id": "g9",
+      "from": "active",
+      "to": "quarantine",
+      "route": "drop"
+    },
+    {
+      "id": "g10",
+      "from": "quarantine",
+      "to": "migrate",
+      "route": "straight"
+    },
+    {
+      "id": "g4",
+      "from": "active",
+      "to": "migrate",
+      "route": "drop"
+    }
   ],
   "cards": [
-    { "dot": "rose", "title": "硬限制与归档", "items": ["允许已发送轮次完成", "用户可主动归档；归档失败保持原活动对话", "归档校验成功后重置，等待新对话"] },
-    { "dot": "cyan", "title": "SQLite 触发", "items": ["软阈值 p95 超过 500ms", "跨归档查询、并发写入或频繁触达硬上限"] }
+    {
+      "dot": "rose",
+      "title": "硬限制与归档",
+      "items": [
+        "超过硬阈值时阻止新发送；已开始轮次可完成",
+        "归档先写入并读回校验，再原子发布后重置活动文档",
+        "归档或重置失败时保留原活动内容；已发布归档不会丢失"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "存储扩展评估",
+      "items": [
+        "软阈值样本记录 load / save 的 p95；超过 500ms 时评估 SQLite",
+        "跨归档查询、并发写入或频繁触及硬阈值时评估升级"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "迁移与隔离",
+      "items": [
+        "支持的旧 schema 先备份再迁移；损坏文档可从有效备份恢复",
+        "未知未来 schema 保持隔离，不降级覆盖；隔离文档可查看或恢复"
+      ]
+    }
   ]
 }

@@ -12,10 +12,19 @@ import { AboutModal } from './components/AboutModal'
 import { RelicEditor } from './relic/RelicEditor'
 import { ProjectConversationProvider, usePrepareForProjectSwitch } from './ai-conversation/ProjectConversationContext'
 import { ProjectConversationDrawer } from './ai-conversation/ProjectConversationDrawer'
+import { ModManager } from './mod-manager/ModManager'
 import { cardCatalogActions } from './card/cardCatalog'
 import * as FileService from './services/FileService'
 
-type Tab = 'cards' | 'relics' | 'files' | 'test'
+type Tab = 'cards' | 'relics' | 'mods' | 'files' | 'test'
+
+const tabLabels: Record<Tab, string> = {
+  cards: '卡牌编辑器',
+  relics: '遗物编辑器',
+  mods: 'Mod 管理器',
+  files: '文件浏览',
+  test: '游戏测试',
+}
 
 function App() {
   const projectRoot = useProjectStore(state => state.projectRoot)
@@ -66,11 +75,18 @@ function AppContent() {
     setActiveTab('cards')
   }
 
+  const projectName = modManifest?.name || projectRoot?.split(/[/\\]/).filter(Boolean).pop() || null
+
   return (
     <div className="app">
-      {/* 顶部栏 */}
       <header className="header">
-        <h1>🎮 Mod Studio</h1>
+        <div className="brand-lockup">
+          <span className="brand-seal" aria-hidden="true">MS</span>
+          <div className="brand-copy">
+            <span className="brand-eyebrow">SLAY THE SPIRE 2 · CREATOR STUDIO</span>
+            <h1>Mod Studio</h1>
+          </div>
+        </div>
         <div className="header-actions">
           <ThemeToggle />
           <button className="info-btn" onClick={() => setShowAbout(true)} title="关于">
@@ -88,114 +104,176 @@ function AppContent() {
         </div>
       </header>
 
-      {/* 标签栏 */}
-      <nav className="tabs">
-        <button
-          className={activeTab === 'cards' ? 'active' : ''}
-          onClick={() => setActiveTab('cards')}
-        >
-          🃏 卡牌编辑器
-        </button>
-        <button
-          className={activeTab === 'relics' ? 'active' : ''}
-          onClick={() => setActiveTab('relics')}
-        >
-          📜 遗物编辑器
-        </button>
-        <button
-          className={activeTab === 'test' ? 'active' : ''}
-          onClick={() => setActiveTab('test')}
-        >
-          🎮 游戏测试
-        </button>
-        <button
-          className={activeTab === 'files' ? 'active' : ''}
-          onClick={() => setActiveTab('files')}
-        >
-          📁 文件浏览
-        </button>
-      </nav>
+      <div className="app-frame">
+        <aside className="app-sidebar" aria-label="工作区导航">
+          <div className="sidebar-project">
+            <span className="project-avatar" aria-hidden="true">{projectName?.slice(0, 1) || 'S'}</span>
+            <span className="sidebar-project-copy">
+              <strong>{projectName || '未打开项目'}</strong>
+              <span>{projectRoot ? '当前工作项目' : 'Slay the Spire 2'}</span>
+            </span>
+            <span className={`project-light ${projectRoot ? 'is-ready' : ''}`} aria-hidden="true" />
+          </div>
 
-      {/* 主内容区 */}
-      <div className="workspace-shell">
-      <main className="main">
-        {/* 卡牌编辑器 */}
-        {/*
-         * CardEditor 只保留一个实例，并在切换标签时保持挂载。
-         * AI 提案和其它跨标签编辑会更新同一份 CardDocument；如果这里卸载
-         * 编辑器，其自动保存 effect 也会被卸载，切回 Card 时会从磁盘读回旧稿。
-         */}
-        <div
-          className="editor-area"
-          style={{ display: activeTab === 'cards' ? undefined : 'none' }}
-          aria-hidden={activeTab !== 'cards'}
-        >
-          {projectRoot ? (
-            <CardEditor projectPath={projectRoot} />
-          ) : (
-            <div className="no-project">
-              <h2>请先打开或创建项目</h2>
-              <p>使用顶部的「新建项目」或「打开项目」按钮开始</p>
-              <div className="quick-actions">
-                <button className="secondary-btn" onClick={() => setShowNewProject(true)}>
-                  📁 新建项目
-                </button>
-                <button onClick={() => void handleOpenProject()}>
-                  📂 打开项目
-                </button>
-              </div>
+          <nav className="side-nav" aria-label="创作工具">
+            <p className="nav-section-label">创作工具</p>
+            <button
+              className={activeTab === 'cards' ? 'active' : ''}
+              aria-current={activeTab === 'cards' ? 'page' : undefined}
+              onClick={() => setActiveTab('cards')}
+            >
+              <span className="nav-icon" aria-hidden="true">🃏</span><span>卡牌编辑器</span>
+            </button>
+            <button
+              className={activeTab === 'relics' ? 'active' : ''}
+              aria-current={activeTab === 'relics' ? 'page' : undefined}
+              onClick={() => setActiveTab('relics')}
+            >
+              <span className="nav-icon" aria-hidden="true">📜</span><span>遗物编辑器</span>
+            </button>
+
+            <p className="nav-section-label nav-section-spaced">项目工具</p>
+            <button
+              className={activeTab === 'mods' ? 'active' : ''}
+              aria-current={activeTab === 'mods' ? 'page' : undefined}
+              onClick={() => setActiveTab('mods')}
+            >
+              <span className="nav-icon" aria-hidden="true">🧩</span><span>Mod 管理器</span>
+            </button>
+            <button
+              className={activeTab === 'files' ? 'active' : ''}
+              aria-current={activeTab === 'files' ? 'page' : undefined}
+              onClick={() => setActiveTab('files')}
+            >
+              <span className="nav-icon" aria-hidden="true">📁</span><span>文件浏览</span>
+            </button>
+            <button
+              className={activeTab === 'test' ? 'active' : ''}
+              aria-current={activeTab === 'test' ? 'page' : undefined}
+              onClick={() => setActiveTab('test')}
+            >
+              <span className="nav-icon" aria-hidden="true">🎮</span><span>游戏测试</span>
+            </button>
+          </nav>
+
+          <div className="sidebar-footer">
+            <div className="sidebar-footer-prompt">
+              <span className="sidebar-footer-mark" aria-hidden="true">✦</span>
+              <div><strong>创作从这里开始</strong><span>打开项目后解锁完整工作区</span></div>
             </div>
-          )}
-        </div>
-
-        {/* 遗物编辑器（节点编辑器 v0.4 端到端） */}
-        {activeTab === 'relics' && (
-          <div className="editor-area">
-            <RelicEditor />
+            <button className="sidebar-settings-entry" onClick={() => setShowSettings(true)}>
+              <span aria-hidden="true">⚙</span> 设置与 API Key
+            </button>
           </div>
-        )}
+        </aside>
 
-        {/* 游戏测试 */}
-        {activeTab === 'test' && (
-          <div className="test-area">
-            <GameLauncher
-              gamePath={gamePath}
-              projectPath={projectRoot}
-              onOpenSettings={() => setShowSettings(true)}
-            />
+        <section className="content-column">
+          <div className="workspace-heading">
+            <div>
+              <p className="workspace-kicker">MOD STUDIO <span>/</span> {projectName || 'WORKSPACE'}</p>
+              <h2>{tabLabels[activeTab]}</h2>
+            </div>
+            <div className={`project-status ${projectRoot ? 'is-ready' : ''}`}>
+              <span className="project-light" aria-hidden="true" />
+              {projectName || '还没有打开项目'}
+            </div>
+          </div>
 
-            {projectRoot && (
-              <div className="project-summary">
-                <h3>📦 当前项目</h3>
-                <div className="summary-item">
-                  <span className="label">名称:</span>
-                  <span className="value">{modManifest?.name || '未知'}</span>
-                </div>
-                <div className="summary-item">
-                  <span className="label">ID:</span>
-                  <span className="value">{modManifest?.id || '未知'}</span>
-                </div>
-                <div className="summary-item">
-                  <span className="label">版本:</span>
-                  <span className="value">{modManifest?.version || '1.0.0'}</span>
-                </div>
-                <button
-                  className="show-folder-btn"
-                  onClick={() => useProjectStore.getState().showInFolder()}
-                >
-                  📂 在文件夹中显示
-                </button>
+          <div className="workspace-shell">
+            <main className="main">
+              {/* Keep one editor mounted so AI proposals and autosave share one document. */}
+              <div
+                className="editor-area"
+                style={{ display: activeTab === 'cards' ? undefined : 'none' }}
+                aria-hidden={activeTab !== 'cards'}
+              >
+                {projectRoot ? (
+                  <CardEditor projectPath={projectRoot} />
+                ) : (
+                  <div className="no-project">
+                    <div className="welcome-hero">
+                      <span className="welcome-kicker">SLAY THE SPIRE 2 · MOD CREATION</span>
+                      <h2>把你的想法，做成一张新卡牌</h2>
+                      <p>从一个 Mod 项目开始，设计卡牌与遗物，再在游戏中亲自试玩。</p>
+                      <div className="quick-actions">
+                        <button className="secondary-btn" onClick={() => setShowNewProject(true)}>
+                          <span aria-hidden="true">＋</span> 新建项目
+                        </button>
+                        <button onClick={() => void handleOpenProject()}>
+                          <span aria-hidden="true">↗</span> 打开项目
+                        </button>
+                      </div>
+                    </div>
+                    <div className="welcome-features" aria-label="Mod Studio 功能">
+                      <div className="welcome-feature-card">
+                        <span className="feature-icon feature-cards" aria-hidden="true">🃏</span>
+                        <div><strong>卡牌创作</strong><span>编辑属性、描述与效果</span></div>
+                        <span className="feature-arrow" aria-hidden="true">›</span>
+                      </div>
+                      <div className="welcome-feature-card">
+                        <span className="feature-icon feature-relics" aria-hidden="true">📜</span>
+                        <div><strong>遗物设计</strong><span>构建专属遗物与触发逻辑</span></div>
+                        <span className="feature-arrow" aria-hidden="true">›</span>
+                      </div>
+                      <div className="welcome-feature-card">
+                        <span className="feature-icon feature-ai" aria-hidden="true">✦</span>
+                        <div><strong>AI 创作助手</strong><span>在工作区边聊边完善提案</span></div>
+                        <span className="feature-arrow" aria-hidden="true">›</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        )}
 
-        {/* 文件浏览器 */}
-        {activeTab === 'files' && (
-          <FileBrowser browsePath={browsePath} onNavigate={navigateToDir} />
-        )}
-      </main>
-      <ProjectConversationDrawer onOpenCard={handleOpenCardFromConversation} />
+              {activeTab === 'relics' && (
+                <div className="editor-area"><RelicEditor /></div>
+              )}
+
+              {activeTab === 'mods' && (
+                <ModManager gamePath={gamePath} onOpenSettings={() => setShowSettings(true)} />
+              )}
+
+              {activeTab === 'test' && (
+                <div className="test-area">
+                  <GameLauncher
+                    gamePath={gamePath}
+                    projectPath={projectRoot}
+                    onOpenSettings={() => setShowSettings(true)}
+                  />
+
+                  {projectRoot && (
+                    <div className="project-summary">
+                      <h3>📦 当前项目</h3>
+                      <div className="summary-item">
+                        <span className="label">名称:</span>
+                        <span className="value">{modManifest?.name || '未知'}</span>
+                      </div>
+                      <div className="summary-item">
+                        <span className="label">ID:</span>
+                        <span className="value">{modManifest?.id || '未知'}</span>
+                      </div>
+                      <div className="summary-item">
+                        <span className="label">版本:</span>
+                        <span className="value">{modManifest?.version || '1.0.0'}</span>
+                      </div>
+                      <button
+                        className="show-folder-btn"
+                        onClick={() => useProjectStore.getState().showInFolder()}
+                      >
+                        📂 在文件夹中显示
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'files' && (
+                <FileBrowser browsePath={browsePath} onNavigate={navigateToDir} />
+              )}
+            </main>
+            <ProjectConversationDrawer onOpenCard={handleOpenCardFromConversation} />
+          </div>
+        </section>
       </div>
 
       {/* 任务引导 */}
@@ -225,159 +303,6 @@ function AppContent() {
         onClose={() => setShowAbout(false)}
       />
 
-      <style>{`
-        .app {
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-        }
-
-        .header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px 20px;
-          background: var(--bg-secondary);
-          border-bottom: 1px solid var(--border);
-        }
-
-        .header h1 {
-          font-size: 18px;
-          font-weight: 600;
-        }
-
-        .header-actions {
-          display: flex;
-          gap: 8px;
-          align-items: center;
-        }
-
-        .theme-toggle, .info-btn, .settings-btn {
-          background: transparent;
-          padding: 8px 12px;
-          font-size: 18px;
-        }
-
-        .secondary-btn {
-          background: var(--bg-tertiary);
-          color: var(--text-primary);
-        }
-
-        .tabs {
-          display: flex;
-          gap: 0;
-          background: var(--bg-secondary);
-          border-bottom: 1px solid var(--border);
-          padding: 0 12px;
-        }
-
-        .tabs button {
-          background: transparent;
-          color: var(--text-secondary);
-          padding: 12px 20px;
-          border-radius: 0;
-          border-bottom: 2px solid transparent;
-          transition: all 0.15s;
-        }
-
-        .tabs button:hover {
-          color: var(--text-primary);
-          background: var(--bg-tertiary);
-        }
-
-        .tabs button.active {
-          color: var(--accent);
-          border-bottom-color: var(--accent);
-        }
-
-        .workspace-shell {
-          display: flex;
-          flex: 1;
-          min-height: 0;
-          position: relative;
-          overflow: hidden;
-        }
-
-        .main {
-          display: flex;
-          flex: 1 1 auto;
-          min-width: 0;
-          overflow: hidden;
-        }
-
-        .editor-area, .test-area {
-          flex: 1;
-          display: flex;
-          overflow: hidden;
-        }
-
-        .test-area {
-          flex-direction: column;
-          padding: 16px;
-          gap: 16px;
-        }
-
-        .no-project {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          text-align: center;
-          padding: 40px;
-        }
-
-        .no-project h2 {
-          font-size: 20px;
-          margin-bottom: 12px;
-        }
-
-        .no-project p {
-          color: var(--text-secondary);
-          margin-bottom: 24px;
-        }
-
-        .quick-actions {
-          display: flex;
-          gap: 12px;
-        }
-
-        .project-summary {
-          background: var(--bg-secondary);
-          border-radius: 8px;
-          padding: 16px;
-          margin-top: 16px;
-        }
-
-        .project-summary h3 {
-          font-size: 14px;
-          font-weight: 600;
-          margin: 0 0 12px 0;
-        }
-
-        .summary-item {
-          display: flex;
-          justify-content: space-between;
-          padding: 6px 0;
-          font-size: 13px;
-        }
-
-        .summary-item .label {
-          color: var(--text-secondary);
-        }
-
-        .summary-item .value {
-          color: var(--text-primary);
-        }
-
-        .show-folder-btn {
-          width: 100%;
-          margin-top: 12px;
-          background: var(--bg-tertiary);
-          color: var(--text-primary);
-        }
-
-      `}</style>
     </div>
   )
 }
@@ -396,7 +321,7 @@ function FileBrowser({ browsePath, onNavigate }: { browsePath: string | null; on
 
   return (
     <>
-      <aside className="sidebar">
+      <aside className="file-sidebar">
         <div className="path-bar">
           <button onClick={navigateUp}>⬆️</button>
           <span className="current-path">{browsePath.split(/[/\\]/).pop()}</span>
@@ -441,155 +366,7 @@ function FileBrowser({ browsePath, onNavigate }: { browsePath: string | null; on
         )}
       </section>
 
-      <style>{`
-        .sidebar {
-          width: 280px;
-          background: var(--bg-secondary);
-          border-right: 1px solid var(--border);
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
 
-        .path-bar {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 12px;
-          border-bottom: 1px solid var(--border);
-        }
-
-        .path-bar button {
-          padding: 4px 8px;
-          font-size: 12px;
-          min-width: 32px;
-        }
-
-        .current-path {
-          font-size: 13px;
-          color: var(--text-secondary);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          flex: 1;
-        }
-
-        .file-list {
-          flex: 1;
-          overflow-y: auto;
-          padding: 8px;
-        }
-
-        .file-item {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 8px 12px;
-          border-radius: 4px;
-          cursor: pointer;
-          transition: background 0.15s;
-        }
-
-        .file-item:hover {
-          background: var(--bg-tertiary);
-        }
-
-        .file-item.selected {
-          background: var(--accent);
-          color: white;
-        }
-
-        .file-item .icon {
-          font-size: 16px;
-        }
-
-        .file-item .name {
-          font-size: 14px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .content {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-
-        .file-content {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-        }
-
-        .content-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 12px 16px;
-          background: var(--bg-secondary);
-          border-bottom: 1px solid var(--border);
-          font-size: 14px;
-          font-weight: 500;
-        }
-
-        .close-btn {
-          background: transparent;
-          color: var(--text-secondary);
-          padding: 4px 8px;
-          font-size: 18px;
-          line-height: 1;
-        }
-
-        .close-btn:hover {
-          color: var(--accent);
-        }
-
-        .code-preview {
-          flex: 1;
-          margin: 0;
-          padding: 16px;
-          overflow: auto;
-          background: var(--bg-primary);
-          font-family: 'Fira Code', 'Consolas', monospace;
-          font-size: 13px;
-          line-height: 1.5;
-        }
-
-        .code-preview code {
-          color: var(--text-primary);
-        }
-
-        .welcome {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          text-align: center;
-          padding: 40px;
-        }
-
-        .welcome h2 {
-          font-size: 24px;
-          margin-bottom: 16px;
-        }
-
-        .welcome > p {
-          color: var(--text-secondary);
-        }
-
-        .empty, .loading, .empty-state {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          width: 100%;
-          color: var(--text-secondary);
-          font-size: 14px;
-        }
-      `}</style>
     </>
   )
 }

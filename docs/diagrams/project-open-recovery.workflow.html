@@ -5050,13 +5050,13 @@
 
 
         <!-- Edge paths -->
-        <path data-edge-from="open" data-edge-to="flush" data-edge-key="0" data-edge-id="p1" data-composition-points="88,145;88,243;150,243" d="M 88 145 L 88 243 L 150 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="open" data-edge-to="flush" data-edge-key="0" data-edge-id="p1" data-composition-points="88,145;88,243;142.5,243" d="M 88 145 L 88 243 L 142.5 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="flush" data-edge-to="scan" data-edge-key="1" data-edge-id="p2" data-composition-points="220,269;220,367;247.5,367" d="M 220 269 L 220 367 L 247.5 367" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="scan" data-edge-to="classify" data-edge-key="2" data-edge-id="p3" data-composition-points="352.5,367;384,367" d="M 352.5 367 L 384 367" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="classify" data-edge-to="loadEditable" data-edge-key="3" data-edge-id="p4" data-composition-points="430,341;430,243;450,243" d="M 430 341 L 430 243 L 450 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="loadEditable" data-edge-to="catalogReady" data-edge-key="4" data-edge-id="p5" data-composition-points="550,243;581,243" d="M 550 243 L 581 243" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <path data-edge-from="classify" data-edge-to="migrate" data-edge-key="5" data-edge-id="p6" data-composition-points="430,393;430,414;430,414;430,465" d="M 430 393 L 430 414 L 430 414 L 430 465" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="classify" data-edge-to="readonly" data-edge-key="6" data-edge-id="p8" data-composition-points="476,367;476,414;581,414;581,491" d="M 476 367 L 476 414 L 581 414 L 581 491" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="classify" data-edge-to="readonly" data-edge-key="6" data-edge-id="p8" data-composition-points="476,367;476,414;570,414;570,491" d="M 476 367 L 476 414 L 570 414 L 570 491" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
 
         <!-- Nodes -->
         <g id="node-open" data-node-id="open" data-node-label="打开或切换项目" tabindex="0" role="button" aria-label="聚焦打开或切换项目，用户" aria-pressed="false" data-node-kind="external" data-node-context="用户">
@@ -5070,26 +5070,27 @@
           <text data-node-label="" x="88" y="114" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">打开或切换项目</text>
         </g>
 
-        <g id="node-flush" data-node-id="flush" data-node-label="flush 旧项目草稿" tabindex="0" role="button" aria-label="聚焦flush 旧项目草稿，运行 AI 时先完成或取消, 项目生命周期" aria-pressed="false" data-node-kind="backend" data-node-sublabel="运行 AI 时先完成或取消" data-node-context="项目生命周期">
-          <title>flush 旧项目草稿 · 运行 AI 时先完成或取消 · 项目生命周期</title>
-          <rect x="150" y="217" width="140" height="52" rx="6" class="c-mask"/>
-          <rect x="150" y="217" width="140" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(156 223) scale(0.6875)">
+        <g id="node-flush" data-node-id="flush" data-node-label="切换守卫：flush 草稿" tabindex="0" role="button" aria-label="聚焦切换守卫：flush 草稿，等待事务；运行 AI 时确认取消, 项目生命周期" aria-pressed="false" data-node-kind="backend" data-node-sublabel="等待事务；运行 AI 时确认取消" data-node-context="项目生命周期">
+          <title>切换守卫：flush 草稿 · 等待事务；运行 AI 时确认取消 · 项目生命周期</title>
+          <rect x="142.5" y="217" width="155" height="52" rx="6" class="c-mask"/>
+          <rect x="142.5" y="217" width="155" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(148.5 223) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="220" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">flush 旧项目草稿</text>
-          <text data-detail="context" x="220" y="255" class="t-muted" font-size="8" text-anchor="middle">运行 AI 时先完成或取消</text>
+          <text data-node-label="" data-detail-anchor="" x="220" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">切换守卫：flush 草稿</text>
+          <text data-detail="context" x="220" y="255" class="t-muted" font-size="8" text-anchor="middle">等待事务；运行 AI 时确认取消</text>
         </g>
 
-        <g id="node-scan" data-node-id="scan" data-node-label="扫描 Card 文档" tabindex="0" role="button" aria-label="聚焦扫描 Card 文档，CardRepository" aria-pressed="false" data-node-kind="database" data-node-context="CardRepository">
-          <title>扫描 Card 文档 · CardRepository</title>
+        <g id="node-scan" data-node-id="scan" data-node-label="扫描 Card 文档" tabindex="0" role="button" aria-label="聚焦扫描 Card 文档，项目源文件, CardRepository" aria-pressed="false" data-node-kind="database" data-node-sublabel="项目源文件" data-node-context="CardRepository">
+          <title>扫描 Card 文档 · 项目源文件 · CardRepository</title>
           <rect x="247.5" y="341" width="105" height="52" rx="6" class="c-mask"/>
           <rect x="247.5" y="341" width="105" height="52" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(253.5 347) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" x="300" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">扫描 Card 文档</text>
+          <text data-node-label="" data-detail-anchor="" x="300" y="362" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">扫描 Card 文档</text>
+          <text data-detail="context" x="300" y="379" class="t-muted" font-size="8" text-anchor="middle">项目源文件</text>
         </g>
 
         <g id="node-classify" data-node-id="classify" data-node-label="逐 Card 分类" tabindex="0" role="button" aria-label="聚焦逐 Card 分类，CardRepository" aria-pressed="false" data-node-kind="security" data-node-context="CardRepository">
@@ -5126,27 +5127,27 @@
           <text data-node-label="" x="625" y="238" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">目录就绪</text>
         </g>
 
-        <g id="node-migrate" data-node-id="migrate" data-node-label="已知 schema 迁移" tabindex="0" role="button" aria-label="聚焦已知 schema 迁移，备份后逐版本升级, 迁移与隔离" aria-pressed="false" data-node-kind="backend" data-node-sublabel="备份后逐版本升级" data-node-context="迁移与隔离">
-          <title>已知 schema 迁移 · 备份后逐版本升级 · 迁移与隔离</title>
-          <rect x="372.5" y="465" width="115" height="52" rx="6" class="c-mask"/>
-          <rect x="372.5" y="465" width="115" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(378.5 471) scale(0.6875)">
+        <g id="node-migrate" data-node-id="migrate" data-node-label="已知版本迁移" tabindex="0" role="button" aria-label="聚焦已知版本迁移，先备份，再逐版本升级, 迁移与隔离" aria-pressed="false" data-node-kind="backend" data-node-sublabel="先备份，再逐版本升级" data-node-context="迁移与隔离">
+          <title>已知版本迁移 · 先备份，再逐版本升级 · 迁移与隔离</title>
+          <rect x="367.5" y="465" width="125" height="52" rx="6" class="c-mask"/>
+          <rect x="367.5" y="465" width="125" height="52" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(373.5 471) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="430" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">已知 schema 迁移</text>
-          <text data-detail="context" x="430" y="503" class="t-muted" font-size="8" text-anchor="middle">备份后逐版本升级</text>
+          <text data-node-label="" data-detail-anchor="" x="430" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">已知版本迁移</text>
+          <text data-detail="context" x="430" y="503" class="t-muted" font-size="8" text-anchor="middle">先备份，再逐版本升级</text>
         </g>
 
-        <g id="node-readonly" data-node-id="readonly" data-node-label="只读隔离" tabindex="0" role="button" aria-label="聚焦只读隔离，未来 schema / kind, 迁移与隔离" aria-pressed="false" data-node-kind="security" data-node-sublabel="未来 schema / kind" data-node-context="迁移与隔离">
-          <title>只读隔离 · 未来 schema / kind · 迁移与隔离</title>
-          <rect x="581" y="465" width="88" height="52" rx="6" class="c-mask"/>
-          <rect x="581" y="465" width="88" height="52" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(587 471) scale(0.6875)">
+        <g id="node-readonly" data-node-id="readonly" data-node-label="只读隔离保留" tabindex="0" role="button" aria-label="聚焦只读隔离保留，未知 schema / kind, 迁移与隔离" aria-pressed="false" data-node-kind="security" data-node-sublabel="未知 schema / kind" data-node-context="迁移与隔离">
+          <title>只读隔离保留 · 未知 schema / kind · 迁移与隔离</title>
+          <rect x="570" y="465" width="110" height="52" rx="6" class="c-mask"/>
+          <rect x="570" y="465" width="110" height="52" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(576 471) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="625" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">只读隔离</text>
-          <text data-detail="context" x="625" y="503" class="t-muted" font-size="7.4" text-anchor="middle">未来 schema / kind</text>
+          <text data-node-label="" data-detail-anchor="" x="625" y="486" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">只读隔离保留</text>
+          <text data-detail="context" x="625" y="503" class="t-muted" font-size="8" text-anchor="middle">未知 schema / kind</text>
         </g>
 
         <!-- Edge labels -->
@@ -5374,7 +5375,7 @@
           <h3>迁移与隔离</h3>
         </div>
         <ul>
-          <li>&bull; 迁移成功后进入可编辑装载</li>
+          <li>&bull; 迁移成功后进入可编辑装载；失败数据保留原文</li>
           <li>&bull; 单张 Card 故障不阻止其余 Card</li>
           <li>&bull; 未知数据保留原文而非丢弃</li>
         </ul>
@@ -5386,7 +5387,7 @@
           <h3>正常路径</h3>
         </div>
         <ul>
-          <li>&bull; 只读取 CardDocument</li>
+          <li>&bull; CardDocument 是编辑状态的权威来源</li>
           <li>&bull; 旧 C# 导入是独立的用户显式流程</li>
         </ul>
       </div>

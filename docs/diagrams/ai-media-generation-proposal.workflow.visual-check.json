@@ -5,9 +5,9 @@
   "status": "skipped",
   "visualReview": "pending",
   "artifact": {
-    "path": "/home/xingyahui/mod-studio/docs/diagrams/project-architecture.architecture.html",
-    "sha256": "780b52cac3dac79fbd72c45bfe8b6251becce4fa4d53c6e8ce85f6ef4d14731c",
-    "bytes": 710273
+    "path": "/home/xingyahui/mod-studio/docs/diagrams/ai-media-generation-proposal.workflow.html",
+    "sha256": "33240b9d6814b11aebab4521d301951fea6d04bc17926bd5e61ed85b3b950827",
+    "bytes": 713881
   },
   "state": {
     "detail": "read",
@@ -23,7 +23,7 @@
       "severity": "warning",
       "message": "Chrome or Chromium is unavailable. Set ARCHIFY_CHROME to its executable path.",
       "subject": {
-        "artifact": "/home/xingyahui/mod-studio/docs/diagrams/project-architecture.architecture.html"
+        "artifact": "/home/xingyahui/mod-studio/docs/diagrams/ai-media-generation-proposal.workflow.html"
       },
       "evidence": {
         "executable": null
@@ -52,8 +52,8 @@
     "contactSheet": null
   },
   "sidecars": {
-    "receipt": "project-architecture.architecture.visual-check.json",
-    "contactSheet": "project-architecture.architecture.visual-check.html"
+    "receipt": "ai-media-generation-proposal.workflow.visual-check.json",
+    "contactSheet": "ai-media-generation-proposal.workflow.visual-check.html"
   },
   "error": "Chrome or Chromium is unavailable. Set ARCHIFY_CHROME to its executable path."
 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HTTPAdapter } from './httpAdapter'
+import { fetchProviderModels, HTTPAdapter } from './httpAdapter'
+import { createProviderSettings } from '../providerSettings'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -69,5 +70,104 @@ describe('HTTPAdapter cancellation', () => {
     expect(result.error).not.toContain(secret)
     expect(result.error).toContain('[REDACTED]')
     expect(adapter.diagnostics()).toEqual({ provider: 'qwen', model: 'qwen-turbo', requestId: 'request-42' })
+  })
+})
+
+describe('provider protocols and model discovery', () => {
+  it('calls OpenAI compatible providers with the selected model and key', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ choices: [{ message: { content: 'ready' } }] }),
+    } as Response)
+
+    const result = await new HTTPAdapter('qwen', { apiKey: 'test-key', model: 'qwen-plus' }).generate('hello')
+
+    expect(result).toEqual({ success: true, content: 'ready' })
+    expect(fetch).toHaveBeenCalledWith(
+      'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
+        body: expect.stringContaining('qwen-plus'),
+      }),
+    )
+  })
+
+  it('passes provider-specific body fields and thinking options through compatible APIs', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ choices: [{ message: { content: 'ready' } }] }),
+    } as Response)
+
+    await new HTTPAdapter('qwen', {
+      apiKey: 'test-key',
+      model: 'qwen-plus',
+      enableThinking: true,
+      extraBodyJson: '{"service_tier":"priority"}',
+    }).generate('hello')
+
+    const body = JSON.parse(String(fetch.mock.calls[0][1]?.body))
+    expect(body).toMatchObject({ enable_thinking: true, service_tier: 'priority' })
+  })
+
+  it('sends Anthropic Messages requests with x-api-key and parses text blocks', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ content: [{ type: 'text', text: 'anthropic ready' }] }),
+    } as Response)
+
+    const result = await new HTTPAdapter('anthropic', { apiKey: 'anthropic-key', model: 'claude-test' }).generate('hello')
+
+    expect(result).toEqual({ success: true, content: 'anthropic ready' })
+    expect(fetch).toHaveBeenCalledWith('https://api.anthropic.com/v1/messages', expect.objectContaining({
+      headers: expect.objectContaining({ 'x-api-key': 'anthropic-key', 'anthropic-version': '2023-06-01' }),
+    }))
+  })
+
+  it('sends Gemini API keys as query parameters and parses generated candidates', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ candidates: [{ content: { parts: [{ text: 'gemini ready' }] } }] }),
+    } as Response)
+
+    const result = await new HTTPAdapter('gemini', { apiKey: 'gemini-key', model: 'gemini-2.5-flash' }).generate('hello')
+
+    expect(result).toEqual({ success: true, content: 'gemini ready' })
+    expect(String(fetch.mock.calls[0][0])).toContain('/v1beta/models/gemini-2.5-flash:generateContent?key=gemini-key')
+  })
+
+  it('fetches model IDs through a provider-specific protocol endpoint', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ models: [{ name: 'models/gemini-2.5-flash', displayName: 'Gemini 2.5 Flash' }] }),
+    } as Response)
+    const gemini = createProviderSettings('gemini')
+
+    await expect(fetchProviderModels(gemini, 'gemini-key')).resolves.toEqual([
+      { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+    ])
+    expect(String(fetch.mock.calls[0][0])).toContain('/v1beta/models?key=gemini-key')
+  })
+
+  it('rejects unsupported provider response shapes without exposing the key', async () => {
+    const secret = 'private-key-value'
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 401,
+      headers: new Headers(),
+      json: async () => ({ error: { message: `bad token ${secret}` } }),
+    } as Response)
+
+    await expect(fetchProviderModels(createProviderSettings('qwen'), secret)).rejects.toThrow('[REDACTED]')
   })
 })
