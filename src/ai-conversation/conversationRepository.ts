@@ -44,7 +44,7 @@ export type ConversationArchiveReadResult =
 
 export type ConversationArchiveAndResetResult =
   | { ok: true; archiveId: string }
-  | { ok: false; error: string; certainty: 'unchanged' | 'uncertain' }
+  | { ok: false; error: string; certainty: 'unchanged' | 'uncertain'; code?: 'archive-target-exists' }
 
 export interface ConversationQuarantineSummary {
   quarantineId: string
@@ -297,8 +297,10 @@ export function createConversationRepository(
           if (!Number.isFinite(Date.parse(resetAt))) return { ok: false as const, error: '重置时间无效', certainty: 'unchanged' as const }
           const archiveDir = archivesDirectory(projectPath)
           if (!await files.mkdir(archiveDir)) return { ok: false as const, error: '无法创建归档目录', certainty: 'unchanged' as const }
-          const archiveId = await allocateArchiveId(files, archiveDir, createId)
-          if (!archiveId) return { ok: false as const, error: '无法分配唯一归档 ID', certainty: 'unchanged' as const }
+          const allocation = await allocateArchiveId(files, archiveDir, createId)
+          if (allocation.status === 'exists') return archiveTargetExists()
+          if (allocation.status !== 'allocated') return { ok: false as const, error: '无法分配唯一归档 ID', certainty: 'unchanged' as const }
+          const archiveId = allocation.archiveId
           const archivePath = `${archiveDir}/${archiveId}.json`
           const temporary = `${archivePath}.tmp-${now()}-${safeId(createId())}`
           const content = JSON.stringify(document, null, 2)
@@ -316,10 +318,16 @@ export function createConversationRepository(
             await files.remove(temporary)
             return { ok: false as const, error: '归档临时文件读回校验失败', certainty: 'unchanged' as const }
           }
-          if (!await files.rename(temporary, archivePath)) {
+          const publishedWithoutReplacement = await files.linkNoReplace(temporary, archivePath)
+          if (publishedWithoutReplacement.status === 'exists') {
             await files.remove(temporary)
-            return { ok: false as const, error: '无法原子发布归档文件', certainty: 'unchanged' as const }
+            return archiveTargetExists()
           }
+          if (publishedWithoutReplacement.status !== 'linked') {
+            await files.remove(temporary)
+            return { ok: false as const, error: '无法以 no-replace 方式发布归档文件', certainty: 'unchanged' as const }
+          }
+          await files.remove(temporary)
           const published = await files.readFile(archivePath)
           const publishedDocument = published.status === 'found' ? parseSavedDocument(published.value) : null
           if (published.status !== 'found' || !publishedDocument || published.value !== content || !documentsEqual(publishedDocument, document)) {
@@ -460,16 +468,26 @@ async function saveIfMissing(
   return cleaned ? { ok: true } : { ok: true, warning: '活动对话已恢复，但临时文件清理失败' }
 }
 
-async function allocateArchiveId(files: ConversationFilePort, archiveDir: string, createId: () => string): Promise<string | null> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const base = safeId(createId())
-    const candidate = attempt === 0 ? base : `${base}-${attempt}`
-    if (!isSafeArchiveId(candidate)) continue
-    const existing = await files.readFile(`${archiveDir}/${candidate}.json`)
-    if (existing.status === 'missing') return candidate
-    if (existing.status === 'error') return null
+async function allocateArchiveId(
+  files: ConversationFilePort,
+  archiveDir: string,
+  createId: () => string,
+): Promise<{ status: 'allocated'; archiveId: string } | { status: 'exists' } | { status: 'failed' }> {
+  const candidate = safeId(createId())
+  if (!isSafeArchiveId(candidate)) return { status: 'failed' }
+  const existing = await files.readFile(`${archiveDir}/${candidate}.json`)
+  if (existing.status === 'found') return { status: 'exists' }
+  if (existing.status === 'error') return { status: 'failed' }
+  return { status: 'allocated', archiveId: candidate }
+}
+
+function archiveTargetExists(): ConversationArchiveAndResetResult {
+  return {
+    ok: false,
+    code: 'archive-target-exists',
+    error: '归档目标已存在，未覆盖原归档；活动对话未重置。请处理冲突后重试。',
+    certainty: 'unchanged',
   }
-  return null
 }
 
 function parseRawDocument(content: string): ParsedRaw {

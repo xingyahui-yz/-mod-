@@ -317,7 +317,12 @@ describe('ProjectConversationDrawer', () => {
 
   it('归档失败显示错误且不清空活动草稿', async () => {
     const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
-    repository.archiveAndReset = vi.fn(async () => ({ ok: false as const, error: '磁盘不可写', certainty: 'unchanged' as const }))
+    repository.archiveAndReset = vi.fn(async () => ({
+      ok: false as const,
+      code: 'archive-target-exists' as const,
+      error: '归档目标已存在，未覆盖原归档；活动对话未重置。请处理冲突后重试。',
+      certainty: 'unchanged' as const,
+    }))
     vi.stubGlobal('confirm', vi.fn(() => true))
     renderDrawer('/mods/quiet-depth', repository, successModel('不会调用'))
     const composer = await screen.findByLabelText('发送给项目 AI 的消息')
@@ -325,7 +330,7 @@ describe('ProjectConversationDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
     fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
 
-    expect(await screen.findByText('归档操作失败：磁盘不可写')).toBeTruthy()
+    expect(await screen.findByText('归档操作失败：归档目标已存在，未覆盖原归档；活动对话未重置。请处理冲突后重试。')).toBeTruthy()
     expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('失败后仍保留')
     expect(repository.current?.turns).toHaveLength(1)
   })

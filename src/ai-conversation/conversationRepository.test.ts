@@ -326,7 +326,7 @@ describe('ConversationRepository', () => {
   it('真实目录 rollback 保留旧活动文档', async () => {
     const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-rollback-'))
     const aiDirectory = join(root, '.modstudio/ai')
-    const path = join(aiDirectory, 'conversation.json')
+    const path = join(aiDirectory, 'conversation.json').replaceAll('\\', '/')
     const original = createConversationDocument('2026-09-01T00:00:00Z')
     try {
       await mkdir(aiDirectory, { recursive: true })
@@ -334,7 +334,7 @@ describe('ConversationRepository', () => {
       const base = realFiles()
       const files: ConversationFilePort = {
         ...base,
-        rename: async (from, to) => from.includes('.tmp-') && to === path ? false : base.rename(from, to),
+        rename: async (from, to) => from.includes('.tmp-') && to.replaceAll('\\', '/') === path ? false : base.rename(from, to),
       }
       const result = await createConversationRepository(files, () => 2, () => 'rollback').save(root, createConversationDocument('2026-09-02T00:00:00Z'))
       expect(result).toMatchObject({ ok: false, certainty: 'unchanged' })
@@ -361,6 +361,22 @@ describe('ConversationRepository', () => {
     await expect(repository.readArchive('/project', 'archive-1')).resolves.toEqual({
       ok: true, archiveId: 'archive-1', document: original, rawJson: JSON.stringify(original, null, 2),
     })
+  })
+
+  it('归档 ID 已存在时返回稳定冲突并保留原归档与 active', async () => {
+    const activePath = '/project/.modstudio/ai/conversation.json'
+    const archivePath = '/project/.modstudio/ai/archives/archive-1.json'
+    const original = createConversationDocument('2026-09-01T00:00:00Z')
+    const existingArchive = '{"preserve":"original bytes"}'
+    const memory = memoryFiles({ [activePath]: JSON.stringify(original), [archivePath]: existingArchive })
+    const repository = createConversationRepository(memory.files, () => 5, () => 'archive-1')
+
+    const result = await repository.archiveAndReset('/project', original, '2026-09-02T00:00:00Z')
+
+    expect(result).toMatchObject({ ok: false, code: 'archive-target-exists', certainty: 'unchanged' })
+    expect(memory.data.get(archivePath)).toBe(existingArchive)
+    expect(JSON.parse(memory.data.get(activePath)!)).toEqual(original)
+    expect([...memory.data.keys()].filter(path => path.includes('/archives/'))).toEqual([archivePath])
   })
 
   it('归档写入或发布读回失败时不重置 active', async () => {
@@ -424,6 +440,70 @@ describe('ConversationRepository', () => {
       await expect(repository.listArchives(root)).resolves.toMatchObject({ ok: true, archives: [{ archiveId: 'real-archive', turnCount: 0 }] })
       await expect(repository.readArchive(root, 'real-archive')).resolves.toMatchObject({ ok: true, document: original })
       await expect(repository.readArchive(root, '../conversation')).resolves.toMatchObject({ ok: false })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('真实目录并发归档只允许一个同名目标提交并清理暂存文件', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-archive-race-'))
+    const active = join(root, '.modstudio/ai/conversation.json')
+    const archive = join(root, '.modstudio/ai/archives/shared-archive.json').replaceAll('\\', '/')
+    const first = createConversationDocument('2026-09-01T00:00:00Z')
+    const second = createConversationDocument('2026-09-02T00:00:00Z')
+    const base = realFiles()
+    let allocationReads = 0
+    let releaseAllocation!: () => void
+    const allocationBarrier = new Promise<void>(resolve => { releaseAllocation = resolve })
+    let publishCalls = 0
+    let releasePublish!: () => void
+    const publishBarrier = new Promise<void>(resolve => { releasePublish = resolve })
+    const concurrentFiles = (): ConversationFilePort => ({
+      ...base,
+      readFile: async path => {
+        if (path.replaceAll('\\', '/') === archive) {
+          allocationReads += 1
+          if (allocationReads === 2) releaseAllocation()
+          await allocationBarrier
+        }
+        return base.readFile(path)
+      },
+      rename: async (from, to) => {
+        if (to.replaceAll('\\', '/') === archive) {
+          publishCalls += 1
+          if (publishCalls === 2) releasePublish()
+          await publishBarrier
+        }
+        return base.rename(from, to)
+      },
+      linkNoReplace: async (from, to) => {
+        if (to.replaceAll('\\', '/') === archive) {
+          publishCalls += 1
+          if (publishCalls === 2) releasePublish()
+          await publishBarrier
+        }
+        return base.linkNoReplace(from, to)
+      },
+    })
+    try {
+      await mkdir(join(root, '.modstudio/ai'), { recursive: true })
+      await writeFile(active, JSON.stringify(first), 'utf8')
+      const firstRepository = createConversationRepository(concurrentFiles(), () => 1, () => 'shared-archive')
+      const secondRepository = createConversationRepository(concurrentFiles(), () => 2, () => 'shared-archive')
+
+      const results = await Promise.all([
+        firstRepository.archiveAndReset(root, first, '2026-09-03T00:00:00Z'),
+        secondRepository.archiveAndReset(root, second, '2026-09-04T00:00:00Z'),
+      ])
+      const winnerIndex = results.findIndex(result => result.ok)
+      const loserIndex = winnerIndex === 0 ? 1 : 0
+      const winnerDocument = winnerIndex === 0 ? first : second
+
+      expect(results.filter(result => result.ok)).toHaveLength(1)
+      expect(results[loserIndex]).toMatchObject({ ok: false, code: 'archive-target-exists', certainty: 'unchanged' })
+      expect(JSON.parse(await readFile(archive, 'utf8'))).toEqual(winnerDocument)
+      expect(await readFile(active, 'utf8')).toBe(JSON.stringify(createConversationDocument(winnerIndex === 0 ? '2026-09-03T00:00:00.000Z' : '2026-09-04T00:00:00.000Z'), null, 2))
+      expect((await readdir(join(root, '.modstudio/ai/archives'))).filter(name => name.includes('.tmp-'))).toEqual([])
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -554,15 +634,15 @@ describe('ConversationRepository', () => {
     const root = await mkdtemp(join(tmpdir(), 'modstudio-conversation-restore-race-'))
     const aiDirectory = join(root, '.modstudio/ai')
     const id = 'conversation.json.quarantine-42-race'
-    const quarantinePath = join(aiDirectory, id)
-    const activePath = join(aiDirectory, 'conversation.json')
+    const quarantinePath = join(aiDirectory, id).replaceAll('\\', '/')
+    const activePath = join(aiDirectory, 'conversation.json').replaceAll('\\', '/')
     const quarantined = createConversationDocument('2026-09-01T00:00:00Z')
     const concurrent = createConversationDocument('2026-09-02T00:00:00Z')
     const base = realFiles()
     const files: ConversationFilePort = {
       ...base,
       linkNoReplace: async (from, to) => {
-        if (to === activePath) await writeFile(to, JSON.stringify(concurrent, null, 2), 'utf8')
+        if (to.replaceAll('\\', '/') === activePath) await writeFile(to, JSON.stringify(concurrent, null, 2), 'utf8')
         return base.linkNoReplace(from, to)
       },
     }
