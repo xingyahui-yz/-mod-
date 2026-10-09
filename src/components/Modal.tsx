@@ -2,6 +2,7 @@
  * 共享的Modal组件
  */
 import { ReactNode, useEffect, useId } from 'react'
+import { Icon } from './Icon'
 
 interface ModalProps {
   isOpen: boolean
@@ -40,7 +41,7 @@ export function Modal({ isOpen, onClose, title, children, width = 480 }: ModalPr
       >
         <div className="modal-header">
           <h2 id={titleId}>{title}</h2>
-          <button className="close-btn" onClick={onClose}>×</button>
+          <button className="close-btn" onClick={onClose} aria-label="关闭对话框"><Icon name="close" size={16} /></button>
         </div>
         {children}
       </div>

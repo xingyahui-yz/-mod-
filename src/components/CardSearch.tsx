@@ -3,7 +3,7 @@
  * 搜索条件和过滤逻辑由 CardEditor 持有，本组件只负责展示和回调，
  * 避免通过 useEffect 向父组件回推 filteredCards 造成状态镜像
  */
-import { CardData } from '../types'
+import { CARD_TYPES, type CardData } from '../types'
 import { Icon } from './Icon'
 
 interface CardSearchProps {
@@ -26,7 +26,7 @@ export function CardSearch({
   return (
     <div className="card-search">
       <div className="search-input-wrapper">
-        <span className="search-icon"><Icon name="network" size={14} /></span>
+        <span className="search-icon"><Icon name="search" size={14} /></span>
         <input
           type="text"
           value={searchTerm}
@@ -35,8 +35,8 @@ export function CardSearch({
           className="search-input"
         />
         {searchTerm && (
-          <button className="clear-search" onClick={() => onSearchTermChange('')}>
-            ×
+          <button className="clear-search" onClick={() => onSearchTermChange('')} aria-label="清除搜索">
+            <Icon name="close" size={14} />
           </button>
         )}
       </div>
@@ -48,24 +48,16 @@ export function CardSearch({
         >
           全部
         </button>
-        <button
-          className={`type-filter attack ${typeFilter === 'Attack' ? 'active' : ''}`}
-          onClick={() => onTypeFilterChange('Attack')}
-        >
-          <Icon name="activity" size={13} /> 攻击
-        </button>
-        <button
-          className={`type-filter skill ${typeFilter === 'Skill' ? 'active' : ''}`}
-          onClick={() => onTypeFilterChange('Skill')}
-        >
-          <Icon name="shield" size={13} /> 技能
-        </button>
-        <button
-          className={`type-filter power ${typeFilter === 'Power' ? 'active' : ''}`}
-          onClick={() => onTypeFilterChange('Power')}
-        >
-          <Icon name="cpu" size={13} /> 力量
-        </button>
+        {CARD_TYPES.map(({ value, label, icon }) => (
+          <button
+            key={value}
+            className={`type-filter ${value.toLowerCase()} ${typeFilter === value ? 'active' : ''}`}
+            onClick={() => onTypeFilterChange(value)}
+            title={label}
+          >
+            <Icon name={icon} size={13} /> {label.replace('牌', '')}
+          </button>
+        ))}
       </div>
 
       <div className="result-count">

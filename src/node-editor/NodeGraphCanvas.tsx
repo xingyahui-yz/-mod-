@@ -272,7 +272,7 @@ function NodeBox({ node, pendingFrom, onMouseDown, onRemove, onPortClick }: Node
         data-testid={`remove-${node.id}`}
       >
         <circle r={8} fill="rgba(255,0,0,0.3)" />
-        <text x={-3} y={3} fontSize={10} fill="white">×</text>
+        <path d="M-3 -3 3 3M3 -3-3 3" stroke="white" strokeWidth={1.5} strokeLinecap="round" />
       </g>
     </g>
   )

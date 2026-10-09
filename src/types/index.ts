@@ -110,9 +110,9 @@ export const TUTORIAL_STEPS: TaskStep[] = [
 
 // 卡牌类型选项（用于教程）
 export const CARD_TYPES = [
-  { value: 'Attack', label: '攻击牌', icon: '⚔️', description: '对敌人造成伤害' },
-  { value: 'Skill', label: '技能牌', icon: '🛡️', description: '获得防御或特殊效果' },
-  { value: 'Power', label: '力量牌', icon: '✨', description: '获得永久强化' }
+  { value: 'Attack', label: '攻击牌', icon: 'cardAttack', description: '对敌人造成伤害' },
+  { value: 'Skill', label: '技能牌', icon: 'cardSkill', description: '获得防御或特殊效果' },
+  { value: 'Power', label: '力量牌', icon: 'cardPower', description: '获得永久强化' }
 ] as const
 
 // 稀有度选项

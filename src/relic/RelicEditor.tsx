@@ -262,7 +262,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
               type="button"
               aria-label="关闭连线错误"
             >
-              ×
+              <Icon name="close" size={14} />
             </button>
           </div>
         )}

@@ -882,7 +882,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           <button onClick={() => void handleBatchGenerate()} disabled={saving || cardPersistenceBlocked || !projectPath || cards.length === 0} title="逐张生成当前项目中的 Card">
             <Icon name="code" size={14} /> 批量生成
           </button>
-          <button onClick={openCreateCard}>+ 新建卡牌</button>
+          <button onClick={openCreateCard}><Icon name="plus" size={14} />新建卡牌</button>
         </div>
       </div>
 
@@ -923,10 +923,11 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                 <button
                   className="delete-btn"
                   onClick={(e) => { e.stopPropagation(); void handleDeleteCard(card.id); }}
+                  aria-label={`删除 ${card.name || '未命名'} 卡牌`}
                   disabled={Boolean(projectPath && (isCardPersistenceBlocked(projectPath, card.id) ||
                     hasCardPersistenceFailure(projectPath, card.id)))}
                 >
-                  ×
+                  <Icon name="close" size={14} />
                 </button>
               </div>
                 )

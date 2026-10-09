@@ -24,7 +24,7 @@ const TUTORIAL_CONTENT: TutorialStep[] = [
   },
   {
     title: '创建你的第一张卡牌',
-    content: '点击左侧的「+ 新建卡牌」按钮，开始创建你的第一张卡牌！',
+    content: '点击左侧的「新建卡牌」按钮，开始创建你的第一张卡牌！',
     highlight: '.editor-header'
   },
   {

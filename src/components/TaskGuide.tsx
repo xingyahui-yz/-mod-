@@ -24,7 +24,7 @@ export function TaskGuide() {
         <span className="progress-text">
           {progress.completed}/{progress.total}
         </span>
-        <button className="close-btn" onClick={toggleTaskGuide}>×</button>
+        <button className="close-btn" onClick={toggleTaskGuide} aria-label="关闭任务引导"><Icon name="close" size={16} /></button>
       </div>
 
       <div className="progress-bar">

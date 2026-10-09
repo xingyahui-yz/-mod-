@@ -353,7 +353,7 @@ function FileBrowser({ browsePath, onNavigate }: { browsePath: string | null; on
           <div className="file-content">
             <div className="content-header">
               <span>{selectedFile.split(/[/\\]/).pop()}</span>
-              <button className="close-btn" onClick={clearSelection}>×</button>
+              <button className="close-btn" onClick={clearSelection} aria-label="关闭文件预览"><Icon name="close" size={16} /></button>
             </div>
             <pre className="code-preview">
               <code>{fileContent}</code>
