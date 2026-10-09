@@ -32,10 +32,10 @@ interface NodeGraphCanvasProps {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-  trigger: '#3b82f6',
-  condition: '#a855f7',
-  effect: '#4ade80',
-  branch: '#eab308'
+  trigger: '#c6ca4c',
+  condition: '#c4c4be',
+  effect: '#e0e29b',
+  branch: '#a69b62'
 }
 
 const NODE_TYPE_LABELS: Record<string, string> = {

@@ -23,6 +23,7 @@
  */
 import { useState, useCallback, useEffect } from 'react'
 import { RelicData } from './RelicData'
+import { Icon } from '../components/Icon'
 import { RelicTier, RelicRarity } from '../types'
 import { useNodeGraph } from '../node-editor/useNodeGraph'
 import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
@@ -131,7 +132,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
       {/* 左侧：表单 */}
       <div className="relic-form" data-testid="relic-form">
         <div className="relic-form-heading">
-          <h3>📜 遗物表单</h3>
+          <h3><Icon name="shield" size={16} /> 遗物表单</h3>
           <button
             type="button"
             className="relic-tutorial-trigger"
@@ -139,7 +140,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
             aria-haspopup="dialog"
             aria-label="打开遗物编辑器教程"
           >
-            📖 教程
+            <Icon name="activity" size={14} /> 教程
           </button>
         </div>
         <label>
@@ -201,7 +202,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
             type="button"
             title="撤销 (Ctrl/Cmd+Z)"
           >
-            ↶ 撤销
+            <Icon name="refresh" size={14} /> 撤销
           </button>
           <button
             onClick={ng.redo}
@@ -210,7 +211,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
             type="button"
             title="重做 (Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y)"
           >
-            ↷ 重做
+            <Icon name="refresh" size={14} /> 重做
           </button>
           <span className="graph-toolbar-divider">|</span>
           <span>触发器：</span>
@@ -241,7 +242,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
             type="button"
             className="primary-btn"
           >
-            ⚡ 生成代码
+            <Icon name="code" size={14} /> 生成代码
           </button>
         </div>
         <NodeGraphCanvas
@@ -274,7 +275,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
         <textarea
           readOnly
           value={generatedCode}
-          placeholder="点「⚡ 生成代码」查看输出"
+          placeholder="点「生成代码」查看输出"
           data-testid="relic-code"
           rows={20}
         />

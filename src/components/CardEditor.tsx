@@ -10,6 +10,7 @@ import { generateCardDocumentCode } from '../card/codegen'
 import { isValidCardId, validateCard } from '../card/cardValidation'
 import { getTypeColor } from '../utils/cardUtils'
 import { CardIOButtons } from './CardIOButtons'
+import { Icon } from './Icon'
 import { CardSearch } from './CardSearch'
 import { Toast } from './Toast'
 import { useTransientMessage } from '../hooks/useTransientMessage'
@@ -862,7 +863,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
   return (
     <div className="card-editor">
       <div className="editor-header">
-        <h2>🃏 卡牌编辑器</h2>
+        <h2><Icon name="database" size={17} /> 卡牌编辑器</h2>
         <div className="header-actions">
           {loadingCards && <span className="loading-text">加载中...</span>}
           <CardIOButtons
@@ -876,10 +877,10 @@ export function CardEditor({ projectPath }: CardEditorProps) {
           {autosaveState === 'saving' && <span className="loading-text">自动保存中...</span>}
           {autosaveState === 'saved' && <span className="loading-text">草稿已保存</span>}
           {autosaveState === 'error' && <span className="error-text">自动保存失败</span>}
-          <button onClick={cardCatalogActions.undo} disabled={!canUndo || cardPersistenceBlocked} title="撤销 Card 编辑">↶ 撤销</button>
-          <button onClick={cardCatalogActions.redo} disabled={!canRedo || cardPersistenceBlocked} title="重做 Card 编辑">↷ 重做</button>
+          <button onClick={cardCatalogActions.undo} disabled={!canUndo || cardPersistenceBlocked} title="撤销 Card 编辑"><Icon name="refresh" size={14} style={{ transform: 'rotate(180deg)' }} />撤销</button>
+          <button onClick={cardCatalogActions.redo} disabled={!canRedo || cardPersistenceBlocked} title="重做 Card 编辑"><Icon name="refresh" size={14} />重做</button>
           <button onClick={() => void handleBatchGenerate()} disabled={saving || cardPersistenceBlocked || !projectPath || cards.length === 0} title="逐张生成当前项目中的 Card">
-            ⚡ 批量生成
+            <Icon name="code" size={14} /> 批量生成
           </button>
           <button onClick={openCreateCard}>+ 新建卡牌</button>
         </div>
@@ -1034,9 +1035,9 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                     value={currentCard.type}
                     onChange={(e) => handleCardChange('type', e.target.value)}
                   >
-                    <option value="Attack">⚔️ 攻击 (Attack)</option>
-                    <option value="Skill">🛡️ 技能 (Skill)</option>
-                    <option value="Power">✨ 力量 (Power)</option>
+                    <option value="Attack">攻击 (Attack)</option>
+                    <option value="Skill">技能 (Skill)</option>
+                    <option value="Power">力量 (Power)</option>
                   </select>
                 </div>
               </div>
@@ -1071,7 +1072,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
               {errors.length > 0 && !showCreateIdDialog && (
                 <div className="error-box">
                   {errors.map((err, i) => (
-                    <div key={i} className="error-item">⚠️ {err}</div>
+                    <div key={i} className="error-item"><Icon name="shield" size={13} /> {err}</div>
                   ))}
                 </div>
               )}
@@ -1102,28 +1103,28 @@ export function CardEditor({ projectPath }: CardEditorProps) {
                     width={720}
                     height={360}
                   />
-                  {graphError && <div className="error-box" data-testid="card-graph-error">⚠️ {graphError}</div>}
+                  {graphError && <div className="error-box" data-testid="card-graph-error"><Icon name="shield" size={13} /> {graphError}</div>}
                 </div>
               )}
 
               {/* 操作按钮 */}
               <div className="form-actions">
                 <button onClick={handlePreview} className="preview-btn">
-                  👁️ 预览代码
+                  <Icon name="monitor" size={15} /> 预览代码
                 </button>
                 <button
                   onClick={() => void handleGenerateArtifact()}
                   className="preview-btn"
                   disabled={saving || cardPersistenceBlocked || !projectPath}
                 >
-                  ⚡ 生成 C#
+                  <Icon name="code" size={15} /> 生成 C#
                 </button>
                 <button
                   onClick={handleSave}
                   className="save-btn"
                   disabled={saving || cardPersistenceBlocked || !projectPath}
                 >
-                  {saving ? '保存中...' : '💾 保存到项目'}
+                  {saving ? '保存中...' : <><Icon name="disk" size={15} /> 保存到项目</>}
                 </button>
               </div>
 
@@ -1144,7 +1145,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
             </>
           ) : (
             <div className="no-selection">
-              <div className="empty-card-icon">🃏</div>
+              <div className="empty-card-icon"><Icon name="database" size={25} /></div>
               <p>选择一张卡牌进行编辑</p>
               <p>或点击「新建卡牌」创建</p>
             </div>
@@ -1158,7 +1159,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
         {generatedCode && (
           <div className="code-preview">
             <div className="code-header">
-              <span>📄 生成的C#代码</span>
+              <span><Icon name="code" size={15} /> 生成的C#代码</span>
               <button onClick={() => setGeneratedCode('')}>关闭</button>
             </div>
             <pre>
@@ -1176,7 +1177,7 @@ export function CardEditor({ projectPath }: CardEditorProps) {
             {errors.length > 0 && (
               <div className="error-box" role="alert">
                 {errors.map((error, index) => (
-                  <div key={index} className="error-item">⚠️ {error}</div>
+                  <div key={index} className="error-item"><Icon name="shield" size={13} /> {error}</div>
                 ))}
               </div>
             )}

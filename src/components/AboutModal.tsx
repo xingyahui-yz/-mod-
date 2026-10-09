@@ -2,6 +2,7 @@
  * 关于弹窗
  */
 import { Modal } from './Modal'
+import { Icon } from './Icon'
 
 interface AboutModalProps {
   isOpen: boolean
@@ -13,7 +14,7 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
     <Modal isOpen={isOpen} onClose={onClose} title="关于 Mod Studio" width={480}>
       <div className="about-body">
         <div className="about-hero">
-          <div className="logo">🎮</div>
+          <div className="logo"><Icon name="power" size={34} /></div>
           <h3>Slay the Spire 2 Mod Studio</h3>
           <p className="version">v0.10 开发预览</p>
         </div>
@@ -23,18 +24,18 @@ export function AboutModal({ isOpen, onClose }: AboutModalProps) {
         </p>
 
         <div className="features">
-          <h4>✨ 主要功能</h4>
+          <h4><Icon name="activity" size={15} /> 主要功能</h4>
           <ul>
-            <li>🃏 可视化卡牌编辑器</li>
-            <li>🤖 项目级多轮 AI 对话与逐 Card 提案</li>
-            <li>📚 内置教程和任务引导</li>
-            <li>🚀 一键启动游戏测试</li>
-            <li>🎨 暗/亮主题切换</li>
+            <li><Icon name="database" size={14} /> 可视化卡牌编辑器</li>
+            <li><Icon name="api" size={14} /> 项目级多轮 AI 对话与逐 Card 提案</li>
+            <li><Icon name="activity" size={14} /> 内置教程和任务引导</li>
+            <li><Icon name="power" size={14} /> 一键启动游戏测试</li>
+            <li><Icon name="monitor" size={14} /> 暗/亮主题切换</li>
           </ul>
         </div>
 
         <div className="tech-stack">
-          <h4>🛠️ 技术栈</h4>
+          <h4><Icon name="server" size={15} /> 技术栈</h4>
           <div className="tech-tags">
             <span className="tech-tag">Electron</span>
             <span className="tech-tag">React</span>

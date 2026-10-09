@@ -2,6 +2,7 @@ import { useState } from 'react'
 import * as FileService from '../services/FileService'
 import { useTransientMessage } from '../hooks/useTransientMessage'
 import { Toast } from './Toast'
+import { Icon } from './Icon'
 
 interface GameLauncherProps {
   gamePath: string | null
@@ -15,17 +16,17 @@ export function GameLauncher({ gamePath, projectPath, onOpenSettings }: GameLaun
 
   const handleLaunch = async () => {
     if (!gamePath) {
-      showMessage('error', '⚠️ 请先在设置中配置游戏路径')
+      showMessage('error', '请先在设置中配置游戏路径')
       return
     }
 
     if (!projectPath) {
-      showMessage('error', '⚠️ 请先打开或创建一个Mod项目')
+      showMessage('error', '请先打开或创建一个Mod项目')
       return
     }
 
     setLaunching(true)
-    showMessage('info', '🔎 正在执行 Card 产物预检...')
+    showMessage('info', '正在执行 Card 产物预检...')
 
     try {
       const preflight = await FileService.preflightCardProject(projectPath)
@@ -33,21 +34,21 @@ export function GameLauncher({ gamePath, projectPath, onOpenSettings }: GameLaun
         const summary = preflight.blocking
           .map(item => `${item.cardId}: ${item.reason}`)
           .join('；')
-        showMessage('error', `❌ 测试预检未通过：${summary}`)
+        showMessage('error', `测试预检未通过：${summary}`)
         setLaunching(false)
         return
       }
 
-      showMessage('info', '🔄 正在启动游戏...')
+      showMessage('info', '正在启动游戏...')
       const result = await FileService.launchGame(gamePath, projectPath)
 
       if (result.success) {
-        showMessage('success', '✅ 游戏已启动！检查游戏内是否加载了你的Mod。')
+        showMessage('success', '游戏已启动！检查游戏内是否加载了你的Mod。')
       } else {
-        showMessage('error', `❌ 启动失败: ${result.error}`)
+        showMessage('error', `启动失败: ${result.error}`)
       }
     } catch (err) {
-      showMessage('error', `❌ 启动失败: ${err}`)
+      showMessage('error', `启动失败: ${err}`)
     }
 
     setLaunching(false)
@@ -56,10 +57,10 @@ export function GameLauncher({ gamePath, projectPath, onOpenSettings }: GameLaun
   return (
     <div className="game-launcher">
       <div className="launcher-header">
-        <h3>🎮 游戏测试</h3>
+        <h3><Icon name="power" size={16} /> 游戏测试</h3>
         {onOpenSettings && (
           <button className="settings-btn" onClick={onOpenSettings}>
-            ⚙️
+            <Icon name="settings" size={15} />
           </button>
         )}
       </div>
@@ -68,14 +69,14 @@ export function GameLauncher({ gamePath, projectPath, onOpenSettings }: GameLaun
         <div className="status-item">
           <span className="status-label">游戏路径:</span>
           <span className={`status-value ${gamePath ? 'ok' : 'missing'}`}>
-            {gamePath ? '✅ 已配置' : '❌ 未配置'}
+            {gamePath ? '已配置' : '未配置'}
           </span>
         </div>
 
         <div className="status-item">
           <span className="status-label"> Mod项目:</span>
           <span className={`status-value ${projectPath ? 'ok' : 'missing'}`}>
-            {projectPath ? '✅ 已打开' : '❌ 未打开'}
+            {projectPath ? '已打开' : '未打开'}
           </span>
         </div>
 
@@ -86,12 +87,12 @@ export function GameLauncher({ gamePath, projectPath, onOpenSettings }: GameLaun
           onClick={handleLaunch}
           disabled={launching || !gamePath || !projectPath}
         >
-          {launching ? '🔄 启动中...' : '🚀 启动游戏测试'}
+          {launching ? <><Icon name="refresh" size={15} /> 启动中...</> : <><Icon name="power" size={15} /> 启动游戏测试</>}
         </button>
 
         {!gamePath && (
           <p className="help-text">
-            💡 点击右上角「⚙️」设置游戏路径
+            点击右上角的设置按钮配置游戏路径。
           </p>
         )}
       </div>
@@ -151,7 +152,7 @@ export function GameLauncher({ gamePath, projectPath, onOpenSettings }: GameLaun
         }
 
         .status-value.ok {
-          color: #4ade80;
+          color: var(--success);
         }
 
         .status-value.missing {

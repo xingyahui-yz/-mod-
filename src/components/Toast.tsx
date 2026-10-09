@@ -25,18 +25,21 @@ export function Toast({ message, className = 'toast' }: ToastProps) {
         }
 
         .toast.success {
-          background: rgba(74, 222, 128, 0.1);
-          color: #4ade80;
+          border: 1px solid color-mix(in srgb, var(--success) 32%, var(--border));
+          background: color-mix(in srgb, var(--success) 9%, var(--bg-secondary));
+          color: var(--success);
         }
 
         .toast.error {
-          background: rgba(233, 69, 96, 0.1);
-          color: var(--accent);
+          border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--border));
+          background: var(--danger-soft);
+          color: var(--danger);
         }
 
         .toast.info {
-          background: rgba(59, 130, 246, 0.1);
-          color: #3b82f6;
+          border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+          background: var(--accent-soft);
+          color: var(--accent);
         }
       `}</style>
     </div>

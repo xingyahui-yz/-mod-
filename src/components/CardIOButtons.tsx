@@ -10,6 +10,7 @@ import { createEmptyGraph } from '../node-editor/graph'
 import { CURRENT_CARD_SCHEMA_VERSION, type CardDocument } from '../card/cardDocument'
 import * as FileService from '../services/FileService'
 import { reserveCardId } from '../card/cardIdReservation'
+import { Icon } from './Icon'
 
 export function CardIOButtons({
   projectPath,
@@ -131,10 +132,10 @@ export function CardIOButtons({
 
       <div className="io-actions">
         <button className="io-btn" onClick={handleExport} title="导出所有卡牌">
-          📥 导出
+          <Icon name="download" size={14} /> 导出
         </button>
         <button className="io-btn" onClick={handleImport} title="从JSON文件导入卡牌" disabled={!projectPath}>
-          📤 导入
+          <Icon name="upload" size={14} /> 导入
         </button>
       </div>
 

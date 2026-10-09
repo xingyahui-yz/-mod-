@@ -4,6 +4,7 @@ import { fetchProviderModels, LLM_PROVIDERS, testProviderConnection, type LLMPro
 import { createProviderSettings, defaultChatPath, defaultModelsPath, type ProviderApiKey, type ProviderSettings } from '../services/llm/providerSettings'
 import { useAIStore } from '../stores/useAIStore'
 import { Modal } from './Modal'
+import { Icon } from './Icon'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -277,21 +278,21 @@ export function SettingsModal({ isOpen, onClose, gamePath, onGamePathChange }: S
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="⚙️ 设置" width={1120}>
+    <Modal isOpen={isOpen} onClose={onClose} title="设置" width={1120}>
       <div className="settings-layout settings-layout-expanded">
         <nav className="settings-navigation" aria-label="设置分类">
           <p className="settings-navigation-label">偏好设置</p>
           <button className={section === 'models' ? 'active' : ''} aria-current={section === 'models' ? 'page' : undefined} onClick={() => setSection('models')}>
-            <span aria-hidden="true">✦</span> 模型服务
+            <Icon name="api" size={15} /> 模型服务
           </button>
           <button className={section === 'game' ? 'active' : ''} aria-current={section === 'game' ? 'page' : undefined} onClick={() => setSection('game')}>
-            <span aria-hidden="true">🎮</span> 游戏路径
+            <Icon name="laptop" size={15} /> 游戏路径
           </button>
           <button className={section === 'about' ? 'active' : ''} aria-current={section === 'about' ? 'page' : undefined} onClick={() => setSection('about')}>
-            <span aria-hidden="true">ⓘ</span> 关于
+            <Icon name="shield" size={15} /> 关于
           </button>
           <div className="settings-navigation-note">
-            <span className="settings-note-mark" aria-hidden="true">MS</span>
+            <span className="settings-note-mark" aria-hidden="true"><Icon name="bolt" size={16} /></span>
             <span>Mod Studio<br />本机设置</span>
           </div>
         </nav>

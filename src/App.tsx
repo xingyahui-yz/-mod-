@@ -9,6 +9,7 @@ import { SettingsModal } from './components/SettingsModal'
 import { GameLauncher } from './components/GameLauncher'
 import { ThemeToggle } from './components/ThemeToggle'
 import { AboutModal } from './components/AboutModal'
+import { Icon } from './components/Icon'
 import { RelicEditor } from './relic/RelicEditor'
 import { ProjectConversationProvider, usePrepareForProjectSwitch } from './ai-conversation/ProjectConversationContext'
 import { ProjectConversationDrawer } from './ai-conversation/ProjectConversationDrawer'
@@ -81,7 +82,7 @@ function AppContent() {
     <div className="app">
       <header className="header">
         <div className="brand-lockup">
-          <span className="brand-seal" aria-hidden="true">MS</span>
+          <span className="brand-seal" aria-hidden="true"><Icon name="bolt" size={20} /></span>
           <div className="brand-copy">
             <span className="brand-eyebrow">SLAY THE SPIRE 2 · CREATOR STUDIO</span>
             <h1>Mod Studio</h1>
@@ -90,16 +91,16 @@ function AppContent() {
         <div className="header-actions">
           <ThemeToggle />
           <button className="info-btn" onClick={() => setShowAbout(true)} title="关于">
-            ℹ️
+            <Icon name="shield" size={16} />
           </button>
           <button className="settings-btn" onClick={() => setShowSettings(true)} title="设置">
-            ⚙️
+            <Icon name="settings" size={17} />
           </button>
           <button className="secondary-btn" onClick={() => setShowNewProject(true)}>
-            📁 新建项目
+            <Icon name="api" size={15} /> 新建项目
           </button>
           <button onClick={() => void handleOpenProject()}>
-            📂 打开项目
+            <Icon name="laptop" size={15} /> 打开项目
           </button>
         </div>
       </header>
@@ -122,14 +123,14 @@ function AppContent() {
               aria-current={activeTab === 'cards' ? 'page' : undefined}
               onClick={() => setActiveTab('cards')}
             >
-              <span className="nav-icon" aria-hidden="true">🃏</span><span>卡牌编辑器</span>
+              <span className="nav-icon"><Icon name="database" size={17} /></span><span>卡牌编辑器</span>
             </button>
             <button
               className={activeTab === 'relics' ? 'active' : ''}
               aria-current={activeTab === 'relics' ? 'page' : undefined}
               onClick={() => setActiveTab('relics')}
             >
-              <span className="nav-icon" aria-hidden="true">📜</span><span>遗物编辑器</span>
+              <span className="nav-icon"><Icon name="shield" size={17} /></span><span>遗物编辑器</span>
             </button>
 
             <p className="nav-section-label nav-section-spaced">项目工具</p>
@@ -138,31 +139,31 @@ function AppContent() {
               aria-current={activeTab === 'mods' ? 'page' : undefined}
               onClick={() => setActiveTab('mods')}
             >
-              <span className="nav-icon" aria-hidden="true">🧩</span><span>Mod 管理器</span>
+              <span className="nav-icon"><Icon name="server" size={17} /></span><span>Mod 管理器</span>
             </button>
             <button
               className={activeTab === 'files' ? 'active' : ''}
               aria-current={activeTab === 'files' ? 'page' : undefined}
               onClick={() => setActiveTab('files')}
             >
-              <span className="nav-icon" aria-hidden="true">📁</span><span>文件浏览</span>
+              <span className="nav-icon"><Icon name="disk" size={17} /></span><span>文件浏览</span>
             </button>
             <button
               className={activeTab === 'test' ? 'active' : ''}
               aria-current={activeTab === 'test' ? 'page' : undefined}
               onClick={() => setActiveTab('test')}
             >
-              <span className="nav-icon" aria-hidden="true">🎮</span><span>游戏测试</span>
+              <span className="nav-icon"><Icon name="power" size={17} /></span><span>游戏测试</span>
             </button>
           </nav>
 
           <div className="sidebar-footer">
             <div className="sidebar-footer-prompt">
-              <span className="sidebar-footer-mark" aria-hidden="true">✦</span>
+              <span className="sidebar-footer-mark" aria-hidden="true"><Icon name="activity" size={17} /></span>
               <div><strong>创作从这里开始</strong><span>打开项目后解锁完整工作区</span></div>
             </div>
             <button className="sidebar-settings-entry" onClick={() => setShowSettings(true)}>
-              <span aria-hidden="true">⚙</span> 设置与 API Key
+              <Icon name="settings" size={15} /> 设置与 API Key
             </button>
           </div>
         </aside>
@@ -200,23 +201,23 @@ function AppContent() {
                           <span aria-hidden="true">＋</span> 新建项目
                         </button>
                         <button onClick={() => void handleOpenProject()}>
-                          <span aria-hidden="true">↗</span> 打开项目
+                          <Icon name="laptop" size={15} /> 打开项目
                         </button>
                       </div>
                     </div>
                     <div className="welcome-features" aria-label="Mod Studio 功能">
                       <div className="welcome-feature-card">
-                        <span className="feature-icon feature-cards" aria-hidden="true">🃏</span>
+                        <span className="feature-icon feature-cards"><Icon name="database" size={18} /></span>
                         <div><strong>卡牌创作</strong><span>编辑属性、描述与效果</span></div>
                         <span className="feature-arrow" aria-hidden="true">›</span>
                       </div>
                       <div className="welcome-feature-card">
-                        <span className="feature-icon feature-relics" aria-hidden="true">📜</span>
+                        <span className="feature-icon feature-relics"><Icon name="shield" size={18} /></span>
                         <div><strong>遗物设计</strong><span>构建专属遗物与触发逻辑</span></div>
                         <span className="feature-arrow" aria-hidden="true">›</span>
                       </div>
                       <div className="welcome-feature-card">
-                        <span className="feature-icon feature-ai" aria-hidden="true">✦</span>
+                        <span className="feature-icon feature-ai"><Icon name="api" size={18} /></span>
                         <div><strong>AI 创作助手</strong><span>在工作区边聊边完善提案</span></div>
                         <span className="feature-arrow" aria-hidden="true">›</span>
                       </div>
@@ -243,7 +244,7 @@ function AppContent() {
 
                   {projectRoot && (
                     <div className="project-summary">
-                      <h3>📦 当前项目</h3>
+                      <h3><Icon name="database" size={17} /> 当前项目</h3>
                       <div className="summary-item">
                         <span className="label">名称:</span>
                         <span className="value">{modManifest?.name || '未知'}</span>
@@ -260,7 +261,7 @@ function AppContent() {
                         className="show-folder-btn"
                         onClick={() => useProjectStore.getState().showInFolder()}
                       >
-                        📂 在文件夹中显示
+                        <Icon name="laptop" size={15} /> 在文件夹中显示
                       </button>
                     </div>
                   )}
@@ -323,7 +324,7 @@ function FileBrowser({ browsePath, onNavigate }: { browsePath: string | null; on
     <>
       <aside className="file-sidebar">
         <div className="path-bar">
-          <button onClick={navigateUp}>⬆️</button>
+          <button onClick={navigateUp} title="返回上级目录"><Icon name="upload" size={16} /></button>
           <span className="current-path">{browsePath.split(/[/\\]/).pop()}</span>
         </div>
 
@@ -339,7 +340,7 @@ function FileBrowser({ browsePath, onNavigate }: { browsePath: string | null; on
                 className={`file-item ${file.isDirectory ? 'folder' : 'file'} ${selectedFile === file.path ? 'selected' : ''}`}
                 onClick={() => file.isDirectory ? onNavigate(file.path) : loadFile(file.path)}
               >
-                <span className="icon">{file.isDirectory ? '📁' : '📄'}</span>
+                <span className="icon"><Icon name={file.isDirectory ? 'database' : 'code'} size={15} /></span>
                 <span className="name">{file.name}</span>
               </div>
             ))

@@ -179,7 +179,7 @@ export function Tutorial({ onComplete }: TutorialProps) {
         }
 
         .progress-dot.done {
-          background: #4ade80;
+          background: var(--accent);
         }
 
         .tutorial-content {

@@ -601,29 +601,29 @@ const CARD_PROPOSAL_STYLES = `
   .card-proposal-panel { color: var(--text-primary); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; }
   .card-proposal-heading { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-block: 1px solid var(--border); background: var(--bg-secondary); background: linear-gradient(145deg, color-mix(in srgb, var(--bg-tertiary) 38%, var(--bg-secondary)), var(--bg-secondary)); }
   .card-proposal-heading h3 { margin: 2px 0 0; font-size: 14px; font-weight: 650; }
-  .card-proposal-eyebrow { color: color-mix(in srgb, var(--text-secondary) 76%, #82b7df 24%); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
-  .card-proposal-count { min-width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--border) 72%, #82b7df 28%); border-radius: 9px; color: var(--text-secondary); font-size: 11px; }
+  .card-proposal-eyebrow { color: color-mix(in srgb, var(--text-secondary) 76%, var(--accent) 24%); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+  .card-proposal-count { min-width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent) 28%); border-radius: 9px; color: var(--text-secondary); font-size: 11px; }
   .card-proposal-error, .card-proposal-warning { margin: 10px 12px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--bg-secondary) 92%, var(--accent) 8%); font-size: 11px; line-height: 1.5; }
   .card-proposal-empty { min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 22px; text-align: center; color: var(--text-secondary); }
-  .card-proposal-empty > span { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 4px; border: 1px solid color-mix(in srgb, var(--border) 64%, #82b7df 36%); border-radius: 14px; color: #82b7df; }
+  .card-proposal-empty > span { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 4px; border: 1px solid color-mix(in srgb, var(--border) 64%, var(--accent) 36%); border-radius: 14px; color: var(--accent); }
   .card-proposal-empty strong { color: var(--text-primary); font-size: 13px; }
   .card-proposal-empty p { max-width: 260px; margin: 0; font-size: 11px; line-height: 1.6; }
   .card-proposal-list { margin: 0; padding: 0; list-style: none; }
   .card-proposal-item { border-bottom: 1px solid var(--border); }
   .card-proposal-summary { width: 100%; min-height: 68px; display: grid; grid-template-columns: minmax(0, 1fr) auto 28px; align-items: center; gap: 9px; padding: 10px 10px 10px 14px; border-radius: 0; background: var(--bg-secondary); color: var(--text-primary); text-align: left; }
-  .card-proposal-summary:hover, .card-proposal-summary[aria-expanded="true"] { opacity: 1; background: color-mix(in srgb, var(--bg-tertiary) 76%, #7baed4 7%); }
-  .card-proposal-summary:focus-visible, .card-proposal-panel button:focus-visible, .card-proposal-panel input:focus-visible, .card-proposal-panel select:focus-visible, .card-proposal-panel textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 58%, #76b5e1); outline-offset: -2px; }
+  .card-proposal-summary:hover, .card-proposal-summary[aria-expanded="true"] { opacity: 1; background: color-mix(in srgb, var(--bg-tertiary) 76%, var(--accent) 7%); }
+  .card-proposal-summary:focus-visible, .card-proposal-panel button:focus-visible, .card-proposal-panel input:focus-visible, .card-proposal-panel select:focus-visible, .card-proposal-panel textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 58%, white); outline-offset: -2px; }
   .card-proposal-summary-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .card-proposal-summary-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .card-proposal-summary-main small { color: var(--text-secondary); font-size: 10px; }
   .card-proposal-status { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
   .card-proposal-status > span { font-size: 10px; font-weight: 700; }
   .card-proposal-status small { max-width: 100px; color: var(--text-secondary); font-size: 8px; text-align: right; }
-  .card-proposal-status.is-pending > span { color: #78b5df; }
+  .card-proposal-status.is-pending > span { color: var(--accent); }
   .card-proposal-status.is-stale > span, .card-proposal-status.is-reverted > span { color: #d8a85e; }
   .card-proposal-status.is-rejected > span { color: color-mix(in srgb, var(--accent) 75%, #e6a16d); }
   .card-proposal-chevron { color: var(--text-secondary); font-size: 17px; text-align: center; }
-  .card-proposal-preview { padding: 0 12px 14px; background: var(--bg-primary); box-shadow: inset 3px 0 0 color-mix(in srgb, #79b7e2 45%, transparent); }
+  .card-proposal-preview { padding: 0 12px 14px; background: var(--bg-primary); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
   .card-proposal-preview-toolbar { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-secondary); font-size: 10px; }
   .card-proposal-preview-toolbar button { flex: 0 0 auto; }
   .card-proposal-diff-section { padding: 10px 0; border-top: 1px solid var(--border); }
@@ -632,14 +632,14 @@ const CARD_PROPOSAL_STYLES = `
   .card-proposal-no-change { margin: 0; color: var(--text-secondary); font-size: 10px; }
   .card-proposal-diff-list { display: grid; gap: 7px; }
   .card-proposal-diff-row { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-secondary); }
-  .card-proposal-diff-row[data-kind="added"] { border-left-color: #68b591; }
+  .card-proposal-diff-row[data-kind="added"] { border-left-color: var(--success); }
   .card-proposal-diff-row[data-kind="removed"] { border-left-color: color-mix(in srgb, var(--accent) 70%, #d6a26b); }
   .card-proposal-diff-row > strong { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 9px; font-weight: 650; overflow-wrap: anywhere; }
   .card-proposal-diff-values { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 5px; }
   .card-proposal-diff-value { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .card-proposal-diff-value small { color: var(--text-secondary); font-size: 8px; }
   .card-proposal-diff-value > span { overflow-wrap: anywhere; font-size: 10px; line-height: 1.45; }
-  .card-proposal-arrow { color: #78afd5; font-size: 11px; }
+  .card-proposal-arrow { color: var(--accent); font-size: 11px; }
   .card-proposal-id-field, .card-proposal-reject-confirm label { display: grid; gap: 6px; margin-top: 10px; color: var(--text-secondary); font-size: 10px; }
   .card-proposal-id-field input, .card-proposal-reject-confirm select, .card-proposal-reject-confirm textarea { min-height: 44px; border-radius: 8px; font-size: 12px; }
   .card-proposal-id-field small { min-height: 15px; color: var(--text-secondary); font-size: 9px; line-height: 1.45; }

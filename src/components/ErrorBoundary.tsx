@@ -1,4 +1,5 @@
 import { Component, ErrorInfo, ReactNode } from 'react'
+import { Icon } from './Icon'
 
 interface Props {
   children: ReactNode
@@ -45,15 +46,15 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="error-boundary">
           <div className="error-content">
-            <div className="error-icon">⚠️</div>
+            <div className="error-icon"><Icon name="shield" size={24} /></div>
             <h2>出错了</h2>
             <p className="error-message">
               {this.state.error?.message || '发生了未知错误'}
             </p>
             <div className="error-actions">
-              <button onClick={this.handleReset}>🔄 重试</button>
+              <button onClick={this.handleReset}><Icon name="refresh" size={14} /> 重试</button>
               <button className="secondary-btn" onClick={this.handleReload}>
-                🔃 刷新页面
+                <Icon name="refresh" size={14} /> 刷新页面
               </button>
             </div>
           </div>

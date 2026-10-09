@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { cardDocumentRevision } from '../card/cardAiProposal'
+import { Icon } from '../components/Icon'
 import { cardCatalogActions, useCardCatalog } from '../card/cardCatalog'
 import type {
   ConversationAttemptStatus,
@@ -536,7 +537,7 @@ export function ProjectConversationDrawer({
             aria-label={view.projectRoot ? `展开项目 AI 对话${railStatus ? `，${railStatus}` : ''}` : '请先打开项目'}
             title={view.projectRoot ? '展开项目 AI 对话' : '请先打开项目'}
           >
-            <span className="conversation-spark" aria-hidden="true">✦</span>
+            <span className="conversation-spark"><Icon name="api" size={16} /></span>
             <span className="conversation-rail-label">AI 对话</span>
             {(view.isBusy || hasUnread) && (
               <span
@@ -1042,15 +1043,15 @@ const DRAWER_STYLES = `
   .conversation-turn { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
   .conversation-message { max-width: 91%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; font-size: 13px; line-height: 1.58; overflow-wrap: anywhere; }
   .conversation-message p { margin: 0; white-space: pre-wrap; }
-  .conversation-message.user { align-self: flex-end; border-bottom-right-radius: 4px; border-color: color-mix(in srgb, var(--border) 58%, #6ca8d3 42%); background: color-mix(in srgb, var(--bg-tertiary) 80%, #6ca8d3 20%); color: var(--text-primary); }
-  .conversation-message.assistant { align-self: flex-start; border-bottom-left-radius: 4px; background: color-mix(in srgb, var(--bg-secondary) 94%, #9fc5e1 6%); }
+  .conversation-message.user { align-self: flex-end; border-bottom-right-radius: 4px; border-color: color-mix(in srgb, var(--border) 58%, var(--accent) 42%); background: color-mix(in srgb, var(--bg-tertiary) 89%, var(--accent) 11%); color: var(--text-primary); }
+  .conversation-message.assistant { align-self: flex-start; border-bottom-left-radius: 4px; background: color-mix(in srgb, var(--bg-secondary) 96%, var(--text-primary) 4%); }
   .conversation-message-attachments { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   .conversation-message-attachments span { padding: 3px 6px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; font-size: 9px; opacity: .78; }
   .conversation-quick-replies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .conversation-quick-replies button { min-height: 44px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--border) 66%, #75aeda 34%); border-radius: 9px; background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent); color: var(--text-primary); font-size: 11px; }
-  .conversation-quick-replies button.is-selected { border-color: #75aeda; box-shadow: 0 0 0 2px rgba(117,174,218,.12); }
+  .conversation-quick-replies button { min-height: 44px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--border) 66%, var(--accent) 34%); border-radius: 6px; background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent); color: var(--text-primary); font-size: 11px; }
+  .conversation-quick-replies button.is-selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
   .conversation-message.is-running { display: flex; gap: 5px; width: 52px; }
-  .conversation-message.is-running span { width: 6px; height: 6px; border-radius: 50%; background: #7fb8df; animation: conversation-typing 1s ease-in-out infinite; }
+  .conversation-message.is-running span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: conversation-typing 1s ease-in-out infinite; }
   .conversation-message.is-running span:nth-child(2) { animation-delay: .12s; }
   .conversation-message.is-running span:nth-child(3) { animation-delay: .24s; }
   .conversation-attempt-status { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; padding: 8px 10px; border-left: 2px solid var(--text-secondary); color: var(--text-secondary); font-size: 11px; }
@@ -1066,10 +1067,10 @@ const DRAWER_STYLES = `
   .conversation-context-picker { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; margin-bottom: 7px; color: var(--text-secondary); font-size: 10px; }
   .conversation-context-picker select { min-height: 44px; padding: 6px 30px 6px 10px; border-radius: 8px; font-size: 10px; }
   .conversation-input-shell { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; padding: 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-primary); transition: border-color .15s, box-shadow .15s; }
-  .conversation-input-shell:focus-within { border-color: color-mix(in srgb, var(--accent) 56%, #75aeda); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
+  .conversation-input-shell:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
   .conversation-input-shell textarea { min-height: 58px; max-height: 150px; padding: 5px; resize: none; border: 0; background: transparent; font: inherit; font-size: 12px; line-height: 1.5; }
   .conversation-input-shell textarea:focus { border: 0; outline: 0; }
-  .conversation-send-button { min-width: 58px; min-height: 44px; padding: 8px 11px; border-radius: 9px; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 82%, #659dcb), var(--accent)); font-size: 12px; font-weight: 600; }
+  .conversation-send-button { min-width: 58px; min-height: 44px; padding: 8px 11px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 600; }
   .conversation-send-button.is-cancel { background: var(--bg-tertiary); color: var(--text-primary); }
   .conversation-composer-hint { margin: 6px 2px 0; color: var(--text-secondary); font-size: 9px; }
   .conversation-rail-button { width: 48px; height: 100%; min-height: 180px; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 6px; border-radius: 0; background: color-mix(in srgb, var(--bg-secondary) 96%, #7baed4 4%); color: var(--text-secondary); }

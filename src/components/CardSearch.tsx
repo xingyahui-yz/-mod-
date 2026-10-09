@@ -4,6 +4,7 @@
  * 避免通过 useEffect 向父组件回推 filteredCards 造成状态镜像
  */
 import { CardData } from '../types'
+import { Icon } from './Icon'
 
 interface CardSearchProps {
   searchTerm: string
@@ -25,7 +26,7 @@ export function CardSearch({
   return (
     <div className="card-search">
       <div className="search-input-wrapper">
-        <span className="search-icon">🔍</span>
+        <span className="search-icon"><Icon name="network" size={14} /></span>
         <input
           type="text"
           value={searchTerm}
@@ -51,19 +52,19 @@ export function CardSearch({
           className={`type-filter attack ${typeFilter === 'Attack' ? 'active' : ''}`}
           onClick={() => onTypeFilterChange('Attack')}
         >
-          ⚔️ 攻击
+          <Icon name="activity" size={13} /> 攻击
         </button>
         <button
           className={`type-filter skill ${typeFilter === 'Skill' ? 'active' : ''}`}
           onClick={() => onTypeFilterChange('Skill')}
         >
-          🛡️ 技能
+          <Icon name="shield" size={13} /> 技能
         </button>
         <button
           className={`type-filter power ${typeFilter === 'Power' ? 'active' : ''}`}
           onClick={() => onTypeFilterChange('Power')}
         >
-          ✨ 力量
+          <Icon name="cpu" size={13} /> 力量
         </button>
       </div>
 

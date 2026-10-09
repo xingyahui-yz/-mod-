@@ -1,60 +1,60 @@
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
-  --bg-primary: #111820;
-  --bg-secondary: #1a242e;
-  --bg-tertiary: #222f3b;
-  --bg-elevated: #202c37;
-  --accent: #64c2e4;
-  --accent-strong: #20a8d2;
-  --accent-soft: rgba(32, 168, 210, 0.16);
-  --accent-ink: #07151c;
-  --focus: #7ad4f1;
-  --brand: #18a4cf;
-  --brand-soft: rgba(24, 164, 207, 0.12);
-  --accent-pink: #fb7299;
-  --danger: #e28b87;
-  --danger-soft: rgba(226, 139, 135, 0.12);
-  --warning: #e4bd79;
-  --success: #80c5a5;
-  --text-primary: #edf3f7;
-  --text-secondary: #b5c1ca;
-  --text-muted: #84929e;
-  --border: #2a3742;
-  --shadow: rgba(2, 9, 18, 0.42);
-  --ambient: rgba(105, 151, 198, 0.12);
-  --panel-shadow: 0 18px 44px rgba(1, 8, 18, 0.22);
-  --surface-highlight: rgba(255, 255, 255, 0.045);
+  --bg-primary: #19191b;
+  --bg-secondary: #222224;
+  --bg-tertiary: #29292c;
+  --bg-elevated: #252527;
+  --accent: #c6ca4c;
+  --accent-strong: #c6ca4c;
+  --accent-soft: rgba(198, 202, 76, 0.14);
+  --accent-ink: #171719;
+  --focus: #f4f59a;
+  --brand: #c6ca4c;
+  --brand-soft: rgba(198, 202, 76, 0.12);
+  --accent-pink: #d7a667;
+  --danger: #dc8580;
+  --danger-soft: rgba(220, 133, 128, 0.12);
+  --warning: #d8b35b;
+  --success: #aeb452;
+  --text-primary: #f4f4f6;
+  --text-secondary: #a4a4aa;
+  --text-muted: #76767c;
+  --border: #343438;
+  --shadow: rgba(0, 0, 0, 0.42);
+  --ambient: rgba(198, 202, 76, 0.06);
+  --panel-shadow: 0 18px 44px rgba(0, 0, 0, 0.25);
+  --surface-highlight: rgba(255, 255, 255, 0.035);
   --font-ui: "Inter", "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   --font-display: "Iowan Old Style", "Baskerville", "Noto Serif CJK SC", "Songti SC", serif;
 }
 
 [data-theme="light"] {
   color-scheme: light;
-  --bg-primary: #f2f4f6;
+  --bg-primary: #f1f1ed;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f3f5f7;
+  --bg-tertiary: #f5f5f0;
   --bg-elevated: #ffffff;
-  --accent: #078db8;
-  --accent-strong: #00a1d6;
-  --accent-soft: rgba(0, 161, 214, 0.1);
-  --accent-ink: #ffffff;
-  --focus: #078db8;
-  --brand: #00a1d6;
-  --brand-soft: rgba(0, 161, 214, 0.1);
-  --accent-pink: #fb7299;
-  --danger: #b54b4a;
-  --danger-soft: rgba(181, 75, 74, 0.09);
-  --warning: #91621d;
-  --success: #287453;
-  --text-primary: #18191c;
-  --text-secondary: #61666d;
-  --text-muted: #9499a0;
-  --border: #e3e5e7;
-  --shadow: rgba(28, 53, 77, 0.12);
-  --ambient: rgba(107, 156, 198, 0.12);
-  --panel-shadow: 0 16px 40px rgba(33, 62, 87, 0.1);
-  --surface-highlight: rgba(255, 255, 255, 0.7);
+  --accent: #787d22;
+  --accent-strong: #c6ca4c;
+  --accent-soft: rgba(120, 125, 34, 0.12);
+  --accent-ink: #171719;
+  --focus: #787d22;
+  --brand: #aab039;
+  --brand-soft: rgba(170, 176, 57, 0.12);
+  --accent-pink: #b2824a;
+  --danger: #a34442;
+  --danger-soft: rgba(163, 68, 66, 0.09);
+  --warning: #82641d;
+  --success: #69711e;
+  --text-primary: #20201e;
+  --text-secondary: #62625d;
+  --text-muted: #898982;
+  --border: #dfdfd7;
+  --shadow: rgba(29, 30, 18, 0.12);
+  --ambient: rgba(157, 163, 54, 0.1);
+  --panel-shadow: 0 16px 40px rgba(33, 34, 23, 0.1);
+  --surface-highlight: rgba(255, 255, 255, 0.72);
 }
 
 * {
@@ -3183,4 +3183,354 @@ select:focus {
   .provider-section-heading p {
     max-width: 280px;
   }
+}
+
+/* Endfield-inspired surface language, translated into Mod Studio's own UI. */
+#root .app {
+  --surface-inset: #1e1e20;
+  --surface-line: #3b3b3f;
+  --surface-soft: color-mix(in srgb, var(--bg-secondary) 82%, var(--accent) 3%);
+  background:
+    radial-gradient(ellipse at 88% 0%, var(--ambient), transparent 38%),
+    var(--bg-primary);
+  letter-spacing: 0.005em;
+}
+
+#root .app > .header {
+  min-height: 66px;
+  padding-inline: 20px;
+  border-color: var(--surface-line);
+  background: var(--bg-secondary);
+  box-shadow: inset 0 2px 0 var(--brand);
+}
+
+#root .app > .header .brand-seal {
+  width: 38px;
+  height: 38px;
+  border: 1px solid color-mix(in srgb, var(--accent) 72%, white 8%);
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+#root .app > .header .brand-seal::after {
+  width: 5px;
+  height: 5px;
+  background: #f4f59a;
+  box-shadow: 0 0 7px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+#root .app > .header h1,
+#root .app .workspace-heading h2 {
+  letter-spacing: -0.025em;
+}
+
+#root .app > .header .brand-eyebrow,
+#root .app .workspace-kicker,
+#root .app .nav-section-label,
+#root .app .welcome-kicker {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+}
+
+#root .app-frame {
+  background: var(--bg-primary);
+}
+
+#root .app-sidebar {
+  border-color: var(--surface-line);
+  background: var(--surface-inset);
+}
+
+#root .app .sidebar-project {
+  border-color: var(--surface-line);
+}
+
+#root .app .project-avatar {
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-secondary));
+  color: var(--accent);
+}
+
+#root .app .side-nav button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+#root .app .side-nav button:hover:not(.active) {
+  background: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+#root .app .side-nav button.active {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  color: var(--text-primary);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+#root .app .side-nav button.active .nav-icon,
+#root .app .sidebar-settings-entry > span,
+#root .app .sidebar-footer-mark {
+  color: var(--accent);
+}
+
+#root .app .sidebar-footer-prompt {
+  border: 1px solid var(--surface-line);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+}
+
+#root .app .sidebar-settings-entry {
+  border: 1px solid var(--surface-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+#root .app .content-column {
+  background: transparent;
+}
+
+#root .app .workspace-heading {
+  border-bottom: 1px solid var(--border);
+}
+
+#root .app .project-status,
+#root .app .project-status.is-ready {
+  border: 1px solid var(--surface-line);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+
+#root .app .project-light.is-ready,
+#root .app .status-dot.is-on,
+#root .app .manager-status.is-enabled i {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+#root .app .workspace-shell,
+#root .app .card-editor,
+#root .app .relic-editor,
+#root .app .test-area,
+#root .app .file-sidebar,
+#root .app .file-content {
+  border-color: var(--surface-line);
+  border-radius: 9px;
+  background-color: var(--bg-secondary);
+  box-shadow: var(--panel-shadow);
+}
+
+#root .app :is(.editor-header, .content-header, .code-header, .graph-toolbar, .conversation-header) {
+  border-color: var(--surface-line);
+  background: var(--bg-secondary);
+}
+
+#root .app :is(.card-list, .card-properties, .relic-form, .relic-preview, .file-list) {
+  border-color: var(--surface-line);
+  background-color: var(--bg-secondary);
+}
+
+#root .app :is(.card-item, .welcome-feature-card, .provider-option, .manager-mod-icon) {
+  border-color: var(--surface-line);
+  border-radius: 7px;
+  background-color: var(--bg-tertiary);
+}
+
+#root .app .card-item.selected,
+#root .app .provider-option.active {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-tertiary));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+#root .app .card-preview {
+  border-radius: 7px;
+  background: linear-gradient(145deg, #29292c, #202022);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 10px 24px rgba(0, 0, 0, 0.16);
+}
+
+#root .app .keyword-tag,
+#root .app .provider-state-pill,
+#root .app .project-status {
+  border-radius: 5px;
+}
+
+#root .app button {
+  min-height: 36px;
+  border-radius: 6px;
+  font-weight: 650;
+  box-shadow: none;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+#root .app button:hover:not(:disabled) {
+  filter: none;
+  transform: translateY(-1px);
+}
+
+#root .app :is(.secondary-btn, .info-btn, .settings-btn, .theme-toggle, .sidebar-settings-entry, .manager-secondary, .card-proposal-quiet-button, .conversation-icon-button, .conversation-rail-button) {
+  border: 1px solid var(--surface-line);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+#root .app :is(.secondary-btn, .info-btn, .settings-btn, .theme-toggle, .manager-secondary, .card-proposal-quiet-button, .conversation-icon-button, .conversation-rail-button):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-tertiary));
+}
+
+#root .app :is(.preview-btn, .save-btn, .primary-btn, .conversation-send-button:not(.is-cancel), .card-proposal-primary-button, .manager-primary) {
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, white 4%);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 5px 14px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+#root .app :is(.preview-btn, .save-btn, .primary-btn, .conversation-send-button:not(.is-cancel), .card-proposal-primary-button, .manager-primary):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, white 12%);
+  color: var(--accent-ink);
+}
+
+#root .app :is(input, textarea, select, .manager-search) {
+  border-color: var(--surface-line);
+  border-radius: 6px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+#root .app :is(input, textarea, select):focus,
+#root .app :is(input, textarea, select):focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+#root .app .modal-overlay {
+  background: rgba(8, 8, 8, 0.72);
+  backdrop-filter: blur(5px);
+}
+
+#root .app .modal-content {
+  border: 1px solid var(--surface-line);
+  border-radius: 9px;
+  background: var(--bg-secondary);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+}
+
+#root .app .project-conversation-drawer {
+  border-left-color: var(--surface-line);
+  background: var(--bg-secondary);
+  box-shadow: -14px 0 32px rgba(0, 0, 0, 0.2);
+}
+
+#root .app :is(.conversation-message, .conversation-state-card, .conversation-input-shell, .conversation-performance-details, .card-proposal-diff-row) {
+  border-radius: 7px;
+  border-color: var(--surface-line);
+}
+
+#root .app .conversation-message.user {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--surface-line));
+  background: color-mix(in srgb, var(--accent) 11%, var(--bg-tertiary));
+}
+
+#root .app .conversation-send-button:not(.is-cancel),
+#root .app .card-proposal-primary-button {
+  background-image: none;
+}
+
+#root .app :is(.conversation-orb, .conversation-spark, .card-proposal-empty > span) {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-tertiary));
+  color: var(--accent);
+  box-shadow: none;
+}
+
+#root .app :is(.conversation-status-dot.is-active, .conversation-status-dot.has-unread, .conversation-message.is-running span) {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+#root .app :is(.card-proposal-eyebrow, .card-proposal-count, .card-proposal-arrow, .card-proposal-status.is-pending > span) {
+  color: var(--accent);
+}
+
+#root .app :is(.provider-state-pill.is-ready, .manager-mod-icon.is-enabled, .manager-status.is-enabled) {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--surface-line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  color: var(--text-primary);
+}
+
+#root .app .welcome-hero {
+  border: 1px solid var(--surface-line);
+  border-radius: 9px;
+  background: linear-gradient(135deg, var(--bg-secondary), color-mix(in srgb, var(--accent) 4%, var(--bg-secondary)));
+  box-shadow: var(--panel-shadow);
+}
+
+#root .app .editor-header .header-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+#root .app .editor-header .header-actions > button:not(:last-child) {
+  border: 1px solid var(--surface-line);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+#root .app .editor-header .header-actions > button:last-child {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+#root .app :is(.welcome-feature-card, .provider-option, .card-item, .manager-row, .file-item) {
+  transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root .app *,
+  #root .app *::before,
+  #root .app *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (max-width: 980px) {
+  #root .app .card-editor .editor-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  #root .app .card-editor .editor-header h2 {
+    flex: 1 0 100%;
+  }
+
+  #root .app .card-editor .editor-header .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+#root .app .card-editor .editor-header .header-actions > button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}
+
+#root .app .ui-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: middle;
 }

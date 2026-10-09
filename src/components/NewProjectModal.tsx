@@ -204,19 +204,19 @@ public partial class MainFile : Node
         }
 
         .error-msg {
-          color: var(--accent);
+          color: var(--danger);
           font-size: 14px;
           padding: 8px 12px;
-          background: rgba(233, 69, 96, 0.1);
+          background: var(--danger-soft);
           border-radius: 4px;
           margin-top: 12px;
         }
 
         .progress-msg {
-          color: #4ade80;
+          color: var(--success);
           font-size: 14px;
           padding: 8px 12px;
-          background: rgba(74, 222, 128, 0.1);
+          background: color-mix(in srgb, var(--success) 10%, transparent);
           border-radius: 4px;
           margin-top: 12px;
         }

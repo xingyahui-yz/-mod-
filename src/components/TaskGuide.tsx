@@ -1,4 +1,5 @@
 import { useTaskStore } from '../stores/useTaskStore'
+import { Icon } from './Icon'
 
 export function TaskGuide() {
   const {
@@ -19,7 +20,7 @@ export function TaskGuide() {
   return (
     <div className="task-guide">
       <div className="task-header">
-        <h3>📋 任务进度</h3>
+        <h3><Icon name="activity" size={16} /> 任务进度</h3>
         <span className="progress-text">
           {progress.completed}/{progress.total}
         </span>
@@ -43,10 +44,10 @@ export function TaskGuide() {
               className={`task-item ${task.status} ${isActive ? 'active' : ''}`}
             >
               <div className="task-status-icon">
-                {task.status === 'completed' && '✅'}
-                {task.status === 'skipped' && '⏭️'}
-                {task.status === 'pending' && !isActive && '⭕'}
-                {task.status === 'pending' && isActive && '🔄'}
+                {task.status === 'completed' && <Icon name="activity" size={14} />}
+                {task.status === 'skipped' && <Icon name="refresh" size={14} />}
+                {task.status === 'pending' && !isActive && <Icon name="monitor" size={14} />}
+                {task.status === 'pending' && isActive && <Icon name="bolt" size={14} />}
               </div>
 
               <div className="task-content">
@@ -63,14 +64,14 @@ export function TaskGuide() {
                     onClick={() => completeTask(task.id)}
                     title="完成任务"
                   >
-                    ✓
+                    <Icon name="activity" size={13} />
                   </button>
                   <button
                     className="skip-btn"
                     onClick={() => skipTask(task.id)}
                     title="跳过"
                   >
-                    →
+                    <Icon name="refresh" size={13} />
                   </button>
                 </div>
               )}
@@ -81,7 +82,7 @@ export function TaskGuide() {
 
       {progress.completed === progress.total && (
         <div className="task-complete">
-          🎉 恭喜完成所有任务！
+          恭喜完成所有任务！
         </div>
       )}
 
@@ -159,7 +160,7 @@ export function TaskGuide() {
         }
 
         .task-item.active {
-          background: rgba(233, 69, 96, 0.1);
+          background: var(--accent-soft);
         }
 
         .task-item.completed {
@@ -213,8 +214,8 @@ export function TaskGuide() {
         }
 
         .complete-btn {
-          background: #4ade80;
-          color: white;
+          background: var(--accent);
+          color: var(--accent-ink);
         }
 
         .skip-btn {
@@ -225,8 +226,8 @@ export function TaskGuide() {
         .task-complete {
           padding: 16px;
           text-align: center;
-          background: rgba(74, 222, 128, 0.1);
-          color: #4ade80;
+          background: var(--accent-soft);
+          color: var(--accent);
           font-size: 14px;
           font-weight: 500;
         }

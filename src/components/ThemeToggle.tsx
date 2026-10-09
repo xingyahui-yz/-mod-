@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getTheme, setTheme as saveTheme, toggleTheme } from '../utils/theme'
+import { Icon } from './Icon'
 
 export function ThemeToggle() {
   const [theme, setLocalTheme] = useState<'dark' | 'light'>(getTheme())
@@ -20,7 +21,7 @@ export function ThemeToggle() {
       title={theme === 'dark' ? '切换到亮色' : '切换到暗色'}
       aria-label={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
     >
-      {theme === 'dark' ? '☀️' : '🌙'}
+      <Icon name="power" size={16} />
     </button>
   )
 }
