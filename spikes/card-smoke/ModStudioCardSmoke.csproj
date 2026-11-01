@@ -10,9 +10,13 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Main.cs" />
+    <Compile Include="TestProfileBootstrap.cs" />
+    <Compile Include="TestProfilePolicy.cs" />
+    <Compile Include="TestStartingDeck.cs" />
     <Compile Include="Cards/*.cs" />
     <Reference Include="sts2"><HintPath>$(GameDataPath)/sts2.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="GodotSharp"><HintPath>$(GameDataPath)/GodotSharp.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="BaseLib"><HintPath>$(GamePath)/mods/BaseLib/BaseLib.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(GameDataPath)/0Harmony.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 </Project>

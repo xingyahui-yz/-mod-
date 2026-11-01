@@ -1,0 +1,32 @@
+{
+  "date": "2026-11-01",
+  "game": {"version": "0.111.0", "steamBuildId": "24724944", "baseLib": "3.4.7"},
+  "package": {
+    "dllSha256": "1dc5743b092c8e290575d8dbba9c4412339673d5787ebf1ef739396ed6a42051",
+    "manifestSha256": "2f45cb25dcfb797e2b245f56650d7a42059a809e0f654806da44623ec4b9d7d7",
+    "buildWarnings": 0, "buildErrors": 0, "profileGuardChecksPassed": 11
+  },
+  "saveIsolation": {
+    "activeScope": "modded/profile2", "identityDistinct": true,
+    "originalProfileFilesUnchanged": 141, "originalSelectorUnchanged": true,
+    "latestBackupFilesChecksumVerified": 182,
+    "privateProgressStoredInGit": false,
+    "importMethod": "game save API after cloud synchronization with slot/path/identity/checksum guards"
+  },
+  "menu": {"timelineOpenedThroughUi": true, "cardLibraryOpenedUserConfirmed": true},
+  "actualRuntimePool": {
+    "pool": "IroncladCardPool", "containsCard": true, "unlocked": true,
+    "rarity": "Common", "type": "Attack", "compendiumAvailable": true, "discovered": true
+  },
+  "startingDeckFixture": {"requestedByUser": true, "scope": "prepared modded profile2", "copies": 1, "userConfirmedVisibleAndPlayed": true},
+  "combat": {
+    "status": "passed-with-starting-deck-fixture", "card": "StudioStrike",
+    "baseDamage": 6, "targetHpBefore": 32, "targetHpAfter": 26,
+    "targetBlockBefore": 0, "targetBlockAfter": 0,
+    "log": "StudioStrike played: baseDamage=6, hp=32->26, block=0->0."
+  },
+  "naturalRewardOrShopAcquisition": "not-observed",
+  "upgradedNineDamagePlay": "not-verified",
+  "productGeneratorIntegration": "not-implemented",
+  "fullOriginalAcceptancePlan": "incomplete-natural-acquisition-pending"
+}

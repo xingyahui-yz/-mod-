@@ -63,10 +63,30 @@ After the user confirmed the game had exited, `deploy.ps1` created `mods/ModStud
 - The initial manifest used a legacy `dependencies: ["BaseLib"]` array. STS2 loaded it but recorded an ERROR about missing minimum dependency versions, producing the red mod-error indicator. The source/output package now uses `[{"id":"BaseLib","min_version":"3.4.7"}]`; corrected manifest SHA-256: `2f45cb25dcfb797e2b245f56650d7a42059a809e0f654806da44623ec4b9d7d7`. `tools/ManifestCheck` verifies dependency structure and calls the installed game's `ModManifest.ReadFromStream`; it accepted the corrected manifest with zero errors using the installed x64 .NET 10 runtime. The x86 runtime cannot execute this x64 game assembly even though the x86 SDK can compile against it.
 - The user then reported that the card-library entry and previous progress were missing. The startup log shows the gameplay test switched to `steam/<account>/modded/profile1`, which contained only 1,166 bytes of progress and zero runs. The original `profile1` still had 273,359 bytes of progress and 88 run-history files; its modification time predates the experiment. Therefore the missing library entry does not yet diagnose a registration/pool defect: the active save profile itself changed to fresh progress.
 - After the user exited the game, both save trees were copied to an ignored local `.diagnostics/save-backups/` snapshot: 174 files / 17,830,592 bytes, all SHA-256 verified. 145 original/settings files were unchanged on comparison after the rollback. No save data was restored over another profile.
-- **Both test Mod and BaseLib are currently disabled**, moved with checksum verification into the game's `.modstudio-disabled-mods/`. The original active `mods/` directory has zero local Mod folders. The disabled test package retains the incident manifest; the source/output package has the corrected manifest. The next startup log returned to the original `profile1`; the user confirmed **original progress and the library entry both recovered**.
+- During rollback, both test Mod and BaseLib were moved with checksum verification into `.modstudio-disabled-mods/`. The next startup returned to the original `profile1`; the user confirmed **original progress and the library entry both recovered**. They were later re-enabled for the isolated slot-2 workflow below.
 - Resume only after explicit preparation of a separate test save profile. Save backup and clear explanation of original/modded profile switching were missing from this first deployment and are required in the reusable workflow. Keep `affects_gameplay: true`; changing it to bypass separation would be incorrect.
 
-**Current Card result: build/deploy/initializer execution passed; error-free startup with the corrected manifest, normal-pool acquisition, and combat damage remain unverified. Original save recovery is user-confirmed. The experiment is disabled pending a separate test save.**
+### Isolated slot 2 and actual combat
+
+The user requested an independent test save. A fresh snapshot backed up 174 files and verified original profile1's **141 files plus its selector**. A private workspace-only progress copy received a distinct identity from the game's own `SerializableProgress` constructor, and all fields other than that identity were checked unchanged before staging.
+
+Simply placing it at `modded/profile2` before launch did not work: the actual startup log showed Steam replacing `modded/profile.save` from remote and deleting local-only profile2 progress/prefs. The game UI was therefore used to create/select modded slot 2. It was a new profile, so timeline/card-library unlocks were absent. This explained the missing menu entries; the original profile stayed unchanged.
+
+`TestProfileBootstrap` now runs after normal cloud synchronization and progress loading. It requires prepared slot 2, its actual `/modded/profile2` path, matching test identities, a different original identity, the prepared file's SHA-256, and successful game parsing/validation. It then saves through the game's existing progress API. Eleven profile-isolation checks pass; original/non-modded/other-slot/foreign-identity inputs are rejected. Private configuration and progress remain outside Git. The game validated the source's 901 discovery records to 560 supported records and retained 57 timeline epochs; the original source file was unchanged.
+
+Actual Steam startup then confirmed `modded/profile2`, no `[ERROR]`, compendium available, and `IroncladCardPool` containing the unlocked Common Attack. The timeline page was opened via UI, and the user confirmed the card-library page opened. The test card initially displayed as unknown because its discovery record was absent, although the actual reward-unlock query included it.
+
+The user explicitly requested **工坊试击 in the starting deck for convenient testing**. A separate guarded postfix now adds exactly one copy to a new Ironclad run's starting deck only in the prepared modded slot 2; normal pool registration remains in place. The test profile also marks this card discovered for library preview. The actual runtime audit reports `StartingDeckCopies: 1` and `Discovered: true`. This deliberate fixture must not count as evidence of natural reward/shop acquisition.
+
+The user confirmed seeing the initial card and playing it. The real game log recorded:
+
+```text
+StudioStrike played: baseDamage=6, hp=32->26, block=0->0.
+```
+
+The 6-HP combat check passed under the prompted no-modifier conditions. Afterwards, the same original 141 files and original selector still matched their hashes, and startup was error-free. Latest package DLL SHA-256: `1dc5743b092c8e290575d8dbba9c4412339673d5787ebf1ef739396ed6a42051`; manifest SHA-256 remains `2f45cb25dcfb797e2b245f56650d7a42059a809e0f654806da44623ec4b9d7d7`. Before each package update, the current test run and both save trees were backed up (182 files in the latest snapshots).
+
+**Passed: isolated test save, menu recovery, corrected startup, actual pool membership/unlock eligibility, one-copy starting-deck fixture, and real 6-HP combat damage. Still pending under the original plan: natural reward/shop acquisition. The product generator/build/deploy integration is not implemented.** Evidence: [`card-smoke-acceptance-2026-11-01.json`](./card-smoke-acceptance-2026-11-01.json).
 
 ## Compatibility route
 
@@ -78,7 +98,7 @@ After the user confirmed the game had exited, `deploy.ps1` created `mods/ModStud
 
 ## Current status
 
-The installed game identifies itself as v0.111.0, Steam build ID 24724944. BaseLib loaded successfully and the standalone Card package compiled/deployed/initialized, but the test exposed a legacy dependency-manifest error and a switch to a fresh modded save profile. Both Mods are now disabled, save snapshots are verified, and the user confirmed original progress and the card-library entry recovered. The manifest fix passes the actual game parser offline; normal-pool acquisition and combat damage have not passed. A separate test save is required before resuming. MegaDot is extracted but has not been run, and the template is not installed. The application still generates the old `RitsuMod` API; migrate or integrate its generator/build/deploy flow only after an isolated playtest provides evidence.
+The installed game is v0.111.0, Steam build ID 24724944. The experiment is active in prepared `modded/profile2`, with BaseLib and the corrected test package. Timeline/card-library access has recovered; actual runtime pool membership and reward unlock eligibility pass. At the user's request, one starting-deck copy was used for actual combat: target HP 32 to 26, Block 0 to 0, base damage 6. The original save remains hash-identical. Natural reward/shop acquisition is still not observed, and the upgraded 9-damage variant is not tested. MegaDot is extracted but has not been run; no template was installed. The application still generates the old `RitsuMod` API, so this experiment does not yet supply a product-level one-click generator/build/deploy flow.
 
 ## References
 

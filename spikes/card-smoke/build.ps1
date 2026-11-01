@@ -14,7 +14,7 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
 $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
 $env:MSBuildEnableWorkloadResolver = 'false'
-& $DotnetPath build (Join-Path $PSScriptRoot 'ModStudioCardSmoke.csproj') --configfile (Join-Path $PSScriptRoot 'NuGet.Config') -c Release "-p:GamePath=$gameRoot" --nologo --verbosity minimal
+& $DotnetPath build (Join-Path $PSScriptRoot 'ModStudioCardSmoke.csproj') --configfile (Join-Path $PSScriptRoot 'NuGet.Config') -c Release "-p:GamePath=$gameRoot" -p:UseSharedCompilation=false --nologo --verbosity minimal
 if ($LASTEXITCODE -ne 0) { throw "Card mod build failed (exit $LASTEXITCODE)." }
 $outputDirectory = Join-Path $PSScriptRoot 'out\ModStudioCardSmoke'
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
