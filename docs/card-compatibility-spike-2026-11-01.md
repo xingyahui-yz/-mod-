@@ -98,7 +98,9 @@ The 6-HP combat check passed under the prompted no-modifier conditions. Afterwar
 
 ## Current status
 
-The installed game is v0.111.0, Steam build ID 24724944. The experiment is active in prepared `modded/profile2`, with BaseLib and the corrected test package. Timeline/card-library access has recovered; actual runtime pool membership and reward unlock eligibility pass. At the user's request, one starting-deck copy was used for actual combat: target HP 32 to 26, Block 0 to 0, base damage 6. The original save remains hash-identical. Natural reward/shop acquisition is still not observed, and the upgraded 9-damage variant is not tested. MegaDot is extracted but has not been run; no template was installed. The application still generates the old `RitsuMod` API, so this experiment does not yet supply a product-level one-click generator/build/deploy flow.
+The installed game is v0.111.0, Steam build ID 24724944. The isolated experiment verified actual pool membership/reward unlock eligibility and a user-requested starting-deck copy in combat: target HP 32 to 26, Block 0 to 0, base damage 6. Natural reward/shop acquisition is still not observed, and the upgraded 9-damage variant is not tested. MegaDot is extracted but has not been run; no template was installed. The application still generates the old `RitsuMod` API, so this experiment does not yet supply a product-level one-click generator/build/deploy flow.
+
+After the user requested the original game state, both Mods were moved with checksum verification to `.modstudio-disabled-mods/` and the active bootstrap configuration was archived into the ignored session backup. Before restoration, all 182 save files were backed up and verified. Steam startup now uses **original/profile1**, with zero active local Mod folders, no test-Mod initialization, no modded-running marker, and no `[ERROR]`. The main menu visibly shows profile 1, Timeline and Encyclopedia. Original profile1's **141 files and selector** remain unchanged. The isolated test save and backups are retained; the game is currently restored to its original mode.
 
 ## References
 

@@ -66,6 +66,8 @@ Passed on 2026-11-01:
 
 The combat check used the **explicitly requested starting-deck fixture**. Natural reward/shop acquisition has **not been observed** and must remain a separate pending result under the original acceptance plan. Upgraded 9-damage play is also unverified. See [`docs/card-smoke-acceptance-2026-11-01.json`](../../docs/card-smoke-acceptance-2026-11-01.json) for the concise evidence record.
 
+After acceptance, the user requested the original game state. Both Mods are currently disabled, the active bootstrap configuration is archived, and Steam startup is verified on **original/profile1** with zero local Mods and no modded-running marker or startup errors. Timeline and Encyclopedia are visible. All original profile files/selector remain hash-identical; the isolated test save and backups are retained.
+
 ## Manifest validation
 
 The initial package used legacy string dependencies. The game loaded it but logged an ERROR, causing the red "loaded mods but detected errors" status. The source manifest now requires `{"id":"BaseLib","min_version":"3.4.7"}`. `tools/ManifestCheck` rejects legacy strings and invokes the **installed game's own `ModManifest.ReadFromStream`** parser; the corrected manifest passes with zero parser errors.

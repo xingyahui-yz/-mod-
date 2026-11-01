@@ -28,5 +28,17 @@
   "naturalRewardOrShopAcquisition": "not-observed",
   "upgradedNineDamagePlay": "not-verified",
   "productGeneratorIntegration": "not-implemented",
-  "fullOriginalAcceptancePlan": "incomplete-natural-acquisition-pending"
+  "fullOriginalAcceptancePlan": "incomplete-natural-acquisition-pending",
+  "postTestRestoration": {
+    "requestedByUser": true,
+    "currentScope": "original/profile1",
+    "activeLocalModFolders": 0,
+    "baseLibAndTestModDisabled": true,
+    "testBootstrapConfigurationArchived": true,
+    "originalProfileFilesUnchanged": 141,
+    "originalSelectorUnchanged": true,
+    "steamStartupHasNoTestModsOrModdedMarkerOrErrors": true,
+    "timelineAndEncyclopediaVisible": true,
+    "testSaveAndBackupsRetained": true
+  }
 }
