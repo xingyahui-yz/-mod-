@@ -13,7 +13,7 @@ foreach ($name in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $name) -PathType Leaf)) { throw "Missing package file: $name" }
 }
 $manifest = Get-Content -LiteralPath (Join-Path $source 'ModStudioCardSmoke.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($manifest.id -ne 'ModStudioCardSmoke' -or -not $manifest.has_dll -or $manifest.has_pck -or 'BaseLib' -notin $manifest.dependencies) {
+if ($manifest.id -ne 'ModStudioCardSmoke' -or -not $manifest.has_dll -or $manifest.has_pck -or @($manifest.dependencies).Count -ne 1 -or $manifest.dependencies[0].id -ne 'BaseLib' -or $manifest.dependencies[0].min_version -ne '3.4.7') {
     throw 'Unexpected test mod manifest.'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $gameRoot 'mods\BaseLib\BaseLib.dll') -PathType Leaf)) { throw 'Install BaseLib first.' }

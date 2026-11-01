@@ -25,7 +25,13 @@ Build uses only local framework references and the installed game/BaseLib assemb
 
 To roll back, exit the game and move `mods/ModStudioCardSmoke/` outside the game's `mods/` directory, or disable it in Mod Studio. Keep a run using the test card separate until its test is complete.
 
-## Acceptance evidence (pending)
+## Save-profile incident and test prerequisite
+
+Enabling this gameplay-affecting test Mod switched the game to `steam/<account>/modded/profile1`. That profile had only 1,166 bytes of progress and no run history, while the original `profile1` retained a 273,359-byte progress file and 88 runs. The user reported missing progress and the card-library entry, so the experiment was stopped. Both save trees were backed up (174 files, 17,830,592 bytes, all SHA-256 verified), and the test Mod and BaseLib were moved to `.modstudio-disabled-mods/`. No save was copied over another save. User confirmation of recovery is required before resuming the experiment.
+
+Future playtests must explicitly prepare a separate test profile and back up both original and modded data before enabling gameplay Mods. Do not mark this content Mod as cosmetic to bypass save separation. An unavailable card-library entry in a new modded profile does not establish that card-pool registration failed.
+
+## Acceptance evidence (pending; currently disabled)
 
 1. Restart the game and enable **BaseLib** and **Mod Studio Card Smoke** in its Mod settings.
 2. Confirm **工坊试击** appears among Ironclad's cards in the card library. This confirms display/registration; it does not yet prove a normal reward or combat.
@@ -34,6 +40,19 @@ To roll back, exit the game and move `mods/ModStudioCardSmoke/` outside the game
 5. Check `%APPDATA%/SlayTheSpire2/logs/godot.log` for `ModStudioCardSmoke`. The initializer records registration; `StudioStrike played:` records base damage and HP/Block before and after the actual attack. Log output supplements the observed game result.
 
 The Card stage remains **incomplete** until normal-pool acquisition and in-combat damage are both observed.
+
+## Manifest validation
+
+The initial package used legacy string dependencies. The game loaded it but logged an ERROR, causing the red "loaded mods but detected errors" status. The source manifest now requires `{"id":"BaseLib","min_version":"3.4.7"}`. `tools/ManifestCheck` rejects legacy strings and invokes the **installed game's own `ModManifest.ReadFromStream`** parser; the corrected manifest passes with zero parser errors.
+
+Build the validator with the same offline SDK setup as `build.ps1`, then run it with an installed **x64** .NET 9 or later runtime. This machine has an x64 .NET 10 host, so the validation command is:
+
+```powershell
+& 'C:\Program Files (x86)\dotnet\dotnet.exe' build tools/ManifestCheck/ManifestCheck.csproj --configfile NuGet.Config -p:MSBuildEnableWorkloadResolver=false
+& 'C:\Program Files\dotnet\dotnet.exe' exec --roll-forward Major tools/ManifestCheck/bin/Debug/net9.0/ManifestCheck.dll 'D:\Steam\steamapps\common\Slay the Spire 2\data_sts2_windows_x86_64' ModStudioCardSmoke.json
+```
+
+The x86 SDK can compile the Mod, but an x86 process cannot execute the game's x64 assembly for this parser check. The Sentry GDExtension notice from the standalone check is expected outside a running Godot game. The corrected manifest is in the source/output package; the disabled game package is retained as it was when the incident occurred.
 
 ## API provenance
 

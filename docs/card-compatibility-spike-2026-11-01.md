@@ -56,7 +56,17 @@ The experiment lives in [`spikes/card-smoke/`](../spikes/card-smoke/README.md), 
 
 `build.ps1 -GamePath 'D:\Steam\steamapps\common\Slay the Spire 2'` completed with **0 warnings / 0 errors** using the installed x86 SDK 9.0.123. NuGet sources were cleared and there are no package dependencies; no new SDK, template, or editor was installed. The final DLL SHA-256 is `c0bd7617c14deee1db36ae2dd28209d93e40e3b2369fcbde9641314ff2aaa626`; the manifest SHA-256 is `dae5ef42a3ce9ae4d1c3fb4fb5a08053b033295a0ca719cdcc2a8c7c1105cf03`.
 
-After the user confirmed the game had exited, `deploy.ps1` created `mods/ModStudioCardSmoke/` through a unique same-volume staging directory and checked both copied files' SHA-256 before publication. Existing Mod directories are rejected without replacement. **Build and deployment passed; test-Mod loading, normal-pool acquisition, and combat damage are pending.** The user has been asked to restart the game and enable **Mod Studio Card Smoke** alongside BaseLib.
+After the user confirmed the game had exited, `deploy.ps1` created `mods/ModStudioCardSmoke/` through a unique same-volume staging directory and checked both copied files' SHA-256 before publication. Existing Mod directories are rejected without replacement. The user enabled it and returned to the main menu; the log confirms its DLL initializer completed.
+
+### Runtime issues and rollback
+
+- The initial manifest used a legacy `dependencies: ["BaseLib"]` array. STS2 loaded it but recorded an ERROR about missing minimum dependency versions, producing the red mod-error indicator. The source/output package now uses `[{"id":"BaseLib","min_version":"3.4.7"}]`; corrected manifest SHA-256: `2f45cb25dcfb797e2b245f56650d7a42059a809e0f654806da44623ec4b9d7d7`. `tools/ManifestCheck` verifies dependency structure and calls the installed game's `ModManifest.ReadFromStream`; it accepted the corrected manifest with zero errors using the installed x64 .NET 10 runtime. The x86 runtime cannot execute this x64 game assembly even though the x86 SDK can compile against it.
+- The user then reported that the card-library entry and previous progress were missing. The startup log shows the gameplay test switched to `steam/<account>/modded/profile1`, which contained only 1,166 bytes of progress and zero runs. The original `profile1` still had 273,359 bytes of progress and 88 run-history files; its modification time predates the experiment. Therefore the missing library entry does not yet diagnose a registration/pool defect: the active save profile itself changed to fresh progress.
+- After the user exited the game, both save trees were copied to an ignored local `.diagnostics/save-backups/` snapshot: 174 files / 17,830,592 bytes, all SHA-256 verified. 145 original/settings files were unchanged on comparison after the rollback. No save data was restored over another profile.
+- **Both test Mod and BaseLib are currently disabled**, moved with checksum verification into the game's `.modstudio-disabled-mods/`. The original active `mods/` directory has zero local Mod folders. The disabled test package retains the incident manifest; the source/output package has the corrected manifest. The user has been asked to restart through Steam and confirm original progress and the library entry recover.
+- Resume only after that confirmation and explicit preparation of a separate test save profile. Save backup and clear explanation of original/modded profile switching were missing from this first deployment and are required in the reusable workflow. Keep `affects_gameplay: true`; changing it to bypass separation would be incorrect.
+
+**Current Card result: build/deploy/initializer execution passed; error-free startup with the corrected manifest, normal-pool acquisition, and combat damage remain unverified. The experiment is disabled pending save-profile recovery.**
 
 ## Compatibility route
 
@@ -68,7 +78,7 @@ After the user confirmed the game had exited, `deploy.ps1` created `mods/ModStud
 
 ## Current status
 
-The .NET SDK prerequisite is met, BaseLib is installed and running, and the standalone Card package has compiled and deployed. The installed game identifies itself as v0.111.0, Steam build ID 24724944. MegaDot is extracted but has not been run, and the template is not installed. The test Mod's game loading, display in Ironclad's library, ordinary reward/shop acquisition, and in-combat damage remain unverified. The application still generates the old `RitsuMod` API; migrate or integrate its generator/build/deploy flow only after the experiment's actual playtest provides evidence.
+The installed game identifies itself as v0.111.0, Steam build ID 24724944. BaseLib loaded successfully and the standalone Card package compiled/deployed/initialized, but the test exposed a legacy dependency-manifest error and a switch to a fresh modded save profile. Both Mods are now disabled, save snapshots are verified, and recovery confirmation is pending. The manifest fix passes the actual game parser offline; normal-pool acquisition and combat damage have not passed. MegaDot is extracted but has not been run, and the template is not installed. The application still generates the old `RitsuMod` API; migrate or integrate its generator/build/deploy flow only after an isolated playtest provides evidence.
 
 ## References
 
