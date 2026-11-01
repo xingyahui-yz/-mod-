@@ -5004,7 +5004,7 @@
     <!-- Main Diagram -->
     <div class="diagram-container" data-detail-level="read"
          data-preset-badge-editorial-plate="ARCHIFY / 图版 04">
-      <svg viewBox="0 0 1240 760" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
+      <svg viewBox="0 0 1360 1040" role="img" lang="zh-CN" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase">
         <title id="archify-diagram-title">Mod Studio 项目架构</title>
         <desc id="archify-diagram-description">由 Archify 生成的架构图。</desc>
         <!-- Definitions -->
@@ -5030,203 +5030,166 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Electron Renderer" x="342" y="50" width="542" height="328" rx="12" class="c-region" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="1" data-composition-frame-label="用户项目目录" x="342" y="446" width="834" height="130" rx="12" class="c-region" stroke-width="1"/>
 
         <!-- Connection paths (before components for correct z-order) -->
-        <path data-edge-from="user" data-edge-to="renderer" data-edge-label="交互意图" data-edge-key="0" data-edge-id="a1" data-composition-points="270,120;372,120" d="M 270 120 L 372 120" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="renderer" data-edge-to="catalog" data-edge-key="1" data-edge-id="a2" data-composition-points="467,160;467,278" d="M 467 160 L 467 278" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="renderer" data-edge-to="conversation" data-edge-key="2" data-edge-id="a3" data-composition-points="562,113;664,113" d="M 562 113 L 664 113" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="catalog" data-edge-to="cardServices" data-edge-key="3" data-edge-id="a4" data-composition-points="562,325;664,325" d="M 562 325 L 664 325" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="conversation" data-edge-to="catalog" data-edge-label="原子应用 Card 提案" data-edge-key="4" data-edge-id="a5" data-composition-points="664,127;613,127;613,311;562,311" d="M 664 127 L 621 127 Q 613 127 613 135 L 613 303 Q 613 311 605 311 L 562 311" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="conversation" data-edge-to="llm" data-edge-label="结构化请求 / 响应" data-edge-key="5" data-edge-id="a6" data-composition-points="854,120;956,120" d="M 854 120 L 956 120" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="cardServices" data-edge-to="fileService" data-edge-key="6" data-edge-id="a7" data-composition-points="759,358;759,476" d="M 759 358 L 759 476" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="fileService" data-edge-to="projectData" data-edge-label="原子读写" data-edge-key="7" data-edge-id="a9" data-composition-points="664,516;562,516" d="M 664 516 L 562 516" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="cardServices" data-edge-to="artifacts" data-edge-label="显式生成并校验" data-edge-key="8" data-edge-id="a10" data-composition-points="854,318;905,318;905,516;956,516" d="M 854 318 L 897 318 Q 905 318 905 326 L 905 508 Q 905 516 913 516 L 956 516" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="artifacts" data-edge-to="game" data-edge-label="预检通过后加载" data-edge-key="9" data-edge-id="a11" data-composition-points="1051,476;1051,358" d="M 1051 476 L 1051 358" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="author" data-edge-to="renderer" data-edge-key="0" data-edge-id="arch01" data-composition-points="230,172;310,172" d="M 230 172 L 310 172" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="renderer" data-edge-to="conversation" data-edge-key="1" data-edge-id="arch02" data-composition-points="535,167;580,167" d="M 535 167 L 580 167" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="renderer" data-edge-to="cardDomain" data-edge-key="2" data-edge-id="arch03" data-composition-points="422.5,218;422.5,412" d="M 422.5 218 L 422.5 412" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="conversation" data-edge-to="cardDomain" data-edge-label="读取 Card 基线 / 接受提案" data-edge-key="3" data-edge-id="arch04" data-composition-points="580,181;557.5,181;557.5,449;535,449" d="M 580 181 L 565.5 181 Q 557.5 181 557.5 189 L 557.5 441 Q 557.5 449 549.5 449 L 535 449" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="conversation" data-edge-to="llmAdapter" data-edge-key="4" data-edge-id="arch05" data-composition-points="800,174;850,174" d="M 800 174 L 850 174" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="llmAdapter" data-edge-to="provider" data-edge-key="5" data-edge-id="arch06" data-composition-points="1070,174;1120,174" d="M 1070 174 L 1120 174" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="cardDomain" data-edge-to="electronMain" data-edge-key="6" data-edge-id="arch07" data-composition-points="535,463;580,463" d="M 535 463 L 580 463" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="conversation" data-edge-to="electronMain" data-edge-key="7" data-edge-id="arch08" data-composition-points="690,218;690,412" d="M 690 218 L 690 412" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="electronMain" data-edge-to="projectFiles" data-edge-key="8" data-edge-id="arch09" data-composition-points="800,456;850,456" d="M 800 456 L 850 456" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="electronMain" data-edge-to="game" data-edge-key="9" data-edge-id="arch10" data-composition-points="690,500;690,694" d="M 690 500 L 690 694" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
 
         <!-- Components -->
-        <g id="node-user" data-node-id="user" data-node-label="Mod 作者" tabindex="0" role="button" aria-label="聚焦Mod 作者，编辑、确认、生成、测试, 架构组件" aria-pressed="false" data-node-kind="external" data-node-sublabel="编辑、确认、生成、测试" data-node-context="架构组件">
-          <title>Mod 作者 · 编辑、确认、生成、测试 · 架构组件</title>
-          <rect x="80" y="80" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="80" y="80" width="190" height="80" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(86 86) scale(0.6875)">
+        <g id="node-author" data-node-id="author" data-node-label="Mod 作者" tabindex="0" role="button" aria-label="聚焦Mod 作者，编辑、配置与测试, 架构组件" aria-pressed="false" data-node-kind="external" data-node-sublabel="编辑、配置与测试" data-node-context="架构组件">
+          <title>Mod 作者 · 编辑、配置与测试 · 架构组件</title>
+          <rect x="40" y="130" width="190" height="84" rx="6" class="c-mask"/>
+          <rect x="40" y="130" width="190" height="84" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 136) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="175" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Mod 作者</text>
-        <text data-detail="context" x="175" y="134" class="t-muted" font-size="9" text-anchor="middle">编辑、确认、生成、测试</text>
+          <text data-node-label="" data-detail-anchor="" x="135" y="170" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Mod 作者</text>
+        <text data-detail="context" x="135" y="186" class="t-muted" font-size="9" text-anchor="middle">编辑、配置与测试</text>
         </g>
 
-        <g id="node-renderer" data-node-id="renderer" data-node-label="React 项目界面" tabindex="0" role="button" aria-label="聚焦React 项目界面，CardEditor / 对话抽屉 / Launcher, Electron Renderer" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="CardEditor / 对话抽屉 / Launcher" data-node-context="Electron Renderer">
-          <title>React 项目界面 · CardEditor / 对话抽屉 / Launcher · Electron Renderer</title>
-          <rect x="372" y="80" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="372" y="80" width="190" height="80" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(378 86) scale(0.6875)">
+        <g id="node-renderer" data-node-id="renderer" data-node-label="React 工作区" tabindex="0" role="button" aria-label="聚焦React 工作区，Card / Relic、AI 与 Provider 设置, 架构组件" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="Card / Relic、AI 与 Provider 设置" data-node-context="架构组件">
+          <title>React 工作区 · Card / Relic、AI 与 Provider 设置 · 架构组件</title>
+          <rect x="310" y="130" width="225" height="88" rx="6" class="c-mask"/>
+          <rect x="310" y="130" width="225" height="88" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(316 136) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="467" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">React 项目界面</text>
-        <text data-detail="context" x="467" y="134" class="t-muted" font-size="9" text-anchor="middle">CardEditor / 对话抽屉 / Launcher</text>
+          <text data-node-label="" data-detail-anchor="" x="422.5" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">React 工作区</text>
+        <text data-detail="context" x="422.5" y="188" class="t-muted" font-size="9" text-anchor="middle">Card / Relic、AI 与 Provider 设置</text>
         </g>
 
-        <g id="node-catalog" data-node-id="catalog" data-node-label="CardCatalog" tabindex="0" role="button" aria-label="聚焦CardCatalog，CardDocument 唯一权威与逐 Card 历史, Electron Renderer" aria-pressed="false" data-node-kind="backend" data-node-sublabel="CardDocument 唯一权威与逐 Card 历史" data-node-context="Electron Renderer">
-          <title>CardCatalog · CardDocument 唯一权威与逐 Card 历史 · Electron Renderer</title>
-          <rect x="372" y="278" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="372" y="278" width="190" height="80" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(378 284) scale(0.6875)">
+        <g id="node-conversation" data-node-id="conversation" data-node-label="ProjectConversation" tabindex="0" role="button" aria-label="聚焦ProjectConversation，项目级轮次与提案状态, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="项目级轮次与提案状态" data-node-context="架构组件">
+          <title>ProjectConversation · 项目级轮次与提案状态 · 架构组件</title>
+          <rect x="580" y="130" width="220" height="88" rx="6" class="c-mask"/>
+          <rect x="580" y="130" width="220" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(586 136) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="467" y="316" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">CardCatalog</text>
-        <text data-detail="context" x="467" y="332" class="t-muted" font-size="8.6" text-anchor="middle">CardDocument 唯一权威与逐 Card 历史</text>
+          <text data-node-label="" data-detail-anchor="" x="690" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ProjectConversation</text>
+        <text data-detail="context" x="690" y="188" class="t-muted" font-size="9" text-anchor="middle">项目级轮次与提案状态</text>
         </g>
 
-        <g id="node-conversation" data-node-id="conversation" data-node-label="ProjectConversation" tabindex="0" role="button" aria-label="聚焦ProjectConversation，项目级 AI 轮次与提案状态, Electron Renderer" aria-pressed="false" data-node-kind="backend" data-node-sublabel="项目级 AI 轮次与提案状态" data-node-context="Electron Renderer">
-          <title>ProjectConversation · 项目级 AI 轮次与提案状态 · Electron Renderer</title>
-          <rect x="664" y="80" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="664" y="80" width="190" height="80" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(670 86) scale(0.6875)">
+        <g id="node-llmAdapter" data-node-id="llmAdapter" data-node-label="LLM HTTPAdapter" tabindex="0" role="button" aria-label="聚焦LLM HTTPAdapter，多协议请求与模型发现, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="多协议请求与模型发现" data-node-context="架构组件">
+          <title>LLM HTTPAdapter · 多协议请求与模型发现 · 架构组件</title>
+          <rect x="850" y="130" width="220" height="88" rx="6" class="c-mask"/>
+          <rect x="850" y="130" width="220" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(856 136) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="759" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ProjectConversation</text>
-        <text data-detail="context" x="759" y="134" class="t-muted" font-size="9" text-anchor="middle">项目级 AI 轮次与提案状态</text>
+          <text data-node-label="" data-detail-anchor="" x="960" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">LLM HTTPAdapter</text>
+        <text data-detail="context" x="960" y="188" class="t-muted" font-size="9" text-anchor="middle">多协议请求与模型发现</text>
         </g>
 
-        <g id="node-cardServices" data-node-id="cardServices" data-node-label="Card 领域服务" tabindex="0" role="button" aria-label="聚焦Card 领域服务，校验、仓库、回收站、生成、预检, Electron Renderer" aria-pressed="false" data-node-kind="backend" data-node-sublabel="校验、仓库、回收站、生成、预检" data-node-context="Electron Renderer">
-          <title>Card 领域服务 · 校验、仓库、回收站、生成、预检 · Electron Renderer</title>
-          <rect x="664" y="278" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="664" y="278" width="190" height="80" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(670 284) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="759" y="316" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Card 领域服务</text>
-        <text data-detail="context" x="759" y="332" class="t-muted" font-size="9" text-anchor="middle">校验、仓库、回收站、生成、预检</text>
-        </g>
-
-        <g id="node-fileService" data-node-id="fileService" data-node-label="FileService 接线层" tabindex="0" role="button" aria-label="聚焦FileService 接线层，最小文件端口与 Electron IPC, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="最小文件端口与 Electron IPC" data-node-context="架构组件">
-          <title>FileService 接线层 · 最小文件端口与 Electron IPC · 架构组件</title>
-          <rect x="664" y="476" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="664" y="476" width="190" height="80" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(670 482) scale(0.6875)">
-            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="759" y="514" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">FileService 接线层</text>
-        <text data-detail="context" x="759" y="530" class="t-muted" font-size="9" text-anchor="middle">最小文件端口与 Electron IPC</text>
-        </g>
-
-        <g id="node-projectData" data-node-id="projectData" data-node-label=".modstudio 项目源数据" tabindex="0" role="button" aria-label="聚焦.modstudio 项目源数据，cards / ai / archives / trash, 用户项目目录" aria-pressed="false" data-node-kind="database" data-node-sublabel="cards / ai / archives / trash" data-node-context="用户项目目录">
-          <title>.modstudio 项目源数据 · cards / ai / archives / trash · 用户项目目录</title>
-          <rect x="372" y="476" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="372" y="476" width="190" height="80" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(378 482) scale(0.6875)">
-            <ellipse cx="8" cy="4" rx="5" ry="2"/>
-            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
-          </g>
-          <text data-node-label="" data-detail-anchor="" x="467" y="514" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">.modstudio 项目源数据</text>
-        <text data-detail="context" x="467" y="530" class="t-muted" font-size="9" text-anchor="middle">cards / ai / archives / trash</text>
-        </g>
-
-        <g id="node-llm" data-node-id="llm" data-node-label="LLM Providers" tabindex="0" role="button" aria-label="聚焦LLM Providers，四个 HTTP provider, 架构组件" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="四个 HTTP provider" data-node-context="架构组件">
-          <title>LLM Providers · 四个 HTTP provider · 架构组件</title>
-          <rect x="956" y="80" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="956" y="80" width="190" height="80" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(962 86) scale(0.6875)">
+        <g id="node-provider" data-node-id="provider" data-node-label="LLM 服务商" tabindex="0" role="button" aria-label="聚焦LLM 服务商，预设与自定义多协议端点, 架构组件" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="预设与自定义多协议端点" data-node-context="架构组件">
+          <title>LLM 服务商 · 预设与自定义多协议端点 · 架构组件</title>
+          <rect x="1120" y="130" width="220" height="88" rx="6" class="c-mask"/>
+          <rect x="1120" y="130" width="220" height="88" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1126 136) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1051" y="118" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">LLM Providers</text>
-        <text data-detail="context" x="1051" y="134" class="t-muted" font-size="9" text-anchor="middle">四个 HTTP provider</text>
+          <text data-node-label="" data-detail-anchor="" x="1230" y="172" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">LLM 服务商</text>
+        <text data-detail="context" x="1230" y="188" class="t-muted" font-size="9" text-anchor="middle">预设与自定义多协议端点</text>
         </g>
 
-        <g id="node-artifacts" data-node-id="artifacts" data-node-label="C# 生成产物" tabindex="0" role="button" aria-label="聚焦C# 生成产物，scripts/Cards/*.cs, 用户项目目录" aria-pressed="false" data-node-kind="database" data-node-sublabel="scripts/Cards/*.cs" data-node-context="用户项目目录">
-          <title>C# 生成产物 · scripts/Cards/*.cs · 用户项目目录</title>
-          <rect x="956" y="476" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="956" y="476" width="190" height="80" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(962 482) scale(0.6875)">
+        <g id="node-cardDomain" data-node-id="cardDomain" data-node-label="Card 领域层" tabindex="0" role="button" aria-label="聚焦Card 领域层，CardCatalog / FileService / 生成 / 预检, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="CardCatalog / FileService / 生成 / 预检" data-node-context="架构组件">
+          <title>Card 领域层 · CardCatalog / FileService / 生成 / 预检 · 架构组件</title>
+          <rect x="310" y="412" width="225" height="88" rx="6" class="c-mask"/>
+          <rect x="310" y="412" width="225" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(316 418) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="422.5" y="454" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Card 领域层</text>
+        <text data-detail="context" x="422.5" y="470" class="t-muted" font-size="9" text-anchor="middle">CardCatalog / FileService / 生成 / 预检</text>
+        </g>
+
+        <g id="node-electronMain" data-node-id="electronMain" data-node-label="Electron 主进程 / IPC" tabindex="0" role="button" aria-label="聚焦Electron 主进程 / IPC，FileService / ModManager / GameLauncher, 架构组件" aria-pressed="false" data-node-kind="backend" data-node-sublabel="FileService / ModManager / GameLauncher" data-node-context="架构组件">
+          <title>Electron 主进程 / IPC · FileService / ModManager / GameLauncher · 架构组件</title>
+          <rect x="580" y="412" width="220" height="88" rx="6" class="c-mask"/>
+          <rect x="580" y="412" width="220" height="88" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(586 418) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="690" y="454" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Electron 主进程 / IPC</text>
+        <text data-detail="context" x="690" y="470" class="t-muted" font-size="9" text-anchor="middle">FileService / ModManager / GameLauncher</text>
+        </g>
+
+        <g id="node-projectFiles" data-node-id="projectFiles" data-node-label="用户项目文件" tabindex="0" role="button" aria-label="聚焦用户项目文件，.modstudio 数据 / scripts/Cards/*.cs, 架构组件" aria-pressed="false" data-node-kind="database" data-node-sublabel=".modstudio 数据 / scripts/Cards/*.cs" data-node-context="架构组件">
+          <title>用户项目文件 · .modstudio 数据 / scripts/Cards/*.cs · 架构组件</title>
+          <rect x="850" y="412" width="220" height="88" rx="6" class="c-mask"/>
+          <rect x="850" y="412" width="220" height="88" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(856 418) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1051" y="514" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">C# 生成产物</text>
-        <text data-detail="context" x="1051" y="530" class="t-muted" font-size="9" text-anchor="middle">scripts/Cards/*.cs</text>
+          <text data-node-label="" data-detail-anchor="" x="960" y="454" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">用户项目文件</text>
+        <text data-detail="context" x="960" y="470" class="t-muted" font-size="9" text-anchor="middle">.modstudio 数据 / scripts/Cards/*.cs</text>
         </g>
 
-        <g id="node-game" data-node-id="game" data-node-label="Slay the Spire 2" tabindex="0" role="button" aria-label="聚焦Slay the Spire 2，加载并测试当前 Mod, 架构组件" aria-pressed="false" data-node-kind="external" data-node-sublabel="加载并测试当前 Mod" data-node-context="架构组件">
-          <title>Slay the Spire 2 · 加载并测试当前 Mod · 架构组件</title>
-          <rect x="956" y="278" width="190" height="80" rx="6" class="c-mask"/>
-          <rect x="956" y="278" width="190" height="80" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(962 284) scale(0.6875)">
+        <g id="node-game" data-node-id="game" data-node-label="Slay the Spire 2" tabindex="0" role="button" aria-label="聚焦Slay the Spire 2，启动与 Mod 安装管理, 架构组件" aria-pressed="false" data-node-kind="external" data-node-sublabel="启动与 Mod 安装管理" data-node-context="架构组件">
+          <title>Slay the Spire 2 · 启动与 Mod 安装管理 · 架构组件</title>
+          <rect x="580" y="694" width="220" height="88" rx="6" class="c-mask"/>
+          <rect x="580" y="694" width="220" height="88" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(586 700) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" data-detail-anchor="" x="1051" y="316" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Slay the Spire 2</text>
-        <text data-detail="context" x="1051" y="332" class="t-muted" font-size="9" text-anchor="middle">加载并测试当前 Mod</text>
+          <text data-node-label="" data-detail-anchor="" x="690" y="736" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Slay the Spire 2</text>
+        <text data-detail="context" x="690" y="752" class="t-muted" font-size="9" text-anchor="middle">启动与 Mod 安装管理</text>
         </g>
 
         <!-- Connection labels -->
-        <g data-detail="context" data-edge-from="user" data-edge-to="renderer" data-edge-label="交互意图" data-edge-key="0" data-edge-id="a1">
-          <rect x="296.8" y="100" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="321" y="110" class="t-muted" font-size="8" text-anchor="middle">交互意图</text>
+
+
+
+        <g data-detail="context" data-edge-from="conversation" data-edge-to="cardDomain" data-edge-label="读取 Card 基线 / 接受提案" data-edge-key="3" data-edge-id="arch04">
+          <rect x="492.5" y="295" width="130" height="14" rx="3" class="c-mask"/>
+          <text x="557.5" y="305" class="t-muted" font-size="8" text-anchor="middle">读取 Card 基线 / 接受提案</text>
         </g>
 
 
 
-        <g data-detail="context" data-edge-from="conversation" data-edge-to="catalog" data-edge-label="原子应用 Card 提案" data-edge-key="4" data-edge-id="a5">
-          <rect x="564.8" y="199" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="613" y="209" class="t-muted" font-size="8" text-anchor="middle">原子应用 Card 提案</text>
-        </g>
-        <g data-detail="context" data-edge-from="conversation" data-edge-to="llm" data-edge-label="结构化请求 / 响应" data-edge-key="5" data-edge-id="a6">
-          <rect x="859.2" y="100" width="91.6" height="14" rx="3" class="c-mask"/>
-          <text x="905" y="110" class="t-muted" font-size="8" text-anchor="middle">结构化请求 / 响应</text>
-        </g>
 
-        <g data-detail="context" data-edge-from="fileService" data-edge-to="projectData" data-edge-label="原子读写" data-edge-key="7" data-edge-id="a9">
-          <rect x="588.8" y="496" width="48.4" height="14" rx="3" class="c-mask"/>
-          <text x="613" y="506" class="t-muted" font-size="8" text-anchor="middle">原子读写</text>
-        </g>
-        <g data-detail="context" data-edge-from="cardServices" data-edge-to="artifacts" data-edge-label="显式生成并校验" data-edge-key="8" data-edge-id="a10">
-          <rect x="866.4" y="397" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="905" y="407" class="t-muted" font-size="8" text-anchor="middle">显式生成并校验</text>
-        </g>
-        <g data-detail="context" data-edge-from="artifacts" data-edge-to="game" data-edge-label="预检通过后加载" data-edge-key="9" data-edge-id="a11">
-          <rect x="1012.4" y="456" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="1051" y="466" class="t-muted" font-size="8" text-anchor="middle">预检通过后加载</text>
-        </g>
+
+
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Electron Renderer">
-          <rect data-graph-role="structural-frame-label-mask" x="346" y="60" width="101.8" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="350" y="73" class="t-cloud" font-size="9" font-weight="600">Electron Renderer</text>
-        </g>
 
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="region" data-composition-frame-label="用户项目目录">
-          <rect data-graph-role="structural-frame-label-mask" x="346" y="456" width="74.8" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="350" y="469" class="t-cloud" font-size="9" font-weight="600">用户项目目录</text>
-        </g>
 
         <!-- Legend -->
         <g data-legend="" data-legend-bridge="">
-          <text x="40" y="724" class="t-primary" font-size="12" font-weight="650">图例</text>
-          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="前端" data-legend-x="40" data-legend-baseline="744" data-legend-width="63">
-            <rect x="40" y="735" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
-            <text x="62" y="744" class="t-muted" font-size="10" font-weight="500">前端</text>
+          <text x="40" y="1004" class="t-primary" font-size="12" font-weight="650">图例</text>
+          <g data-legend-semantic-kind="frontend" data-legend-kind="frontend" data-legend-label="前端" data-legend-x="40" data-legend-baseline="1024" data-legend-width="63">
+            <rect x="40" y="1015" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
+            <text x="62" y="1024" class="t-muted" font-size="10" font-weight="500">前端</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="后端" data-legend-x="125" data-legend-baseline="744" data-legend-width="63">
-            <rect x="125" y="735" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
-            <text x="147" y="744" class="t-muted" font-size="10" font-weight="500">后端</text>
+          <g data-legend-semantic-kind="backend" data-legend-kind="backend" data-legend-label="后端" data-legend-x="125" data-legend-baseline="1024" data-legend-width="63">
+            <rect x="125" y="1015" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
+            <text x="147" y="1024" class="t-muted" font-size="10" font-weight="500">后端</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="数据库" data-legend-x="210" data-legend-baseline="744" data-legend-width="73">
-            <rect x="210" y="735" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
-            <text x="232" y="744" class="t-muted" font-size="10" font-weight="500">数据库</text>
+          <g data-legend-semantic-kind="database" data-legend-kind="database" data-legend-label="数据库" data-legend-x="210" data-legend-baseline="1024" data-legend-width="73">
+            <rect x="210" y="1015" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
+            <text x="232" y="1024" class="t-muted" font-size="10" font-weight="500">数据库</text>
           </g>
-          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="云服务" data-legend-x="305" data-legend-baseline="744" data-legend-width="73">
-            <rect x="305" y="735" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
-            <text x="327" y="744" class="t-muted" font-size="10" font-weight="500">云服务</text>
+          <g data-legend-semantic-kind="cloud" data-legend-kind="cloud" data-legend-label="云服务" data-legend-x="305" data-legend-baseline="1024" data-legend-width="73">
+            <rect x="305" y="1015" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
+            <text x="327" y="1024" class="t-muted" font-size="10" font-weight="500">云服务</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="外部系统" data-legend-x="400" data-legend-baseline="744" data-legend-width="83">
-            <rect x="400" y="735" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
-            <text x="422" y="744" class="t-muted" font-size="10" font-weight="500">外部系统</text>
+          <g data-legend-semantic-kind="external" data-legend-kind="external" data-legend-label="外部系统" data-legend-x="400" data-legend-baseline="1024" data-legend-width="83">
+            <rect x="400" y="1015" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="422" y="1024" class="t-muted" font-size="10" font-weight="500">外部系统</text>
           </g>
         </g>
       </svg>
@@ -5418,22 +5381,24 @@
       <div class="card">
         <div class="card-header">
           <div class="card-dot cyan"></div>
-          <h3>权威边界</h3>
+          <h3>项目状态</h3>
         </div>
         <ul>
-          <li>&bull; CardDocument 是 Card 状态唯一权威</li>
-          <li>&bull; conversation.json 是活动对话唯一权威</li>
+          <li>&bull; CardDocument 是 Card 编辑状态的权威来源</li>
+          <li>&bull; AI 配置由 useAIStore 本地持久化，支持多服务商、多密钥与模型</li>
+          <li>&bull; 项目对话文档与 Card 数据分开保存</li>
         </ul>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div class="card-dot amber"></div>
-          <h3>产物边界</h3>
+          <h3>代码与运行边界</h3>
         </div>
         <ul>
-          <li>&bull; C# 只由用户显式生成</li>
-          <li>&bull; 游戏测试先执行 Card 预检</li>
+          <li>&bull; Card 代码由用户显式生成并执行预检</li>
+          <li>&bull; RelicEditor 当前生成 C# 代码预览</li>
+          <li>&bull; ModManager 通过 Electron IPC 管理已安装 Mod</li>
         </ul>
       </div>
     </div>

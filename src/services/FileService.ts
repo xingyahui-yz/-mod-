@@ -419,7 +419,7 @@ function getDefaultService(): FileService {
  * 其余方法用于活动文档的原子保存与恢复。
  */
 export function createConversationFilePort(
-  service: Pick<FileService, 'readDirectoryResult' | 'readFileResult' | 'writeFile' | 'renameFile' | 'removeFile' | 'createDirectory'> = getDefaultService(),
+  service: Pick<FileService, 'readDirectoryResult' | 'readFileResult' | 'writeFile' | 'renameFile' | 'linkFileNoReplace' | 'removeFile' | 'createDirectory'> = getDefaultService(),
 ): ConversationFilePort {
   return {
     readDirectory: async path => {
@@ -438,6 +438,7 @@ export function createConversationFilePort(
     },
     writeFile: (path, content) => service.writeFile(path, content),
     rename: (from, to) => service.renameFile(from, to),
+    linkNoReplace: (from, to) => service.linkFileNoReplace(from, to),
     remove: path => service.removeFile(path),
     mkdir: path => service.createDirectory(path),
   }

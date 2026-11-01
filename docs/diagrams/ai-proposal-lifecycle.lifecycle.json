@@ -1,32 +1,149 @@
 {
   "schema_version": 1,
   "diagram_type": "lifecycle",
-  "meta": { "title": "AI Card 提案生命周期", "locale": "zh-CN", "quality_profile": "showcase", "viewBox": [900, 820] },
+  "meta": {
+    "title": "AI Card 提案生命周期",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [
+      900,
+      820
+    ]
+  },
   "lanes": [
-    { "id": "main", "label": "生成、审阅与项目历史" },
-    { "id": "terminal", "label": "不可直接应用的结果" }
+    {
+      "id": "main",
+      "label": "生成、审阅与项目历史"
+    },
+    {
+      "id": "terminal",
+      "label": "不可直接应用的结果"
+    }
   ],
   "states": [
-    { "id": "created", "type": "start", "label": "提案已生成", "lane": "main", "col": 0 },
-    { "id": "pending", "type": "waiting", "label": "待处理 pending", "sublabel": "只读预览，不写项目", "lane": "main", "col": 1 },
-    { "id": "acceptCheck", "type": "decision", "label": "接受前校验", "sublabel": "revision 或新 Card ID", "lane": "main", "col": 2 },
-    { "id": "accepted", "type": "success", "label": "已接受 accepted", "sublabel": "整张 Card 一个历史步骤", "lane": "main", "col": 3 },
-    { "id": "reverted", "type": "failure", "label": "已撤销 reverted", "sublabel": "重做后恢复 accepted", "lane": "main", "col": 4 },
-    { "id": "superseded", "type": "neutral", "label": "被取代 superseded", "lane": "terminal", "col": 0 },
-    { "id": "rejected", "type": "neutral", "label": "已拒绝 rejected", "lane": "terminal", "col": 1 },
-    { "id": "stale", "type": "failure", "label": "已过期 stale", "lane": "terminal", "col": 2 }
+    {
+      "id": "created",
+      "type": "start",
+      "label": "提案已生成",
+      "lane": "main",
+      "col": 0
+    },
+    {
+      "id": "pending",
+      "type": "waiting",
+      "label": "待处理 pending",
+      "sublabel": "只读预览，不写项目",
+      "lane": "main",
+      "col": 1
+    },
+    {
+      "id": "acceptCheck",
+      "type": "decision",
+      "label": "接受前校验",
+      "sublabel": "revision 校验；变更即 stale",
+      "lane": "main",
+      "col": 2
+    },
+    {
+      "id": "accepted",
+      "type": "success",
+      "label": "已接受 accepted",
+      "sublabel": "提案 WAL + Card 事务提交",
+      "lane": "main",
+      "col": 3
+    },
+    {
+      "id": "reverted",
+      "type": "failure",
+      "label": "已撤销 reverted",
+      "sublabel": "重做后恢复 accepted",
+      "lane": "main",
+      "col": 4
+    },
+    {
+      "id": "superseded",
+      "type": "neutral",
+      "label": "被取代 superseded",
+      "lane": "terminal",
+      "col": 0
+    },
+    {
+      "id": "rejected",
+      "type": "neutral",
+      "label": "已拒绝 rejected",
+      "lane": "terminal",
+      "col": 1
+    },
+    {
+      "id": "stale",
+      "type": "failure",
+      "label": "已过期 stale",
+      "lane": "terminal",
+      "col": 2
+    }
   ],
   "transitions": [
-    { "id": "l1", "from": "created", "to": "pending", "route": "straight" },
-    { "id": "l2", "from": "pending", "to": "acceptCheck", "route": "straight" },
-    { "id": "l3", "from": "acceptCheck", "to": "accepted", "route": "straight" },
-    { "id": "l5", "from": "pending", "to": "rejected", "route": "drop" },
-    { "id": "l6", "from": "pending", "to": "superseded", "route": "drop" },
-    { "id": "l7", "from": "accepted", "to": "reverted", "route": "straight" },
-    { "id": "l8", "from": "reverted", "to": "accepted", "route": "top-channel" }
+    {
+      "id": "l1",
+      "from": "created",
+      "to": "pending",
+      "route": "straight"
+    },
+    {
+      "id": "l2",
+      "from": "pending",
+      "to": "acceptCheck",
+      "route": "straight"
+    },
+    {
+      "id": "l3",
+      "from": "acceptCheck",
+      "to": "accepted",
+      "route": "straight"
+    },
+    {
+      "id": "l5",
+      "from": "pending",
+      "to": "rejected",
+      "route": "drop"
+    },
+    {
+      "id": "l6",
+      "from": "pending",
+      "to": "superseded",
+      "route": "drop"
+    },
+    {
+      "id": "l7",
+      "from": "accepted",
+      "to": "reverted",
+      "route": "straight"
+    },
+    {
+      "id": "l8",
+      "from": "reverted",
+      "to": "accepted",
+      "route": "top-channel"
+    }
   ],
   "cards": [
-    { "dot": "amber", "title": "创建提案", "items": ["预览阶段不占用建议 ID", "接受时确认最终 ID；冲突保持 pending"] },
-    { "dot": "violet", "title": "独立性", "items": ["每张 Card 独立接受、拒绝、过期", "stale 需基于当前版本开启新轮次", "拒绝和 superseded 不可恢复"] }
+    {
+      "dot": "amber",
+      "title": "创建提案",
+      "items": [
+        "预览阶段不占用建议 ID",
+        "接受时确认最终 ID；冲突保留 pending",
+        "状态顺序：提案 WAL → Card 历史事务 → committed"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "独立性",
+      "items": [
+        "每张 Card 独立接受、拒绝或过期",
+        "目标 Card revision 变化会标为 stale，需基于新版本重开",
+        "拒绝和 superseded 不可恢复"
+      ]
+    }
   ]
 }

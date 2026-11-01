@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AI 媒体创作与 Mod 导出目标流程（方案）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "subtitle": "目标架构提案；相关媒体生成与完整游戏导出链尚未实现",
+    "viewBox": [1000, 1550]
+  },
+  "lanes": [
+    { "id": "author", "label": "设计需求" },
+    { "id": "workbench", "label": "React 媒体工作台" },
+    { "id": "provider", "label": "媒体 Provider" },
+    { "id": "mediaCheck", "label": "受控媒体处理" },
+    { "id": "assetLibrary", "label": "项目素材版本库" },
+    { "id": "binding", "label": "素材预览与绑定" },
+    { "id": "export", "label": "Mod 构建与导出" },
+    { "id": "game", "label": "游戏验证" },
+    { "id": "exception", "label": "失败与重试", "variant": "exception" }
+  ],
+  "mainPath": ["request", "job", "generate", "inspect", "store", "review", "export", "verify"],
+  "nodes": [
+    { "id": "request", "lane": "author", "col": 2, "type": "external", "label": "卡牌 / 角色需求", "sublabel": "选择图像或音效任务", "width": 150 },
+    { "id": "job", "lane": "workbench", "col": 2, "type": "frontend", "label": "创建素材生成任务", "sublabel": "记录能力、参数与状态", "width": 155 },
+    { "id": "generate", "lane": "provider", "col": 2, "type": "cloud", "label": "图像 / 音效生成", "sublabel": "独立 Provider 与候选结果", "width": 160 },
+    { "id": "inspect", "lane": "mediaCheck", "col": 2, "type": "security", "label": "下载与媒体检查", "sublabel": "类型、体积、像素 / 时长", "width": 155 },
+    { "id": "store", "lane": "assetLibrary", "col": 2, "type": "database", "label": "本地素材版本库", "sublabel": ".modstudio/assets / 原件", "width": 155 },
+    { "id": "review", "lane": "binding", "col": 2, "type": "frontend", "label": "预览、调整、确认并绑定", "sublabel": "Card / Character 稳定 asset ID", "width": 170 },
+    { "id": "export", "lane": "export", "col": 2, "type": "backend", "label": "版本化游戏导出器", "sublabel": "C# 构建、资源打包、部署", "width": 165 },
+    { "id": "verify", "lane": "game", "col": 2, "type": "external", "label": "游戏内验证", "sublabel": "检查素材加载与表现", "width": 150 },
+    { "id": "failed", "lane": "exception", "col": 4, "type": "security", "label": "下载 / 检查失败", "sublabel": "不发布候选；允许重试", "width": 155 }
+  ],
+  "edges": [
+    { "id": "m1", "from": "request", "to": "job", "role": "main" },
+    { "id": "m2", "from": "job", "to": "generate", "role": "main" },
+    { "id": "m3", "from": "generate", "to": "inspect", "role": "main" },
+    { "id": "m4", "from": "inspect", "to": "store", "role": "main" },
+    { "id": "m5", "from": "store", "to": "review", "role": "main" },
+    { "id": "m6", "from": "review", "to": "export", "role": "main" },
+    { "id": "m7", "from": "export", "to": "verify", "role": "main" },
+    { "id": "m8", "from": "inspect", "to": "failed", "role": "error", "route": "outside-right" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "实现状态", "items": ["这是未来目标方案，不代表仓库已有媒体生成或完整游戏导出能力", "当前 LLM 适配器仍以文本响应为主；媒体任务需独立接入"] },
+    { "dot": "rose", "title": "安全边界", "items": ["限制下载体积、解码像素 / 时长并核验实际媒体类型", "素材路径限定在授权项目；Provider 凭据留在受控服务"] },
+    { "dot": "cyan", "title": "导出边界", "items": ["项目保存候选和版本；Mod 包只包含实际引用素材", "编译、打包、部署和游戏内验证均须逐版本确认"] }
+  ]
+}

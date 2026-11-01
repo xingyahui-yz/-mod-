@@ -27,7 +27,8 @@ import { RelicTier, RelicRarity } from '../types'
 import { useNodeGraph } from '../node-editor/useNodeGraph'
 import { NodeGraphCanvas } from '../node-editor/NodeGraphCanvas'
 import { generateRelicCode } from './codegen'
-import { SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS, EFFECT_KINDS } from './kinds'
+import { SUPPORTED_TRIGGERS, SUPPORTED_EFFECTS, TRIGGER_KINDS, EFFECT_KINDS } from './kinds'
+import { RelicTutorial } from './RelicTutorial'
 
 /**
  * 判断当前键盘事件的目标是否是可编辑文本控件。
@@ -47,6 +48,21 @@ interface RelicEditorProps {
 
 const TIERS: RelicTier[] = ['Common', 'Uncommon', 'Rare', 'Boss', 'Shop']
 const RARITIES: RelicRarity[] = ['Starter', 'Common', 'Uncommon', 'Rare', 'Boss', 'Shop']
+const TIER_LABELS: Record<RelicTier, string> = {
+  Common: 'Common（普通）',
+  Uncommon: 'Uncommon（罕见）',
+  Rare: 'Rare（稀有）',
+  Boss: 'Boss（首领）',
+  Shop: 'Shop（商店）',
+}
+const RARITY_LABELS: Record<RelicRarity, string> = {
+  Starter: 'Starter（初始）',
+  Common: 'Common（普通）',
+  Uncommon: 'Uncommon（罕见）',
+  Rare: 'Rare（稀有）',
+  Boss: 'Boss（首领）',
+  Shop: 'Shop（商店）',
+}
 
 export function RelicEditor({ initialRelic }: RelicEditorProps) {
   const [relic, setRelic] = useState<RelicData>({
@@ -59,6 +75,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
   const [generatedCode, setGeneratedCode] = useState<string>('')
   // v0.8-3 (Candidate 3): 本地 error 只承担 codegen 错误; connect 错误由 hook 拥有.
   const [error, setError] = useState<string>('')
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false)
 
   const ng = useNodeGraph(relic.id, 'relic')
 
@@ -113,9 +130,20 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
     <div className="relic-editor" data-testid="relic-editor">
       {/* 左侧：表单 */}
       <div className="relic-form" data-testid="relic-form">
-        <h3>📜 Relic 表单</h3>
+        <div className="relic-form-heading">
+          <h3>📜 遗物表单</h3>
+          <button
+            type="button"
+            className="relic-tutorial-trigger"
+            onClick={() => setIsTutorialOpen(true)}
+            aria-haspopup="dialog"
+            aria-label="打开遗物编辑器教程"
+          >
+            📖 教程
+          </button>
+        </div>
         <label>
-          ID
+          ID（内部标识符）
           <input
             type="text"
             value={relic.id}
@@ -141,23 +169,23 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
           />
         </label>
         <label>
-          Tier
+          Tier（遗物分级）
           <select
             value={relic.tier}
             onChange={e => setRelic({ ...relic, tier: e.target.value as RelicTier })}
             data-testid="relic-tier"
           >
-            {TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+            {TIERS.map(t => <option key={t} value={t}>{TIER_LABELS[t]}</option>)}
           </select>
         </label>
         <label>
-          Rarity
+          Rarity（掉落稀有度）
           <select
             value={relic.rarity}
             onChange={e => setRelic({ ...relic, rarity: e.target.value as RelicRarity })}
             data-testid="relic-rarity"
           >
-            {RARITIES.map(r => <option key={r} value={r}>{r}</option>)}
+            {RARITIES.map(r => <option key={r} value={r}>{RARITY_LABELS[r]}</option>)}
           </select>
         </label>
       </div>
@@ -193,7 +221,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
               data-testid={`add-trigger-${t}`}
               type="button"
             >
-              + {t}
+              + {t}（{TRIGGER_KINDS[t]?.label ?? '触发事件'}）
             </button>
           ))}
           <span>效果：</span>
@@ -204,7 +232,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
               data-testid={`add-effect-${e}`}
               type="button"
             >
-              + {e}
+              + {e}（{EFFECT_KINDS[e]?.label ?? '效果'}）
             </button>
           ))}
           <button
@@ -251,6 +279,7 @@ export function RelicEditor({ initialRelic }: RelicEditorProps) {
           rows={20}
         />
       </div>
+      <RelicTutorial isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
     </div>
   )
 }

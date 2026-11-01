@@ -11,6 +11,7 @@ import {
 } from 'react'
 import type { ConversationAttachment, ConversationQuickReplySelection } from './conversationDocument'
 import { createConversationRepository } from './conversationRepository'
+import type { ConversationPerformanceMetrics } from './conversationPerformance'
 import {
   ProjectConversation,
   type ConversationModel,
@@ -54,6 +55,13 @@ export interface ProjectConversationActions {
   ): ReturnType<ProjectConversation['send']>
   cancel(): ReturnType<ProjectConversation['cancel']>
   retryTurn(turnId: string): ReturnType<ProjectConversation['retryTurn']>
+  getPerformanceMetrics(): ConversationPerformanceMetrics | null
+  archiveAndReset(): ReturnType<ProjectConversation['archiveAndReset']>
+  listArchives(): ReturnType<ProjectConversation['listArchives']>
+  readArchive(archiveId: string): ReturnType<ProjectConversation['readArchive']>
+  listQuarantines(): ReturnType<ProjectConversation['listQuarantines']>
+  readQuarantine(quarantineId: string): ReturnType<ProjectConversation['readQuarantine']>
+  restoreQuarantine(quarantineId: string): ReturnType<ProjectConversation['restoreQuarantine']>
   refreshProposal(proposalId: string): ReturnType<ProjectConversation['refreshProposal']>
   acceptProposal(proposalId: string, finalCardId: string): ReturnType<ProjectConversation['acceptProposal']>
   rejectProposal(
@@ -83,6 +91,7 @@ const EMPTY_SNAPSHOT: ProjectConversationSnapshot = {
   lastError: null,
   persistenceError: null,
   requiresReload: false,
+  capacity: { level: 'normal', bytes: 0, messageCount: 0 },
 }
 
 const NOOP_UNSUBSCRIBE = () => undefined
@@ -231,12 +240,18 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
   let latestModel: ConversationModel | null = null
   let latestProvider: string | null = null
   let activeModel: ConversationModel | null = null
-  const createLatestModel = (): ConversationModel | null => {
-    const { provider, apiKey, isConfigured } = useAIStore.getState()
-    if (!isConfigured) return null
-    latestModel = createConversationModel(createAdapter(provider, apiKey))
+  const createLatestModel = (apiKeyOverride?: string): ConversationModel | null => {
+    const { provider, apiKey: currentApiKey, isConfigured, providerSettings } = useAIStore.getState()
+    const settings = providerSettings[provider]
+    if (!isConfigured || !settings) return null
+    const apiKey = apiKeyOverride ?? currentApiKey
+    latestModel = createConversationModel(createAdapter(provider, { ...settings, apiKey, model: settings.selectedModel }))
     latestProvider = provider
     return latestModel
+  }
+  const createRequestModel = (): ConversationModel | null => {
+    const { provider, getNextApiKey } = useAIStore.getState()
+    return createLatestModel(getNextApiKey(provider))
   }
   const model: ConversationModel = {
     prepare(request) {
@@ -252,12 +267,12 @@ export function createDefaultProjectConversation(projectRoot: string): ProjectCo
       return { provider, model: 'unknown' }
     },
     async summarize(request) {
-      const configuredModel = createLatestModel()
+      const configuredModel = createRequestModel()
       if (!configuredModel?.summarize) return { success: false as const, error: '请先在「设置」中配置 API 密钥', kind: 'provider' as const }
       return configuredModel.summarize(request)
     },
     async respond(request) {
-      const configuredModel = createLatestModel()
+      const configuredModel = createRequestModel()
       if (!configuredModel) {
         return { success: false as const, error: '请先在「设置」中配置 API 密钥' }
       }
@@ -359,6 +374,7 @@ export function useProjectConversationActions(): ProjectConversationActions {
   }
 
   return useMemo(() => ({
+    getPerformanceMetrics: () => conversation?.getPerformanceMetrics() ?? null,
     send: (
       userText: string,
       attachments: readonly ConversationAttachment[] = [],
@@ -373,6 +389,26 @@ export function useProjectConversationActions(): ProjectConversationActions {
     retryTurn: (turnId: string) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
       return runOutsideProjectMutations(() => conversation.retryTurn(turnId))
+    },
+    archiveAndReset: () => {
+      if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
+      return runProjectMutation(() => conversation.archiveAndReset())
+    },
+    listArchives: () => conversation
+      ? conversation.listArchives()
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    readArchive: (archiveId: string) => conversation
+      ? conversation.readArchive(archiveId)
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    listQuarantines: () => conversation
+      ? conversation.listQuarantines()
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    readQuarantine: (quarantineId: string) => conversation
+      ? conversation.readQuarantine(quarantineId)
+      : Promise.resolve({ ok: false as const, error: '请先打开项目' }),
+    restoreQuarantine: (quarantineId: string) => {
+      if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })
+      return runProjectMutation(() => conversation.restoreQuarantine(quarantineId))
     },
     refreshProposal: (proposalId: string) => {
       if (!conversation) return Promise.resolve({ ok: false as const, error: '请先打开项目', code: 'not-loaded' as const })

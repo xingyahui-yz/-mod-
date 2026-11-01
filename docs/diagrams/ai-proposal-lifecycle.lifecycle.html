@@ -5072,8 +5072,8 @@
           <text data-detail="context" x="248" y="163" class="t-muted" font-size="7" text-anchor="middle">只读预览，不写项目</text>
         </g>
 
-        <g id="node-acceptCheck" data-node-id="acceptCheck" data-node-label="接受前校验" tabindex="0" role="button" aria-label="聚焦接受前校验，revision 或新 Card ID, 生成、审阅与项目历史" aria-pressed="false" data-node-kind="decision" data-node-sublabel="revision 或新 Card ID" data-node-context="生成、审阅与项目历史">
-          <title>接受前校验 · revision 或新 Card ID · 生成、审阅与项目历史</title>
+        <g id="node-acceptCheck" data-node-id="acceptCheck" data-node-label="接受前校验" tabindex="0" role="button" aria-label="聚焦接受前校验，revision 校验；变更即 stale, 生成、审阅与项目历史" aria-pressed="false" data-node-kind="decision" data-node-sublabel="revision 校验；变更即 stale" data-node-context="生成、审阅与项目历史">
+          <title>接受前校验 · revision 校验；变更即 stale · 生成、审阅与项目历史</title>
           <rect x="343" y="126" width="118" height="62" rx="7" class="c-mask"/>
           <rect x="343" y="126" width="118" height="62" rx="7" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="neutral" class="semantic-sigil s-external" transform="translate(444 132) scale(0.6875)">
@@ -5081,11 +5081,11 @@
             <circle cx="8" cy="8" r="1.2" class="sigil-fill"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="402" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">接受前校验</text>
-          <text data-detail="context" x="402" y="163" class="t-muted" font-size="7" text-anchor="middle">revision 或新 Card ID</text>
+          <text data-detail="context" x="402" y="163" class="t-muted" font-size="6.7" text-anchor="middle">revision 校验；变更即 stale</text>
         </g>
 
-        <g id="node-accepted" data-node-id="accepted" data-node-label="已接受 accepted" tabindex="0" role="button" aria-label="聚焦已接受 accepted，整张 Card 一个历史步骤, 生成、审阅与项目历史" aria-pressed="false" data-node-kind="success" data-node-sublabel="整张 Card 一个历史步骤" data-node-context="生成、审阅与项目历史">
-          <title>已接受 accepted · 整张 Card 一个历史步骤 · 生成、审阅与项目历史</title>
+        <g id="node-accepted" data-node-id="accepted" data-node-label="已接受 accepted" tabindex="0" role="button" aria-label="聚焦已接受 accepted，提案 WAL + Card 事务提交, 生成、审阅与项目历史" aria-pressed="false" data-node-kind="success" data-node-sublabel="提案 WAL + Card 事务提交" data-node-context="生成、审阅与项目历史">
+          <title>已接受 accepted · 提案 WAL + Card 事务提交 · 生成、审阅与项目历史</title>
           <rect x="497" y="126" width="118" height="62" rx="7" class="c-mask"/>
           <rect x="497" y="126" width="118" height="62" rx="7" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="success" class="semantic-sigil s-database" transform="translate(598 132) scale(0.6875)">
@@ -5093,7 +5093,7 @@
             <path d="m5.2 8 1.8 1.8 3.8-4"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="556" y="147" class="t-primary" font-size="10" font-weight="600" text-anchor="middle">已接受 accepted</text>
-          <text data-detail="context" x="556" y="163" class="t-muted" font-size="7" text-anchor="middle">整张 Card 一个历史步骤</text>
+          <text data-detail="context" x="556" y="163" class="t-muted" font-size="7" text-anchor="middle">提案 WAL + Card 事务提交</text>
         </g>
 
         <g id="node-reverted" data-node-id="reverted" data-node-label="已撤销 reverted" tabindex="0" role="button" aria-label="聚焦已撤销 reverted，重做后恢复 accepted, 生成、审阅与项目历史" aria-pressed="false" data-node-kind="failure" data-node-sublabel="重做后恢复 accepted" data-node-context="生成、审阅与项目历史">
@@ -5371,7 +5371,8 @@
         </div>
         <ul>
           <li>&bull; 预览阶段不占用建议 ID</li>
-          <li>&bull; 接受时确认最终 ID；冲突保持 pending</li>
+          <li>&bull; 接受时确认最终 ID；冲突保留 pending</li>
+          <li>&bull; 状态顺序：提案 WAL → Card 历史事务 → committed</li>
         </ul>
       </div>
 
@@ -5381,8 +5382,8 @@
           <h3>独立性</h3>
         </div>
         <ul>
-          <li>&bull; 每张 Card 独立接受、拒绝、过期</li>
-          <li>&bull; stale 需基于当前版本开启新轮次</li>
+          <li>&bull; 每张 Card 独立接受、拒绝或过期</li>
+          <li>&bull; 目标 Card revision 变化会标为 stale，需基于新版本重开</li>
           <li>&bull; 拒绝和 superseded 不可恢复</li>
         </ul>
       </div>

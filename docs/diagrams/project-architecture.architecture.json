@@ -1,38 +1,208 @@
 {
   "schema_version": 1,
   "diagram_type": "architecture",
-  "meta": { "title": "Mod Studio 项目架构", "locale": "zh-CN", "quality_profile": "showcase", "viewBox": [1240, 760] },
-  "layout": { "mode": "grid", "origin": [80, 80], "cols": 4, "gapX": 72, "gapY": 90, "cellW": 220, "cellH": 108 },
+  "meta": {
+    "title": "Mod Studio 项目架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1360,
+      1040
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [
+      40,
+      130
+    ],
+    "cols": 5,
+    "gapX": 40,
+    "gapY": 170,
+    "cellW": 230,
+    "cellH": 112
+  },
   "components": [
-    { "id": "user", "type": "external", "label": "Mod 作者", "sublabel": "编辑、确认、生成、测试", "row": 0, "col": 0, "size": [190, 80] },
-    { "id": "renderer", "type": "frontend", "label": "React 项目界面", "sublabel": "CardEditor / 对话抽屉 / Launcher", "row": 0, "col": 1, "size": [190, 80] },
-    { "id": "catalog", "type": "backend", "label": "CardCatalog", "sublabel": "CardDocument 唯一权威与逐 Card 历史", "row": 1, "col": 1, "size": [190, 80] },
-    { "id": "conversation", "type": "backend", "label": "ProjectConversation", "sublabel": "项目级 AI 轮次与提案状态", "row": 0, "col": 2, "size": [190, 80] },
-    { "id": "cardServices", "type": "backend", "label": "Card 领域服务", "sublabel": "校验、仓库、回收站、生成、预检", "row": 1, "col": 2, "size": [190, 80] },
-    { "id": "fileService", "type": "backend", "label": "FileService 接线层", "sublabel": "最小文件端口与 Electron IPC", "row": 2, "col": 2, "size": [190, 80] },
-    { "id": "projectData", "type": "database", "label": ".modstudio 项目源数据", "sublabel": "cards / ai / archives / trash", "row": 2, "col": 1, "size": [190, 80] },
-    { "id": "llm", "type": "cloud", "label": "LLM Providers", "sublabel": "四个 HTTP provider", "row": 0, "col": 3, "size": [190, 80] },
-    { "id": "artifacts", "type": "database", "label": "C# 生成产物", "sublabel": "scripts/Cards/*.cs", "row": 2, "col": 3, "size": [190, 80] },
-    { "id": "game", "type": "external", "label": "Slay the Spire 2", "sublabel": "加载并测试当前 Mod", "row": 1, "col": 3, "size": [190, 80] }
-  ],
-  "boundaries": [
-    { "kind": "region", "label": "Electron Renderer", "wraps": ["renderer", "catalog", "conversation", "cardServices"] },
-    { "kind": "region", "label": "用户项目目录", "wraps": ["projectData", "artifacts"] }
+    {
+      "id": "author",
+      "type": "external",
+      "label": "Mod 作者",
+      "sublabel": "编辑、配置与测试",
+      "row": 0,
+      "col": 0,
+      "size": [
+        190,
+        84
+      ]
+    },
+    {
+      "id": "renderer",
+      "type": "frontend",
+      "label": "React 工作区",
+      "sublabel": "Card / Relic、AI 与 Provider 设置",
+      "row": 0,
+      "col": 1,
+      "size": [
+        225,
+        88
+      ]
+    },
+    {
+      "id": "conversation",
+      "type": "backend",
+      "label": "ProjectConversation",
+      "sublabel": "项目级轮次与提案状态",
+      "row": 0,
+      "col": 2,
+      "size": [
+        220,
+        88
+      ]
+    },
+    {
+      "id": "llmAdapter",
+      "type": "backend",
+      "label": "LLM HTTPAdapter",
+      "sublabel": "多协议请求与模型发现",
+      "row": 0,
+      "col": 3,
+      "size": [
+        220,
+        88
+      ]
+    },
+    {
+      "id": "provider",
+      "type": "cloud",
+      "label": "LLM 服务商",
+      "sublabel": "预设与自定义多协议端点",
+      "row": 0,
+      "col": 4,
+      "size": [
+        220,
+        88
+      ]
+    },
+    {
+      "id": "cardDomain",
+      "type": "backend",
+      "label": "Card 领域层",
+      "sublabel": "CardCatalog / FileService / 生成 / 预检",
+      "row": 1,
+      "col": 1,
+      "size": [
+        225,
+        88
+      ]
+    },
+    {
+      "id": "electronMain",
+      "type": "backend",
+      "label": "Electron 主进程 / IPC",
+      "sublabel": "FileService / ModManager / GameLauncher",
+      "row": 1,
+      "col": 2,
+      "size": [
+        220,
+        88
+      ]
+    },
+    {
+      "id": "projectFiles",
+      "type": "database",
+      "label": "用户项目文件",
+      "sublabel": ".modstudio 数据 / scripts/Cards/*.cs",
+      "row": 1,
+      "col": 3,
+      "size": [
+        220,
+        88
+      ]
+    },
+    {
+      "id": "game",
+      "type": "external",
+      "label": "Slay the Spire 2",
+      "sublabel": "启动与 Mod 安装管理",
+      "row": 2,
+      "col": 2,
+      "size": [
+        220,
+        88
+      ]
+    }
   ],
   "connections": [
-    { "id": "a1", "from": "user", "to": "renderer", "label": "交互意图" },
-    { "id": "a2", "from": "renderer", "to": "catalog" },
-    { "id": "a3", "from": "renderer", "to": "conversation" },
-    { "id": "a4", "from": "catalog", "to": "cardServices" },
-    { "id": "a5", "from": "conversation", "to": "catalog", "label": "原子应用 Card 提案" },
-    { "id": "a6", "from": "conversation", "to": "llm", "label": "结构化请求 / 响应" },
-    { "id": "a7", "from": "cardServices", "to": "fileService" },
-    { "id": "a9", "from": "fileService", "to": "projectData", "label": "原子读写" },
-    { "id": "a10", "from": "cardServices", "to": "artifacts", "label": "显式生成并校验" },
-    { "id": "a11", "from": "artifacts", "to": "game", "label": "预检通过后加载" }
+    {
+      "id": "arch01",
+      "from": "author",
+      "to": "renderer"
+    },
+    {
+      "id": "arch02",
+      "from": "renderer",
+      "to": "conversation"
+    },
+    {
+      "id": "arch03",
+      "from": "renderer",
+      "to": "cardDomain"
+    },
+    {
+      "id": "arch04",
+      "from": "conversation",
+      "to": "cardDomain",
+      "label": "读取 Card 基线 / 接受提案"
+    },
+    {
+      "id": "arch05",
+      "from": "conversation",
+      "to": "llmAdapter"
+    },
+    {
+      "id": "arch06",
+      "from": "llmAdapter",
+      "to": "provider"
+    },
+    {
+      "id": "arch07",
+      "from": "cardDomain",
+      "to": "electronMain"
+    },
+    {
+      "id": "arch08",
+      "from": "conversation",
+      "to": "electronMain"
+    },
+    {
+      "id": "arch09",
+      "from": "electronMain",
+      "to": "projectFiles"
+    },
+    {
+      "id": "arch10",
+      "from": "electronMain",
+      "to": "game"
+    }
   ],
   "cards": [
-    { "dot": "cyan", "title": "权威边界", "items": ["CardDocument 是 Card 状态唯一权威", "conversation.json 是活动对话唯一权威"] },
-    { "dot": "amber", "title": "产物边界", "items": ["C# 只由用户显式生成", "游戏测试先执行 Card 预检"] }
+    {
+      "dot": "cyan",
+      "title": "项目状态",
+      "items": [
+        "CardDocument 是 Card 编辑状态的权威来源",
+        "AI 配置由 useAIStore 本地持久化，支持多服务商、多密钥与模型",
+        "项目对话文档与 Card 数据分开保存"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "代码与运行边界",
+      "items": [
+        "Card 代码由用户显式生成并执行预检",
+        "RelicEditor 当前生成 C# 代码预览",
+        "ModManager 通过 Electron IPC 管理已安装 Mod"
+      ]
+    }
   ]
 }
