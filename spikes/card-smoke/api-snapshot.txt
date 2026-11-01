@@ -1,0 +1,382 @@
+TYPE MegaCrit.Sts2.Core.Models.CardModel : MegaCrit.Sts2.Core.Models.AbstractModel
+  System.Void MockSetEnergyCost(MegaCrit.Sts2.Core.Entities.Cards.CardEnergyCost)
+  System.Void InvokeEnergyCostChanged()
+  System.Int32 ResolveEnergyXValue()
+  System.Int32 GetEnchantedReplayCount()
+  System.Int32 ResolveStarXValue()
+  System.Collections.Generic.IReadOnlySet`1[MegaCrit.Sts2.Core.Entities.Cards.CardKeyword] GetKeywordsWithSources(MegaCrit.Sts2.Core.Entities.Cards.KeywordSources)
+  Godot.Control CreateOverlay()
+  MegaCrit.Sts2.Core.Models.CardModel ToMutable()
+  System.Void DeepCloneFields()
+  System.Void AfterCloned()
+  System.Void AfterCreated()
+  System.Void AfterDeserialized()
+  System.Void NeverEverCallThisOutsideOfTests_ClearOwner()
+  System.Void SetToFreeThisTurn()
+  System.Void SetToFreeThisCombat()
+  System.Void SetStarCostUntilPlayed(System.Int32)
+  System.Void SetStarCostThisTurn(System.Int32)
+  System.Void SetStarCostThisCombat(System.Int32)
+  System.Int32 GetStarCostThisCombat()
+  System.Void AddTemporaryStarCost(MegaCrit.Sts2.Core.Entities.Cards.TemporaryCardCost)
+  System.Void UpgradeStarCostBy(System.Int32)
+  System.Void AddKeyword(MegaCrit.Sts2.Core.Entities.Cards.CardKeyword)
+  System.Void RemoveKeyword(MegaCrit.Sts2.Core.Entities.Cards.CardKeyword)
+  System.Void GiveSingleTurnRetain()
+  System.Void GiveSingleTurnSly()
+  System.String GetDescriptionForPile(MegaCrit.Sts2.Core.Entities.Cards.PileType, MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.String GetDescriptionForUpgradePreview()
+  System.String GetDescriptionForPile(MegaCrit.Sts2.Core.Entities.Cards.PileType, MegaCrit.Sts2.Core.Models.CardModel+DescriptionPreviewType, MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Void UpdateDynamicVarPreview(MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode, MegaCrit.Sts2.Core.Entities.Creatures.Creature, MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVarSet)
+  System.Void EnchantInternal(MegaCrit.Sts2.Core.Models.EnchantmentModel, System.Decimal)
+  System.Void AfflictInternal(MegaCrit.Sts2.Core.Models.AfflictionModel, System.Decimal)
+  System.Void ClearEnchantmentInternal()
+  System.Void ClearAfflictionInternal()
+  System.Void AddExtraArgsToDescription(MegaCrit.Sts2.Core.Localization.LocString)
+  System.Int32 GetStarCostWithModifiers()
+  System.Boolean CostsEnergyOrStars(System.Boolean)
+  System.Void RemoveFromCurrentPile(System.Boolean)
+  System.Void RemoveFromState()
+  System.Void EndOfTurnCleanup()
+  System.Void AfterTransformedFrom()
+  System.Void AfterTransformedTo()
+  System.Void AfterForged()
+  System.Threading.Tasks.Task OnPlay(MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext, MegaCrit.Sts2.Core.Entities.Cards.CardPlay)
+  System.Threading.Tasks.Task OnEnqueuePlayVfx(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Void OnUpgrade()
+  System.Threading.Tasks.Task OnTurnEndInHand(MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext)
+  System.Threading.Tasks.Task OnTurnEndInHandWrapper(MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext)
+  System.Boolean CanPlayTargeting(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Boolean CanPlay()
+  System.Boolean CanPlay(MegaCrit.Sts2.Core.Entities.Cards.UnplayableReason&, MegaCrit.Sts2.Core.Models.AbstractModel&)
+  System.Boolean IsValidTarget(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Boolean TryManualPlay(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Void EnqueueManualPlay(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Threading.Tasks.Task`1[System.ValueTuple`2[System.Int32,System.Int32]] SpendResources()
+  System.Threading.Tasks.Task SpendEnergy(System.Int32)
+  System.Threading.Tasks.Task SpendStars(System.Int32)
+  System.Threading.Tasks.Task OnPlayWrapper(MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext, MegaCrit.Sts2.Core.Entities.Creatures.Creature, System.Boolean, MegaCrit.Sts2.Core.Entities.Cards.ResourceInfo, System.Boolean)
+  System.Threading.Tasks.Task`1[System.Int32] GeneratePlayCount(MegaCrit.Sts2.Core.Combat.ICombatState, MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Threading.Tasks.Task PlayPowerCardFlyVfx()
+  MegaCrit.Sts2.Core.Entities.Cards.CardLocation GetResultLocationForCardPlay()
+  System.Threading.Tasks.Task MoveToResultPileWithoutPlaying(MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext)
+  System.Void UpgradeInternal()
+  System.Void FinalizeUpgradeInternal()
+  System.Void DowngradeInternal()
+  System.Void AfterDowngraded()
+  System.Void InvokeDrawn()
+  MegaCrit.Sts2.Core.Models.CardModel CreateClone()
+  MegaCrit.Sts2.Core.Models.CardModel CreateCloneForPlayer(MegaCrit.Sts2.Core.Entities.Players.Player)
+  System.Void GiveToAnotherPlayer(MegaCrit.Sts2.Core.Entities.Players.Player)
+  MegaCrit.Sts2.Core.Models.CardModel CreateDupe(MegaCrit.Sts2.Core.Entities.Players.Player)
+  MegaCrit.Sts2.Core.Saves.Runs.SerializableCard ToSerializable()
+  MegaCrit.Sts2.Core.Models.CardModel FromSerializable(MegaCrit.Sts2.Core.Saves.Runs.SerializableCard)
+  System.Int32 CompareTo(MegaCrit.Sts2.Core.Models.AbstractModel)
+  System.Boolean <get_Pool>b__99_0(MegaCrit.Sts2.Core.Models.CardPoolModel)
+  System.Boolean <get_Pile>b__107_0(MegaCrit.Sts2.Core.Entities.Cards.CardPile)
+  System.Boolean <UpgradeStarCostBy>b__301_0(MegaCrit.Sts2.Core.Entities.Cards.TemporaryCardCost)
+  System.Void .ctor(System.Int32, MegaCrit.Sts2.Core.Entities.Cards.CardType, MegaCrit.Sts2.Core.Entities.Cards.CardRarity, MegaCrit.Sts2.Core.Entities.Cards.TargetType, System.Boolean)
+  MegaCrit.Sts2.Core.Localization.LocString TitleLocString
+  System.String Title
+  MegaCrit.Sts2.Core.Localization.LocString Description
+  MegaCrit.Sts2.Core.Localization.LocString SelectionScreenPrompt
+  System.String PortraitPath
+  System.String BetaPortraitPath
+  System.String MissingPortraitPath
+  System.String PortraitPngPath
+  System.String BetaPortraitPngPath
+  System.Boolean HasPortrait
+  System.Boolean HasBetaPortrait
+  Godot.Texture2D Portrait
+  System.String FramePath
+  Godot.Texture2D Frame
+  System.String PortraitBorderPath
+  System.String AncientBorderPath
+  System.String AncientTextBgPath
+  Godot.Texture2D AncientTextBg
+  Godot.Texture2D AncientBorder
+  Godot.Texture2D PortraitBorder
+  System.String EnergyIconPath
+  Godot.Texture2D EnergyIcon
+  MegaCrit.Sts2.Core.HoverTips.IHoverTip EnergyHoverTip
+  System.String BannerTexturePath
+  Godot.Texture2D BannerTexture
+  System.String BannerMaterialPath
+  Godot.Material BannerMaterial
+  Godot.Material FrameMaterial
+  MegaCrit.Sts2.Core.Entities.Cards.CardType Type
+  MegaCrit.Sts2.Core.Entities.Cards.CardRarity Rarity
+  MegaCrit.Sts2.Core.Entities.Cards.CardMultiplayerConstraint MultiplayerConstraint
+  MegaCrit.Sts2.Core.Models.CardPoolModel Pool
+  MegaCrit.Sts2.Core.Models.CardPoolModel VisualCardPool
+  MegaCrit.Sts2.Core.Entities.Players.Player Owner
+  MegaCrit.Sts2.Core.Entities.Cards.CardPile Pile
+  System.Int32 CanonicalEnergyCost
+  System.Boolean HasEnergyCostX
+  MegaCrit.Sts2.Core.Entities.Cards.CardEnergyCost EnergyCost
+  System.Int32 BaseReplayCount
+  System.Int32 CanonicalStarCost
+  System.Int32 BaseStarCost
+  System.Boolean WasStarCostJustUpgraded
+  MegaCrit.Sts2.Core.Entities.Cards.TemporaryCardCost TemporaryStarCost
+  System.Int32 CurrentStarCost
+  System.Boolean HasStarCostX
+  System.Int32 LastStarsSpent
+  MegaCrit.Sts2.Core.Entities.Cards.TargetType TargetType
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Entities.Cards.CardKeyword] CanonicalKeywords
+  System.Collections.Generic.HashSet`1[MegaCrit.Sts2.Core.Entities.Cards.CardKeyword] LocalKeywords
+  System.Collections.Generic.IReadOnlySet`1[MegaCrit.Sts2.Core.Entities.Cards.CardKeyword] Keywords
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Entities.Cards.CardTag] Tags
+  System.Collections.Generic.HashSet`1[MegaCrit.Sts2.Core.Entities.Cards.CardTag] CanonicalTags
+  MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVarSet DynamicVars
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar] CanonicalVars
+  System.Boolean ExhaustOnNextPlay
+  System.Boolean HasSingleTurnRetain
+  System.Boolean ShouldRetainThisTurn
+  System.Boolean HasSingleTurnSly
+  System.Boolean IsSlyThisTurn
+  MegaCrit.Sts2.Core.Models.EnchantmentModel Enchantment
+  MegaCrit.Sts2.Core.Models.AfflictionModel Affliction
+  System.Boolean CanBeGeneratedInCombat
+  System.Boolean CanBeGeneratedByModifiers
+  MegaCrit.Sts2.Core.Entities.Cards.OrbEvokeType OrbEvokeType
+  System.Boolean GainsBlock
+  System.Boolean IsBasicStrikeOrDefend
+  MegaCrit.Sts2.Core.Models.CardModel CloneOf
+  System.Boolean IsClone
+  MegaCrit.Sts2.Core.Models.CardModel DupeOf
+  System.Boolean IsDupe
+  System.Boolean IsRemovable
+  System.Boolean IsTransformable
+  System.Boolean IsInCombat
+  System.Int32 CurrentUpgradeLevel
+  System.Int32 MaxUpgradeLevel
+  System.Boolean IsUpgraded
+  System.Boolean IsUpgradable
+  MegaCrit.Sts2.Core.Entities.Cards.CardUpgradePreviewType UpgradePreviewType
+  System.Boolean IsPlayable
+  System.Boolean ShouldShowInCardLibrary
+  System.Boolean ShouldGlowGold
+  System.Boolean ShouldGlowRed
+  System.Boolean ShouldGlowGoldInternal
+  System.Boolean ShouldGlowRedInternal
+  System.Boolean IsEnchantmentPreview
+  System.Boolean HasBuiltInOverlay
+  System.String OverlayPath
+  System.Nullable`1[System.Int32] FloorAddedToDeck
+  MegaCrit.Sts2.Core.Entities.Creatures.Creature CurrentTarget
+  System.Int32 CurrentPlayIndex
+  MegaCrit.Sts2.Core.Models.CardModel DeckVersion
+  System.Boolean HasBeenRemovedFromState
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.HoverTips.IHoverTip] ExtraHoverTips
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.HoverTips.IHoverTip] HoverTips
+  MegaCrit.Sts2.Core.Models.CardModel CanonicalInstance
+  MegaCrit.Sts2.Core.Runs.IRunState RunState
+  MegaCrit.Sts2.Core.Combat.ICombatState CombatState
+  MegaCrit.Sts2.Core.Runs.ICardScope CardScope
+  System.Boolean HasTurnEndInHandEffect
+  System.Boolean ShouldReceiveCombatHooks
+  System.Collections.Generic.IEnumerable`1[System.String] AllPortraitPaths
+  System.Collections.Generic.IEnumerable`1[System.String] RunAssetPaths
+  System.Collections.Generic.IEnumerable`1[System.String] ExtraRunAssetPaths
+TYPE MegaCrit.Sts2.Core.Models.Cards.StrikeIronclad : MegaCrit.Sts2.Core.Models.CardModel
+  System.Threading.Tasks.Task OnPlay(MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext, MegaCrit.Sts2.Core.Entities.Cards.CardPlay)
+  System.Void OnUpgrade()
+  System.Void .ctor()
+  System.Collections.Generic.HashSet`1[MegaCrit.Sts2.Core.Entities.Cards.CardTag] CanonicalTags
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar] CanonicalVars
+TYPE MegaCrit.Sts2.Core.Models.CardPools.IroncladCardPool : MegaCrit.Sts2.Core.Models.CardPoolModel
+  MegaCrit.Sts2.Core.Models.CardModel[] GenerateAllCards()
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Models.CardModel] FilterThroughEpochs(MegaCrit.Sts2.Core.Unlocks.UnlockState, System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Models.CardModel])
+  System.Void .ctor()
+  System.String Title
+  System.String EnergyColorName
+  System.String CardFrameMaterialPath
+  Godot.Color DeckEntryCardColor
+  Godot.Color EnergyOutlineColor
+  System.Boolean IsColorless
+TYPE MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedDamageVar : MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedVar
+  MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedDamageVar FromOsty()
+  System.Void UpdateCardPreview(MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode, MegaCrit.Sts2.Core.Entities.Creatures.Creature, System.Boolean)
+  MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar GetExtraVar()
+  System.Void .ctor(MegaCrit.Sts2.Core.ValueProps.ValueProp)
+  MegaCrit.Sts2.Core.ValueProps.ValueProp Props
+  System.Boolean IsFromOsty
+TYPE MegaCrit.Sts2.Core.Localization.DynamicVars.DamageVar : MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar
+  System.Void UpdateCardPreview(MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode, MegaCrit.Sts2.Core.Entities.Creatures.Creature, System.Boolean)
+  System.Void .ctor(System.Decimal, MegaCrit.Sts2.Core.ValueProps.ValueProp)
+  System.Void .ctor(System.String, System.Decimal, MegaCrit.Sts2.Core.ValueProps.ValueProp)
+  MegaCrit.Sts2.Core.ValueProps.ValueProp Props
+TYPE MegaCrit.Sts2.Core.Localization.DynamicVars.ExtraDamageVar : MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar
+  MegaCrit.Sts2.Core.Localization.DynamicVars.ExtraDamageVar FromOsty()
+  System.Void UpdateCardPreview(MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode, MegaCrit.Sts2.Core.Entities.Creatures.Creature, System.Boolean)
+  System.Void .ctor(System.Decimal)
+  System.Boolean IsFromOsty
+TYPE MegaCrit.Sts2.Core.Localization.DynamicVars.OstyDamageVar : MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar
+  System.Void UpdateCardPreview(MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode, MegaCrit.Sts2.Core.Entities.Creatures.Creature, System.Boolean)
+  System.Void .ctor(System.Decimal, MegaCrit.Sts2.Core.ValueProps.ValueProp)
+  System.Void .ctor(System.String, System.Decimal, MegaCrit.Sts2.Core.ValueProps.ValueProp)
+  MegaCrit.Sts2.Core.ValueProps.ValueProp Props
+TYPE MegaCrit.Sts2.Core.Commands.Builders.AttackCommand : System.Object
+  System.Collections.Generic.IReadOnlyList`1[MegaCrit.Sts2.Core.Entities.Creatures.Creature] GetPossibleTargets()
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand FromCard(MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Cards.CardPlay)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand FromOsty(MegaCrit.Sts2.Core.Entities.Creatures.Creature, MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Cards.CardPlay)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand FromMonster(MegaCrit.Sts2.Core.Models.MonsterModel)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand Targeting(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand TargetingAllOpponents(MegaCrit.Sts2.Core.Combat.ICombatState)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand TargetingRandomOpponents(MegaCrit.Sts2.Core.Combat.ICombatState, System.Boolean)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand Unpowered()
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithAttackerAnim(System.String, System.Single, MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithNoAttackerAnim()
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand AfterAttackerAnim(System.Func`1[System.Threading.Tasks.Task])
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithAttackerFx(System.String, System.String, System.String)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithAttackerFx(System.Func`1[Godot.Node2D])
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithWaitBeforeHit(System.Single, System.Single)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithHitFx(System.String, System.String, System.String)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand SpawningHitVfxOnEachCreature()
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithHitVfxSpawnedAtBase()
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithHitVfxNode(System.Func`2[MegaCrit.Sts2.Core.Entities.Creatures.Creature,Godot.Node2D])
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand OnlyPlayAnimOnce()
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand WithHitCount(System.Int32)
+  MegaCrit.Sts2.Core.Commands.Builders.AttackCommand BeforeDamage(System.Func`1[System.Threading.Tasks.Task])
+  System.Threading.Tasks.Task`1[MegaCrit.Sts2.Core.Commands.Builders.AttackContext] CreateContextAsync(MegaCrit.Sts2.Core.Combat.ICombatState, MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext, MegaCrit.Sts2.Core.Entities.Cards.CardPlay)
+  System.Threading.Tasks.Task`1[MegaCrit.Sts2.Core.Commands.Builders.AttackCommand] Execute(MegaCrit.Sts2.Core.GameActions.Multiplayer.PlayerChoiceContext)
+  System.Void IncrementHitsInternal()
+  System.Void AddResultsInternal(System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Entities.Creatures.DamageResult])
+  System.Boolean <Execute>b__90_3(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Void .ctor(System.Decimal)
+  System.Void .ctor(MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedDamageVar)
+  MegaCrit.Sts2.Core.Entities.Creatures.Creature Attacker
+  MegaCrit.Sts2.Core.Models.AbstractModel ModelSource
+  MegaCrit.Sts2.Core.Entities.Cards.CardPlay CardPlay
+  MegaCrit.Sts2.Core.Combat.CombatSide TargetSide
+  MegaCrit.Sts2.Core.ValueProps.ValueProp DamageProps
+  System.Boolean IsSingleTargeted
+  System.Boolean IsMultiTargeted
+  System.Boolean IsRandomlyTargeted
+  System.Collections.Generic.IEnumerable`1[System.Collections.Generic.List`1[MegaCrit.Sts2.Core.Entities.Creatures.DamageResult]] Results
+  System.String HitSfx
+  System.String TmpHitSfx
+  System.String HitVfx
+TYPE MegaCrit.Sts2.Core.Models.CardModel+DescriptionPreviewType : System.Enum
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<>c : System.Object
+  System.Boolean <GetStarCostThisCombat>b__299_0(MegaCrit.Sts2.Core.Entities.Cards.TemporaryCardCost)
+  System.Boolean <GetDescriptionForPile>b__308_0(System.String)
+  System.Boolean <EndOfTurnCleanup>b__319_0(MegaCrit.Sts2.Core.Entities.Cards.TemporaryCardCost)
+  System.Boolean <CanPlay>b__332_0(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Boolean <OnPlayWrapper>b__339_0(MegaCrit.Sts2.Core.Entities.Cards.TemporaryCardCost)
+  System.Void .cctor()
+  System.Void .ctor()
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<GeneratePlayCount>d__340 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<MoveToResultPileWithoutPlaying>d__343 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<OnPlayWrapper>d__339 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<PlayPowerCardFlyVfx>d__341 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<SpendEnergy>d__337 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<SpendResources>d__336 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.CardModel+<SpendStars>d__338 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.Cards.StrikeIronclad+<OnPlay>d__5 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Models.CardPools.IroncladCardPool+<>c : System.Object
+  System.Boolean <FilterThroughEpochs>b__13_0(MegaCrit.Sts2.Core.Models.CardModel)
+  System.Boolean <FilterThroughEpochs>b__13_1(MegaCrit.Sts2.Core.Models.CardModel)
+  System.Boolean <FilterThroughEpochs>b__13_2(MegaCrit.Sts2.Core.Models.CardModel)
+  System.Void .cctor()
+  System.Void .ctor()
+TYPE MegaCrit.Sts2.Core.Models.CardPools.IroncladCardPool+<>c__DisplayClass13_0 : System.Object
+  System.Boolean <FilterThroughEpochs>b__3(MegaCrit.Sts2.Core.Models.CardModel)
+  System.Void .ctor()
+TYPE MegaCrit.Sts2.Core.Models.CardPools.IroncladCardPool+<>c__DisplayClass13_1 : System.Object
+  System.Boolean <FilterThroughEpochs>b__4(MegaCrit.Sts2.Core.Models.CardModel)
+  System.Void .ctor()
+TYPE MegaCrit.Sts2.Core.Models.CardPools.IroncladCardPool+<>c__DisplayClass13_2 : System.Object
+  System.Boolean <FilterThroughEpochs>b__5(MegaCrit.Sts2.Core.Models.CardModel)
+  System.Void .ctor()
+TYPE MegaCrit.Sts2.Core.Commands.Builders.AttackCommand+SourceType : System.Enum
+TYPE MegaCrit.Sts2.Core.Commands.Builders.AttackCommand+<>c : System.Object
+  System.Boolean <Execute>b__90_1(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Entities.Creatures.DamageResult] <Execute>b__90_4(System.Collections.Generic.List`1[MegaCrit.Sts2.Core.Entities.Creatures.DamageResult])
+  System.Boolean <Execute>b__90_2(System.Single)
+  System.Collections.Generic.IEnumerable`1[MegaCrit.Sts2.Core.Entities.Creatures.DamageResult] <Execute>b__90_0(System.Collections.Generic.List`1[MegaCrit.Sts2.Core.Entities.Creatures.DamageResult])
+  System.Void .cctor()
+  System.Void .ctor()
+TYPE MegaCrit.Sts2.Core.Commands.Builders.AttackCommand+<>c__DisplayClass90_0 : System.Object
+  System.Boolean <Execute>b__5(MegaCrit.Sts2.Core.Entities.Creatures.DamageResult)
+  System.Void .ctor()
+TYPE MegaCrit.Sts2.Core.Commands.Builders.AttackCommand+<CreateContextAsync>d__89 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE MegaCrit.Sts2.Core.Commands.Builders.AttackCommand+<Execute>d__90 : System.ValueType
+  System.Void MoveNext()
+  System.Void SetStateMachine(System.Runtime.CompilerServices.IAsyncStateMachine)
+TYPE BaseLib.Utils.PoolAttribute : System.Attribute
+  System.Type TryGetPoolType()
+  System.Void .ctor(System.Type)
+  System.Void .ctor(System.String)
+  System.Type PoolType
+TYPE BaseLib.Patches.Content.CustomContentDictionary : System.Object
+  System.Boolean RegisterType(System.Type)
+  System.Void AddModel(System.Type)
+  System.Void AddEncounter(BaseLib.Abstracts.CustomEncounterModel)
+  System.Void AddAncient(BaseLib.Abstracts.CustomAncientModel)
+  System.Void AddEvent(BaseLib.Abstracts.CustomEventModel)
+  System.Boolean AddBadge(System.Type)
+  System.Void AddAct(BaseLib.Abstracts.CustomActModel)
+  System.Void AddCharacter(BaseLib.Abstracts.CustomCharacterModel)
+  System.Boolean IsValidPool(System.Type, System.Type)
+  System.Void ScanCustomBadges()
+  System.Void .cctor()
+TYPE BaseLib.Cards.Variables.CustomCalculatedDamageVar : MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedDamageVar
+  System.Decimal CalculateCustom(MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedVar WithMultiplier(System.Func`3[MegaCrit.Sts2.Core.Models.RelicModel,MegaCrit.Sts2.Core.Entities.Creatures.Creature,System.Decimal])
+  MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedVar WithMultiplier(System.Func`3[MegaCrit.Sts2.Core.Models.PowerModel,MegaCrit.Sts2.Core.Entities.Creatures.Creature,System.Decimal])
+  MegaCrit.Sts2.Core.Localization.DynamicVars.CalculatedVar GeneralMultiplier(System.Func`3[BaseLib.Utils.DynamicVarSource,MegaCrit.Sts2.Core.Entities.Creatures.Creature,System.Decimal])
+  MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar GetBaseVar()
+  MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar GetExtraVar()
+  System.Decimal GetBaseValueForIConvertible()
+  System.String ToString()
+  System.Void .ctor(System.String, MegaCrit.Sts2.Core.ValueProps.ValueProp)
+  System.Void .cctor()
+TYPE BaseLib.Cards.Variables.CustomExtraDamageVar : MegaCrit.Sts2.Core.Localization.DynamicVars.DynamicVar
+  System.Void UpdateCardPreview(MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Cards.CardPreviewMode, MegaCrit.Sts2.Core.Entities.Creatures.Creature, System.Boolean)
+  System.Void .ctor(System.String, System.Decimal)
+TYPE BaseLib.Patches.Hooks.ModifyBaseDamagePatches+ModifyDamageVars : System.Object
+  System.Collections.Generic.IEnumerable`1[System.Reflection.MethodBase] TargetMethods()
+  System.Collections.Generic.List`1[HarmonyLib.CodeInstruction] AdjustBaseEnchanted(System.Collections.Generic.IEnumerable`1[HarmonyLib.CodeInstruction], System.Reflection.MethodBase)
+TYPE BaseLib.Patches.Hooks.ModifyBaseDamagePatches+ModifyExtraDamageVar : System.Object
+  System.Collections.Generic.List`1[HarmonyLib.CodeInstruction] AdjustBaseEnchanted(System.Collections.Generic.IEnumerable`1[HarmonyLib.CodeInstruction], System.Reflection.MethodBase)
+TYPE BaseLib.Patches.Content.CustomContentDictionary+<>c : System.Object
+  System.Boolean <ScanCustomBadges>b__19_0(System.Type)
+  System.Void .cctor()
+  System.Void .ctor()
+TYPE BaseLib.Patches.Content.CustomContentDictionary+<>c__DisplayClass17_0 : System.Object
+  System.Boolean <AddCharacter>b__0(MegaCrit.Sts2.Core.Models.RelicModel)
+  System.Void .ctor()
+TYPE BaseLib.Cards.Variables.CustomCalculatedDamageVar+<>c__DisplayClass8_0 : System.Object
+  System.Decimal <GeneralMultiplier>b__0(MegaCrit.Sts2.Core.Models.CardModel, MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Decimal <GeneralMultiplier>b__1(MegaCrit.Sts2.Core.Models.PowerModel, MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Decimal <GeneralMultiplier>b__2(MegaCrit.Sts2.Core.Models.RelicModel, MegaCrit.Sts2.Core.Entities.Creatures.Creature)
+  System.Void .ctor()
+TYPE BaseLib.Patches.Hooks.ModifyBaseDamagePatches+ModifyDamageVars+<TargetMethods>d__0 : System.Object
+  System.Void System.IDisposable.Dispose()
+  System.Boolean MoveNext()
+  System.Void System.Collections.IEnumerator.Reset()
+  System.Collections.Generic.IEnumerator`1[System.Reflection.MethodBase] System.Collections.Generic.IEnumerable<System.Reflection.MethodBase>.GetEnumerator()
+  System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+  System.Void .ctor(System.Int32)
+  System.Reflection.MethodBase System.Collections.Generic.IEnumerator<System.Reflection.MethodBase>.Current
+  System.Object System.Collections.IEnumerator.Current

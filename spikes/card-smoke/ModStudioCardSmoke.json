@@ -1,0 +1,12 @@
+{
+  "id": "ModStudioCardSmoke",
+  "name": "Mod Studio Card Smoke",
+  "author": "Mod Studio",
+  "description": "Compatibility test: Studio Strike is a 1-energy Common Ironclad attack dealing 6 base damage (9 upgraded).",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "min_game_version": "0.111.0",
+  "dependencies": ["BaseLib"],
+  "affects_gameplay": true
+}
