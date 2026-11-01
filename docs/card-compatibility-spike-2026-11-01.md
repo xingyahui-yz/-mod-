@@ -12,7 +12,7 @@ updated: 2026-11-01
 
 ## Decision
 
-Start a separate Card compatibility branch from PR #4 head `033b313`. Verify the actual installed game and toolchain before changing the generated-card framework. Do not install missing tools automatically. The compatibility spike remains blocked before C# build until a .NET SDK is installed by the user.
+Start a separate Card compatibility branch from PR #4 head `033b313`. Verify the actual installed game and toolchain before changing the generated-card framework. Do not install missing tools automatically.
 
 ## Detected environment (2026-11-01)
 
@@ -23,6 +23,8 @@ Start a separate Card compatibility branch from PR #4 head `033b313`. Verify the
 - Game `release_info.json` reports `v0.111.0` / commit `41cef1ea` dated 2026-08-13. This conflicts with the newer Steam manifest and DLL timestamp, so treat `24724944` as the installed depot build identifier and the release-info version as stale until matched to an official beta build announcement.
 - `sts2.xml` is present beside the actual game assembly and contains current API documentation. It can be used to inspect supported members without guessing against an older template.
 - `dotnet --info` reports no SDKs installed. Only runtimes 7.0.20, 8.0.29, and 10.0.12 are globally installed. The game bundle contains its own .NET 9 runtime but not an SDK.
+- After the user installed the Windows x86 SDK, `C:\Program Files (x86)\dotnet\dotnet.exe --list-sdks` reports `9.0.123`. A throwaway `net9.0` console project built successfully with 0 warnings and 0 errors. The Microsoft page screenshot showed SDK `9.0.320`, so the installed SDK version does not match that page's current version; it nevertheless passed the basic net9 compile check.
+- No MegaDot executable, STS2 `mods` directory, or BaseLib Workshop install was found at the standard paths checked.
 - The Mod Studio Card template currently emits `RitsuMod.Content.CardComponent`; the app does not build or deploy the generated C# artifact. ADR-0008 requires proving content registration and Ironclad pool placement, not merely compilation.
 
 ## Compatibility route
@@ -35,7 +37,7 @@ Start a separate Card compatibility branch from PR #4 head `033b313`. Verify the
 
 ## Current status
 
-Compatibility discovery is complete; C# compilation, mod deployment, loading, card-pool appearance, and combat damage remain unverified. The immediate user prerequisite is installing the official .NET 9 SDK. No installer or external dependency was run by this spike.
+The .NET SDK prerequisite is met for basic `net9.0` compilation. Compatibility discovery is not yet complete: MegaDot, BaseLib, and the current mod template are not installed at the checked paths. Mod-specific C# compilation, deployment, loading, card-pool appearance, and combat damage remain unverified. No installer or external dependency was run by this spike.
 
 ## References
 
