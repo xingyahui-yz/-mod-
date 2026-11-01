@@ -1,7 +1,8 @@
 import { dialog, ipcMain, shell } from 'electron'
 import { basename, join, resolve, sep } from 'path'
-import { lstat, stat, mkdir, readdir, readFile, rename, cp, rm } from 'fs/promises'
+import { lstat, stat, mkdir, readdir, rename, cp, rm } from 'fs/promises'
 import { isAbsolute } from 'path'
+import { hasInstallManifest, readModManifest } from './modPackage'
 
 type ModInfo = { id: string; folderName: string; name: string; version: string; author: string; description: string; enabled: boolean }
 const validRoot = async (path: string) => isAbsolute(path) && (await stat(path).then(value => value.isDirectory()).catch(() => false))
@@ -13,47 +14,18 @@ function child(root: string, name: string): string | null {
 async function metadata(folder: string, enabled: boolean): Promise<ModInfo> {
   const folderName = basename(folder)
   const fallback: ModInfo = { id: folderName, folderName, name: folderName, version: '未知', author: '未知', description: '', enabled }
-  try {
-    const files = await readdir(folder)
-    const candidates = ['mod_manifest.json', 'mod.json', 'manifest.json', 'ModTheSpire.json', ...files.filter(file => file.toLowerCase().endsWith('.json') && /(mod|manifest)/i.test(file))]
-    for (const file of Array.from(new Set(candidates))) {
-      const path = child(folder, file)
-      if (!path || !file.toLowerCase().endsWith('.json')) continue
-      try {
-        const value: unknown = JSON.parse(await readFile(path, 'utf8'))
-        if (!value || typeof value !== 'object' || Array.isArray(value)) continue
-        const item = value as Record<string, unknown>
-        const authors = Array.isArray(item.authors) ? item.authors.filter((author): author is string => typeof author === 'string') : []
-        return { ...fallback,
-          id: typeof item.id === 'string' ? item.id : typeof item.pck_name === 'string' ? item.pck_name : folderName,
-          name: typeof item.name === 'string' ? item.name : folderName,
-          version: typeof item.version === 'string' ? item.version : '未知',
-          author: authors.join(', ') || (typeof item.author === 'string' ? item.author : '未知'),
-          description: typeof item.description === 'string' ? item.description : '',
-        }
-      } catch { /* try another root manifest */ }
+  const item = await readModManifest(folder)
+  if (item) {
+    const authors = Array.isArray(item.authors) ? item.authors.filter((author): author is string => typeof author === 'string') : []
+    return { ...fallback,
+      id: typeof item.id === 'string' ? item.id : typeof item.pck_name === 'string' ? item.pck_name : folderName,
+      name: typeof item.name === 'string' ? item.name : folderName,
+      version: typeof item.version === 'string' ? item.version : '未知',
+      author: authors.join(', ') || (typeof item.author === 'string' ? item.author : '未知'),
+      description: typeof item.description === 'string' ? item.description : '',
     }
-  } catch { /* keep folder-name fallback */ }
+  }
   return fallback
-}
-async function hasInstallManifest(folder: string): Promise<boolean> {
-  try {
-    const files = (await readdir(folder)).filter(file => file.toLowerCase().endsWith('.json'))
-    const candidates = files.filter(file => ['mod_manifest.json', 'mod.json', 'manifest.json', 'modthespire.json'].includes(file.toLowerCase()) || /(mod|manifest)/i.test(file))
-    for (const file of candidates) {
-      const path = child(folder, file)
-      if (!path) continue
-      try {
-        const value: unknown = JSON.parse(await readFile(path, 'utf8'))
-        if (!value || typeof value !== 'object' || Array.isArray(value)) continue
-        const item = value as Record<string, unknown>
-        const hasId = ['id', 'pck_name', 'mod_id', 'modId'].some(key => typeof item[key] === 'string' && Boolean((item[key] as string).trim()))
-        const hasName = typeof item.name === 'string' && Boolean(item.name.trim())
-        if (hasId && hasName && files.some(file => /\.(dll|pck)$/i.test(file))) return true
-      } catch { /* inspect the next manifest candidate */ }
-    }
-  } catch { /* picker result may have changed */ }
-  return false
 }
 
 async function scan(gamePath: string) {
@@ -83,7 +55,10 @@ export function registerModManagerHandlers() {
     if (result.canceled || !result.filePaths[0]) return { success: false, cancelled: true }
     const source = resolve(result.filePaths[0])
     const selectedStat = await lstat(source).catch(() => null)
-    if (!selectedStat?.isDirectory() || selectedStat.isSymbolicLink() || source === resolve(gamePath)) return { success: false, error: '所选 Mod 目录无效' }
+    if (!selectedStat) return { success: false, error: '无法访问所选路径，请选择已解压的 Mod 文件夹' }
+    if (selectedStat.isSymbolicLink()) return { success: false, error: '不支持通过快捷方式或符号链接安装 Mod，请选择实际文件夹' }
+    if (!selectedStat.isDirectory()) return { success: false, error: '所选路径不是文件夹，请选择已解压的 Mod 文件夹' }
+    if (source === resolve(gamePath)) return { success: false, error: '不能选择游戏根目录，请选择其中单个 Mod 文件夹' }
     const folderName = basename(source)
     const destination = child(join(gamePath, 'mods'), folderName)
     const disabledDestination = child(join(gamePath, '.modstudio-disabled-mods'), folderName)
