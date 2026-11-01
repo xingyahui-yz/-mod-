@@ -36,6 +36,7 @@ export function ProjectConversationDrawer({
   const [attachmentIds, setAttachmentIds] = useState<string[]>([])
   const [actionError, setActionError] = useState<string | null>(null)
   const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [archiveSuccess, setArchiveSuccess] = useState<string | null>(null)
   const [archiveBrowserOpen, setArchiveBrowserOpen] = useState(false)
   const [archives, setArchives] = useState<readonly ConversationArchiveSummary[]>([])
   const [isLoadingArchives, setIsLoadingArchives] = useState(false)
@@ -87,6 +88,7 @@ export function ProjectConversationDrawer({
       setAttachmentIds([])
       setActionError(null)
       setArchiveError(null)
+      setArchiveSuccess(null)
       setArchiveBrowserOpen(false)
       setPerformanceMetrics(null)
       setArchives([])
@@ -305,6 +307,14 @@ export function ProjectConversationDrawer({
     void refreshQuarantines()
   }
 
+  const toggleArchiveBrowser = () => {
+    if (archiveBrowserOpen) {
+      setArchiveBrowserOpen(false)
+      return
+    }
+    openArchiveBrowser()
+  }
+
   const showArchive = async (archiveId: string) => {
     setSelectedArchiveId(archiveId)
     setArchiveRead(null)
@@ -412,6 +422,7 @@ export function ProjectConversationDrawer({
     const confirmed = window.confirm('将当前项目对话完整归档，并清空活动对话。归档只能只读查看或导出，不会自动恢复。确定继续吗？')
     if (!confirmed) return
     setArchiveError(null)
+    setArchiveSuccess(null)
     try {
       const result = await actions.archiveAndReset()
       if (!result.ok) {
@@ -422,6 +433,7 @@ export function ProjectConversationDrawer({
       setSelectedQuickReply(null)
       setAttachmentIds([])
       leaveArchive()
+      setArchiveSuccess('归档成功。活动对话已清空，可在下方列表中查看或导出。')
       setArchiveBrowserOpen(true)
       await refreshArchives()
     } catch (error) {
@@ -560,6 +572,23 @@ export function ProjectConversationDrawer({
               <span>{view.projectRoot ? projectName(view.projectRoot) : '未打开项目'}</span>
               {view.isBusy && <strong>处理中</strong>}
             </div>
+            {(archiveError || archiveSuccess) && (
+              <div
+                className={`conversation-archive-result ${archiveError ? 'is-error' : 'is-success'}`}
+                role={archiveError ? 'alert' : 'status'}
+                aria-label="归档结果"
+              >
+                <span>{archiveError ? `归档操作失败：${archiveError}` : archiveSuccess}</span>
+                <button
+                  type="button"
+                  aria-label="关闭归档结果"
+                  onClick={() => {
+                    setArchiveError(null)
+                    setArchiveSuccess(null)
+                  }}
+                >×</button>
+              </div>
+            )}
 
             {view.capacity.level === 'warning' && (
               <div className="conversation-capacity-notice is-warning" role="status">
@@ -580,21 +609,24 @@ export function ProjectConversationDrawer({
             )}
 
             <section className="conversation-archive-controls" aria-label="对话归档">
-              <button type="button" onClick={openArchiveBrowser} aria-expanded={archiveBrowserOpen}>
-                {archiveBrowserOpen ? '刷新归档列表' : '浏览归档' + (archives.length ? '（' + archives.length + '）' : '')}
+              <button type="button" onClick={toggleArchiveBrowser} aria-expanded={archiveBrowserOpen} aria-controls="conversation-archive-browser">
+                {archiveBrowserOpen ? '收起归档管理' : '浏览归档' + (archives.length ? '（' + archives.length + '）' : '')}
               </button>
               {archiveBrowserOpen && (
-                <div className="conversation-archive-browser">
+                <div className="conversation-archive-browser" id="conversation-archive-browser">
                   <p className="conversation-archive-readonly-note">
                     归档为只读历史，不会自动恢复到活动对话；可浏览或额外导出 JSON。
                   </p>
                   <button type="button" onClick={() => setPerformanceMetrics(actions.getPerformanceMetrics())}>刷新存储性能与 SQLite 评估数据</button>
-                  {performanceMetrics && <section aria-label="对话存储性能指标">
-                    <strong>本项目会话实例最近 {performanceMetrics.sampleLimit} 次可测量仓储样本（仅成功加载；保存包括已序列化的失败尝试）</strong>
-                    <p>常规活动文档仓储端到端耗时（含排队、解析/校验；不含归档重置）：加载 p95：{formatMetric(performanceMetrics.load.p95Ms)}（{performanceMetrics.load.sampleCount} 次）；原子保存 p95：{formatMetric(performanceMetrics.save.p95Ms)}（{performanceMetrics.save.sampleCount} 次）。</p>
-                    <p>软阈值规模样本（≥10 MB 或 ≥5,000 条消息）：加载 p95 {formatMetric(performanceMetrics.softScale.load.p95Ms)}（{performanceMetrics.softScale.load.sampleCount} 次）；保存 p95 {formatMetric(performanceMetrics.softScale.save.p95Ms)}（{performanceMetrics.softScale.save.sampleCount} 次）。</p>
-                    <p>若软阈值规模的加载或保存 p95 超过 500 ms，或硬容量限制拦截频繁，应立项评估 SQLite；当前项目会话内硬限制拦截 {performanceMetrics.hardLimitBlockCount} 次。样本仅保留于内存，不含对话文本，也不会持久化。</p>
-                  </section>}
+                  {performanceMetrics && <details className="conversation-performance-details">
+                    <summary>查看性能数据</summary>
+                    <section aria-label="对话存储性能指标">
+                      <strong>本项目会话实例最近 {performanceMetrics.sampleLimit} 次可测量仓储样本（仅成功加载；保存包括已序列化的失败尝试）</strong>
+                      <p>常规活动文档仓储端到端耗时（含排队、解析/校验；不含归档重置）：加载 p95：{formatMetric(performanceMetrics.load.p95Ms)}（{performanceMetrics.load.sampleCount} 次）；原子保存 p95：{formatMetric(performanceMetrics.save.p95Ms)}（{performanceMetrics.save.sampleCount} 次）。</p>
+                      <p>软阈值规模样本（≥10 MB 或 ≥5,000 条消息）：加载 p95 {formatMetric(performanceMetrics.softScale.load.p95Ms)}（{performanceMetrics.softScale.load.sampleCount} 次）；保存 p95 {formatMetric(performanceMetrics.softScale.save.p95Ms)}（{performanceMetrics.softScale.save.sampleCount} 次）。</p>
+                      <p>若软阈值规模的加载或保存 p95 超过 500 ms，或硬容量限制拦截频繁，应立项评估 SQLite；当前项目会话内硬限制拦截 {performanceMetrics.hardLimitBlockCount} 次。样本仅保留于内存，不含对话文本，也不会持久化。</p>
+                    </section>
+                  </details>}
                   <button
                     type="button"
                     className="conversation-archive-reset-button"
@@ -696,7 +728,6 @@ export function ProjectConversationDrawer({
                 </div>
               )}
             </section>
-            {archiveError && <div className="conversation-error" role="alert">归档操作失败：{archiveError}</div>}
             {quarantineError && <div className="conversation-error" role="alert">隔离文件操作失败：{quarantineError}</div>}
 
             <div className="conversation-history" ref={historyRef} role="log" aria-live="polite" aria-label={selectedArchiveId ? '归档对话历史' : '对话历史'}>
@@ -1020,6 +1051,17 @@ const DRAWER_STYLES = `
   .conversation-project-status { min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 7px 18px; border-bottom: 1px solid var(--border); color: var(--text-secondary); font-size: 11px; }
   .conversation-project-status > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conversation-project-status strong { margin-left: auto; color: color-mix(in srgb, var(--accent) 70%, #7fb8e8); font-weight: 600; }
+  .conversation-archive-result { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 8px; margin: 8px 12px 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; line-height: 1.45; }
+  .conversation-archive-result span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .conversation-archive-result.is-error { border-color: color-mix(in srgb, var(--danger) 58%, var(--border)); background: color-mix(in srgb, var(--danger) 12%, var(--bg-secondary)); color: var(--danger); }
+  .conversation-archive-result.is-success { border-color: color-mix(in srgb, #53b58b 52%, var(--border)); background: color-mix(in srgb, var(--bg-secondary) 90%, #53b58b 10%); color: var(--text-primary); }
+  .conversation-archive-result button { flex: 0 0 32px; width: 32px; min-height: 32px; padding: 0; border: 1px solid color-mix(in srgb, currentColor 24%, transparent); border-radius: 7px; background: transparent; color: inherit; font-size: 19px; line-height: 1; }
+  .conversation-archive-controls { flex: 0 1 auto; min-height: 0; max-height: min(38vh, 360px); overflow-y: auto; overscroll-behavior: contain; }
+  .conversation-archive-browser { overflow: visible; padding-right: 4px; }
+  .conversation-performance-details { margin: 7px 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg-secondary) 80%, transparent); font-size: 10px; }
+  .conversation-performance-details summary { min-height: 36px; display: flex; align-items: center; cursor: pointer; font-weight: 600; }
+  .conversation-performance-details section { padding: 4px 2px 0; line-height: 1.45; }
+  .conversation-performance-details p { margin: 6px 0; }
   .conversation-capacity-notice { display: flex; flex-direction: column; gap: 3px; margin: 8px 12px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; font-size: 10px; line-height: 1.45; }
   .conversation-capacity-notice.is-warning { border-color: color-mix(in srgb, #d5a64c 48%, var(--border)); background: color-mix(in srgb, var(--bg-secondary) 94%, #d5a64c 6%); color: var(--text-secondary); }
   .conversation-capacity-notice.is-hard { border-color: color-mix(in srgb, var(--accent) 58%, var(--border)); background: color-mix(in srgb, var(--bg-secondary) 90%, var(--accent) 10%); color: var(--text-primary); }

@@ -26,8 +26,8 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 describe('ProjectConversationDrawer', () => {
-  it('归档管理展示当前项目会话存储 p95 与 SQLite 评估阈值', async () => {
-    const repository = memoryRepository({ status: 'missing' })
+  it('性能数据默认折叠，折叠归档管理后活动对话保持可见', async () => {
+    const repository = memoryRepository({ status: 'loaded', document: completedDocument() })
     repository.getPerformanceMetrics = vi.fn(() => ({
       scope: 'current-project-session', hardLimitBlockCount: 2, sampleLimit: 100,
       load: { sampleCount: 3, p95Ms: 120 }, save: { sampleCount: 2, p95Ms: 240 },
@@ -35,12 +35,21 @@ describe('ProjectConversationDrawer', () => {
       samples: [],
     }))
     renderDrawer('/mods/quiet-depth', repository, successModel('unused'))
+    await screen.findByText('先明确玩法主线。')
     fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
     fireEvent.click(screen.getByRole('button', { name: '刷新存储性能与 SQLite 评估数据' }))
 
+    const metricsSummary = screen.getByText('查看性能数据')
+    expect(metricsSummary.closest('details')?.open).toBe(false)
+    fireEvent.click(metricsSummary)
     expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('120 ms')
     expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('超过 500 ms')
     expect(screen.getByRole('region', { name: '对话存储性能指标' }).textContent).toContain('硬限制拦截 2 次')
+
+    fireEvent.click(screen.getByRole('button', { name: '收起归档管理' }))
+    expect(screen.getByRole('button', { name: /浏览归档/ }).getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: '刷新存储性能与 SQLite 评估数据' })).toBeNull()
+    expect(screen.getByRole('log', { name: '对话历史' }).textContent).toContain('先明确玩法主线。')
   })
 
   it('可导出已知旧 schema 隔离原文，并二次确认后恢复且保留原隔离文件', async () => {
@@ -310,6 +319,7 @@ describe('ProjectConversationDrawer', () => {
 
     await waitFor(() => expect(repository.archiveAndReset).toHaveBeenCalledOnce())
     expect(await screen.findByRole('button', { name: '查看归档 archive-1' })).toBeTruthy()
+    expect((await screen.findByRole('status', { name: '归档结果' })).textContent).toContain('归档成功')
     expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('')
     expect(repository.current?.turns).toEqual([])
     expect(repository.listArchives).toHaveBeenCalled()
@@ -330,7 +340,7 @@ describe('ProjectConversationDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: /浏览归档/ }))
     fireEvent.click(await screen.findByRole('button', { name: '归档当前对话并重置' }))
 
-    expect(await screen.findByText('归档操作失败：归档目标已存在，未覆盖原归档；活动对话未重置。请处理冲突后重试。')).toBeTruthy()
+    expect((await screen.findByRole('alert', { name: '归档结果' })).textContent).toContain('归档操作失败：归档目标已存在，未覆盖原归档；活动对话未重置。请处理冲突后重试。')
     expect((screen.getByLabelText('发送给项目 AI 的消息') as HTMLTextAreaElement).value).toBe('失败后仍保留')
     expect(repository.current?.turns).toHaveLength(1)
   })
