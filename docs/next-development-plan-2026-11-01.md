@@ -2,10 +2,10 @@
 kind: project
 scope: next-development-plan
 project: 杀戮尖塔mod
-topics: [card, generation, build, deploy, test-profile, roadmap]
+topics: [card, card-art, generation, build, deploy, test-profile, roadmap]
 source: repository inspection and verified Windows playtest
 status: incomplete
-updated: 2026-11-01
+updated: 2026-11-03
 ---
 
 # 下一步开发计划：把 Card 实机能力接入 Studio
@@ -19,7 +19,7 @@ updated: 2026-11-01
 - 仍待补验：普通战斗奖励或商店自然获取。初始牌和图鉴发现记录是用户指定的测试辅助手段，不计作自然获取证据。详见 [验收记录](./card-smoke-acceptance-2026-11-01.json)。
 - 产品缺口：`src/card/card.mustache`、新项目模板仍使用 RitsuMod；`GameLauncher` 只做生成产物预检和启动，尚未真实构建、部署项目；`CardData` 尚无卡池归属。
 - 当前游戏已恢复原版存档 1，0 个活动本地 Mod。原档 141 个文件和选择器校验不变，测试档及备份保留。计划制定不重新开启测试。
-- 工作基线：本地 Card 分支 `codex/card-compatibility-spike`，现有 head `9ff1697`；[PR #4](https://github.com/xingyahui-yz/-mod-/pull/4) 于本次检查仍为 Draft，head `033b313`。Card 工作继续独立于归档 PR 和 UI 风格支线。
+- 合并决策：用户已指定将本 Card 分支及其继承的 PR #4 改动整体合入 `main`；独立的 `codex/ui-design-refresh`、`codex/p5-ui-style` 和 `codex/ui-style-adjustment` 视觉分支暂不合并。执行前仍需确认远端 `main` 未变化。
 
 ## 实施顺序
 
@@ -70,7 +70,19 @@ updated: 2026-11-01
 - 为配置持久化、生成迁移、构建诊断/取消、真实文件系统部署冲突/回退、测试档身份隔离和包内容分别设置对应检查。
 - 运行全量自动化、TypeScript/Electron 构建，以及本机 Windows 真实 C# 编译和手测。记录实际命令、数量和结果。依赖本机游戏程序集的检查单独标明；未执行不能显示为通过。
 - 确认正式包只含预期 DLL/清单/资源，测试引导和存档资料不进入产物。
-- 整理 Card 独立评审，保留与 PR #4 的依赖关系；归档改动、Card 构建和视觉支线分别交付。
+- 整理 Card 和归档功能的合并审阅记录；独立视觉风格分支保持在本次合并之外。
+
+### 5. P1：卡面外观编辑（在 Card 构建链路打通后启动）
+
+交付：用户可以在 Card 编辑器中生成或导入卡面图片，并在 Studio 和游戏实机中看到最终效果。
+
+- 增加独立的卡面资源编辑区，区分风格参考图、生成结果和最终采用的卡面；参考图由用户提供，不隐式打包进 Mod。
+- 接入 AI 图片生成操作，并使用 Studio 内置、版本化的固定风格提示词；将用户提供的原装卡牌图片作为本次生成的视觉参考，提示词明确要求匹配其画风，同时保留用户填写的卡牌主题/主体描述。
+- 支持从本地手动导入卡面。生成或导入后均可预览、选择裁切/适配方式，并检查格式、尺寸、宽高比和文件大小；失败时保留上一个可用卡面。
+- 在实现前先验证目标 STS2/BaseLib 版本接受的图像格式、资源路径和 Mod 打包/引用方式；把最终图片纳入项目序列化、构建和部署流程，确保正式包能在游戏内加载。
+- 对 AI 生成明确显示所用参考图和当前提示词版本，由用户主动点击生成；参考图、临时图和生成失败产物不混入正式包。
+
+完成条件：同一张 Card 可用用户参考图完成一次生成并能由用户挑选采用；手动导入路径独立可用；编辑器预览、重开项目后的资源引用、构建产物内容和游戏实机渲染均通过验证；切换或失败不会丢失原卡面。
 
 ## 首批提交建议
 
